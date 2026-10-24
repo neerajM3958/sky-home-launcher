@@ -138,7 +138,7 @@ final class Catalogs {
     private static String wanted() {
         return String.join(",", keys()) + (Prefs.hideAnimation() ? "|noanimation" : "")
                 + "|" + (Prefs.recommendFromApps() ? "apps" : "any") + (Prefs.flatrateOnly() ? "S" : "") + (Prefs.flatrateOnly() && Prefs.includeRentBuy() ? "R" : "")
-                + Recs.region();
+                + Recs.region() + Prefs.languages();
     }
 
     static String title(String key) {
@@ -160,7 +160,7 @@ final class Catalogs {
      */
     private static String filter(Recs recs) throws Exception {
         boolean apps = Prefs.recommendFromApps();
-        if (!apps && !Prefs.flatrateOnly()) return null;
+        if (!apps && !Prefs.flatrateOnly() && Prefs.languages().isEmpty()) return null;
         return "&watch_region=" + Recs.region() + Recs.monetization()
                 + (apps ? "&with_watch_providers=" + java.net.URLEncoder.encode(recs.installedProviderIds(), "UTF-8") : "");
     }
@@ -174,6 +174,9 @@ final class Catalogs {
      */
     private static List<String[]> requests(String key, String lang, String filter) {
         String q = "?language=" + lang + "&include_adult=false" + (filter == null ? "" : filter);
+        // The Hindi row is Hindi whatever the languages say.
+        String languages = filter == null || key.equals("hindi") ? "" : Recs.languageFilter();
+        q += languages;
         String popular = "&sort_by=popularity.desc";
         List<String[]> out = new ArrayList<>();
         if (filter == null) {

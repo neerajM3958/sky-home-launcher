@@ -175,6 +175,11 @@ final class Recs {
 
     String error() { return error; }
 
+    /** There is nothing to show and nothing coming: no TMDB key, or the last fetch failed or found no titles. */
+    boolean noPicks() {
+        return !hasKey(context) || (picks.isEmpty() && !error.isEmpty());
+    }
+
     static String periodLabel() {
         int p = period(System.currentTimeMillis());
         return p == MANHA ? Ui.tr("THIS MORNING") : p == TARDE ? Ui.tr("THIS AFTERNOON") : Ui.tr("TONIGHT");
@@ -427,7 +432,7 @@ final class Recs {
             return;
         }
         String ids = installedProviderIds();
-        String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + "&include_adult=false"
+        String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + languageFilter() + "&include_adult=false"
                 + "&sort_by=popularity.desc" + "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
                 + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         // 1. The most popular right now (TMDB's popularity follows what people are watching and searching for), already
@@ -473,6 +478,12 @@ final class Recs {
         period = p;
         listAt = System.currentTimeMillis();
         listLanguage = Ui.language;
+    }
+
+    /** The discover filter on the titles' original language: "&with_original_language=en%7Chi" (either), or nothing. */
+    static String languageFilter() {
+        List<String> codes = Prefs.languages();
+        return codes.isEmpty() ? "" : "&with_original_language=" + String.join("%7C", codes);
     }
 
     /** The discover filter on how a title streams: subscription (and free), plus rent or buy when asked, or no filter. */
@@ -613,7 +624,7 @@ final class Recs {
     }
 
     private void fetchListOnly(int p) throws Exception {
-        String common = "&language=" + lang() + "&watch_region=" + region() + monetization()
+        String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + languageFilter()
                 + "&include_adult=false&sort_by=popularity.desc" + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         boolean genres = !loadSavedGenres();
         List<String> paths = new ArrayList<>();
@@ -866,7 +877,7 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = (Config.TMDB_KEY.hashCode() * 31L + region().hashCode()) * 31L + (Prefs.hideAnimation() ? 1 : 0);
-        stamp = stamp * 31L + (listOnly() ? 1 : 0) + (Prefs.flatrateOnly() ? 2 : 0) + (Prefs.includeRentBuy() ? 4 : 0);
+        stamp = stamp * 31L + (listOnly() ? 1 : 0) + (Prefs.flatrateOnly() ? 2 : 0) + (Prefs.includeRentBuy() ? 4 : 0) + Prefs.languages().hashCode() * 31L;
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
     }

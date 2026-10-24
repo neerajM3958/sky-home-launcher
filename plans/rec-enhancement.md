@@ -432,3 +432,12 @@ What applying the settings to the catalogs taught:
   person's own lists and are not filtered.
 - A failed refetch after a settings change clears the rows (it left the old ones), and the ten-minute wait after a failure no longer holds back a refetch
   that a settings change asks for.
+
+What the language filter and the empty picks taught:
+- **Languages** (TMDB section, a multi-select) limits the picks and the catalogs to titles whose original language is one of
+  the chosen ones: `with_original_language=en%7Chi` (TMDB takes `|` for "either"). The list is the two-letter ISO languages
+  in the TV's language (the TV's own, English, Hindi and a few more first), plus Cantonese (`cn` on TMDB). Choosing
+  one counts as a filter for the catalogs, so every row becomes a discover query; the Hindi row stays Hindi.
+  `tmdb_languages` in `config.properties` gives the first value.
+- **No picks, no empty cards:** with no TMDB key, or after a fetch that failed or found nothing, the three cards aren't drawn.
+  Their tabs still are.

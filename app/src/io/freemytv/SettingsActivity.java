@@ -119,9 +119,9 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
-        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_ANIMATION = 4, TMDB_CATALOGS = 5;   // the TMDB screen's rows after Region   // the main menu's rows that open them
+        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_ANIMATION = 5, TMDB_CATALOGS = 6;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -150,6 +150,7 @@ public class SettingsActivity extends Activity {
         private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
         private JSONObject state = new JSONObject(), recs = new JSONObject();
         private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
+        private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
         private final List<String[]> stremioRows = new ArrayList<>();     // the Stremio screen: {key, name}, "missing" first
         private int screen = MAIN, focus;
         private boolean running, okDown, backDown, wasBusy;
@@ -245,6 +246,10 @@ public class SettingsActivity extends Activity {
                 case TMDB: {
                     String[] labels = tmdbLabels(), values = tmdbValues();
                     return row < labels.length ? labels[row] + ", " + values[row] : "";
+                }
+                case LANGUAGES: {
+                    int at = pickScroll + row;
+                    return at < langRows.size() ? langRows.get(at)[1] + (langChecked(at) ? Ui.tr(", selected") : "") : "";
                 }
                 case STREMIO: {
                     int at = pickScroll + row;
@@ -381,6 +386,7 @@ public class SettingsActivity extends Activity {
                 case TRAKT: return 1;
                 case TMDB: return tmdbLabels().length;
                 case STREMIO: return Math.min(PICK_VISIBLE, stremioRows.size());
+                case LANGUAGES: return Math.min(PICK_VISIBLE, langRows.size());
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -413,7 +419,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -639,7 +645,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -684,6 +690,9 @@ public class SettingsActivity extends Activity {
                             } else if (screen == STREMIO) {
                                 focus = STREMIO_ROW;
                                 screen = MAIN;
+                            } else if (screen == LANGUAGES) {
+                                focus = TMDB_LANGS;
+                                screen = TMDB;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
@@ -857,14 +866,14 @@ public class SettingsActivity extends Activity {
 
         private String[] tmdbLabels() {
             return new String[] {Ui.tr("Region"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
-                    Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
+                    Ui.tr("Languages"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
         }
 
         private String[] tmdbValues() {
             int on = 0;
             for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
             return new String[] {regionValue(), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
-                    onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()),
+                    onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()), languagesValue(),
                     onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
         }
 
@@ -885,6 +894,89 @@ public class SettingsActivity extends Activity {
                         rowRect.right - 30 * k, base, rowValue);
             }
             drawRecs(c, (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 70) * k);
+        }
+
+        // MARK: - Languages (Free My TV > TMDB)
+
+        /** A language's name in the TV's language; Cantonese is "cn" on TMDB and has no two-letter ISO code. */
+        private static String languageName(String code) {
+            Locale l = code.equals("cn") ? Locale.forLanguageTag("yue") : new Locale(code);
+            String name = l.getDisplayLanguage(Ui.locale());
+            return name.isEmpty() ? code : name.substring(0, 1).toUpperCase(Ui.locale()) + name.substring(1);
+        }
+
+        /** The TMDB row's value: "All languages", or the chosen ones' names. */
+        private String languagesValue() {
+            List<String> codes = Prefs.languages();
+            if (codes.isEmpty()) return Ui.tr("All languages");
+            List<String> names = new ArrayList<>();
+            for (String code : codes) names.add(languageName(code));
+            return String.join(", ", names);
+        }
+
+        private boolean langChecked(int at) {
+            String code = langRows.get(at)[0];
+            return code.isEmpty() ? Prefs.languages().isEmpty() : Prefs.languages().contains(code);
+        }
+
+        /** "All languages" first, then every language TMDB can tell titles apart by, A to Z in the TV's language. */
+        private void openLanguages() {
+            langRows.clear();
+            langRows.add(new String[] {"", Ui.tr("All languages")});
+            List<String[]> all = new ArrayList<>();
+            for (String code : Locale.getISOLanguages()) if (code.length() == 2) all.add(new String[] {code, languageName(code)});
+            all.add(new String[] {"cn", languageName("cn")});
+            java.text.Collator collator = java.text.Collator.getInstance(Ui.locale());
+            java.util.Collections.sort(all, (a, b) -> collator.compare(a[1], b[1]));
+            // The TV's own language and the ones most titles come in first, then the rest A to Z.
+            List<String> first = new ArrayList<>(java.util.Arrays.asList(Ui.language.replaceAll("-.*", ""), "en", "hi", "es", "fr", "de", "ja", "ko", "zh", "pt", "ru", "it", "ta", "te"));
+            for (String code : first) {
+                for (int i = 0; i < all.size(); i++) {
+                    if (all.get(i)[0].equals(code)) {
+                        langRows.add(all.remove(i));
+                        break;
+                    }
+                }
+            }
+            langRows.addAll(all);
+            pickScroll = 0;
+            focus = 0;
+            screen = LANGUAGES;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void toggleLanguage() {
+            String code = langRows.get(pickScroll + focus)[0];
+            if (code.isEmpty()) {
+                Prefs.setLanguages(new ArrayList<>());
+                return;
+            }
+            List<String> codes = Prefs.languages();
+            if (!codes.remove(code)) codes.add(code);
+            Prefs.setLanguages(codes);
+        }
+
+        private void drawLanguages(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            c.drawText(Ui.tr("Languages"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(TextUtils.ellipsize(langRows.get(at)[1], new TextPaint(rowLabel), 620 * k, TextUtils.TruncateAt.END).toString(),
+                        rowRect.left + 30 * k, base, rowLabel);
+                if (langChecked(at)) {
+                    float cw = Symbols.width(getContext(), "check", 26 * k);
+                    Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
+                }
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            c.drawText(Ui.tr("The language a title was made in. OK picks or drops one."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
         }
 
         // MARK: - Stremio
@@ -1043,6 +1135,10 @@ public class SettingsActivity extends Activity {
 
         /** Changes the focused row's value one step (OK and → go forward, ← goes back). */
         private void adjust(int dir) {
+            if (screen == LANGUAGES) {
+                toggleLanguage();
+                return;
+            }
             if (screen == STREMIO) {
                 toggleStremio();
                 return;
@@ -1137,11 +1233,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1368,11 +1464,17 @@ public class SettingsActivity extends Activity {
                     openPicker(PICK_REGION);
                 } else if (focus == TMDB_CATALOGS) {
                     openRowsEditor();
+                } else if (focus == TMDB_LANGS) {
+                    openLanguages();
                 } else {
                     adjust(1);
                     invalidate();
                     return;
                 }
+            } else if (screen == LANGUAGES) {
+                toggleLanguage();
+                invalidate();
+                return;
             } else if (screen == STREMIO) {
                 toggleStremio();
                 invalidate();

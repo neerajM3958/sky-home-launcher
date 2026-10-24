@@ -173,6 +173,19 @@ final class Prefs {
     static boolean includeRentBuy() { return app == null ? Config.INCLUDE_RENT_BUY : sp().getBoolean("includeRentBuy", Config.INCLUDE_RENT_BUY); }
     static void setIncludeRentBuy(boolean on) { put("includeRentBuy", on); }
 
+    /** Original languages (two-letter codes) the picks and catalogs are limited to; empty: any. */
+    static List<String> languages() {
+        String v = app == null ? Config.TMDB_LANGUAGES : sp().getString("languages", Config.TMDB_LANGUAGES);
+        List<String> out = new ArrayList<>();
+        for (String p : v.split(",")) {
+            p = p.trim().toLowerCase(Locale.ROOT);
+            if (!p.isEmpty() && !out.contains(p)) out.add(p);
+        }
+        return out;
+    }
+
+    static void setLanguages(List<String> codes) { put("languages", String.join(",", codes)); }
+
     // MARK: - Stremio (Free My TV > Stremio)
 
     /** Missing apps and titles on no service we know open in Stremio, when it is installed. */
