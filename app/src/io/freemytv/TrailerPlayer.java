@@ -32,7 +32,7 @@ final class TrailerPlayer {
 
     /**
      * Runs inside YouTube's embed page: reports what the <video> does (1 playing, 2 paused, 0 ended, 3 waiting) and an error
-     * screen, hides YouTube's own title bar, and says AV1 isn't supported so the player picks VP9 or H.264: some TVs' AV1
+     * screen, hides everything on the page but the video (title, channel, cards, buttons), and says AV1 isn't supported so the player picks VP9 or H.264: some TVs' AV1
      * decoders show black while the sound plays.
      */
     private static final String PAGE_SCRIPT = "(function(){if(window.__fmt)return;window.__fmt=1;"
@@ -41,8 +41,9 @@ final class TrailerPlayer {
             + "var mc=navigator.mediaCapabilities;if(mc&&mc.decodingInfo){var d=mc.decodingInfo.bind(mc);"
             + "mc.decodingInfo=function(c){var v=(c&&c.video&&c.video.contentType)||'';"
             + "if(/av01/i.test(v))return Promise.resolve({supported:false,smooth:false,powerEfficient:false});return d(c);};}}catch(e){}"
-            + "var st=document.createElement('style');st.textContent='.html5-video-player>*:not(.html5-video-container){display:none!important}body{background:#000!important}';"
-            + "try{(document.head||document.documentElement).appendChild(st);}catch(e){document.addEventListener('DOMContentLoaded',function(){document.head.appendChild(st);});}"
+            + "var st=document.createElement('style');"
+            + "st.textContent='body *{visibility:hidden!important}body video{visibility:visible!important}html,body{background:#000!important}';"
+            + "var put=setInterval(function(){var h=document.head||document.documentElement;if(h){h.appendChild(st);clearInterval(put);}},5);"
             + "function hook(v){if(v.__h)return;v.__h=1;"
             + "v.addEventListener('playing',function(){FMT.state(1)});v.addEventListener('pause',function(){FMT.state(2)});"
             + "v.addEventListener('ended',function(){FMT.state(0)});v.addEventListener('waiting',function(){FMT.state(3)});}"
