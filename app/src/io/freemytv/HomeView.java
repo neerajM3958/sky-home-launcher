@@ -521,6 +521,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cancelReorder(true);
         handler.removeCallbacks(holdStart);
         okHeld = holdArmed = false;
+        stopTrailer();
+        if (trailer != null) {      // the WebView's memory goes back while the home screen is away
+            trailer.release();
+            trailer = null;
+        }
         Choreographer.getInstance().removeFrameCallback(this);
         handler.removeCallbacks(tick);
         handler.removeCallbacks(drift);
@@ -2210,6 +2215,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void leaveBrowse() {
+        stopTrailer();
         browseIn.target = 0;
         if (!catRows.isEmpty()) zone = Z_CATALOG;
         else if (drawerItems.isEmpty()) closeDrawer();
@@ -2373,6 +2379,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             Bitmap badge = ServiceBadge.get(getContext(), browseInfo.logo, px, badgesReady);
             if (badge != null) c.drawBitmap(badge, panel.right - 28 * k - px, panel.top + 28 * k, null);
         }
+        drawTrailerHint(c);
     }
 
     private void buildBrowseText() {
@@ -2408,6 +2415,99 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     .setIncludePad(false)
                     .build();
         }
+    }
+
+    // MARK: - Trailer of the focused title: in the backdrop card (YouTube's embedded player), or in the YouTube app
+
+    private TrailerPlayer trailer;
+    private boolean trailerOn;
+    private String trailerId = "";
+    private final RectF pill = new RectF();
+    private final Path playArrow = new Path();
+    private final TrailerPlayer.Listener trailerListener = new TrailerPlayer.Listener() {
+        @Override public void onPlaying() {
+            browseDirty = true;
+        }
+
+        @Override public void onEnded() {
+            stopTrailer();
+        }
+
+        @Override public void onFailed() {
+            stopTrailer();
+            openYoutube(trailerId);       // the embedded player won't play it: the YouTube app will
+        }
+    };
+
+    /** Long press on OK or the remote's Play/Pause: starts the trailer, or pauses or resumes the one playing. */
+    private void trailerKey() {
+        if (trailerOn) trailer.togglePause();
+        else startTrailer();
+    }
+
+    private void startTrailer() {
+        if (zone != Z_BROWSE) return;
+        trailerId = browseInfo == null ? "" : browseInfo.trailer;
+        if (trailerId.isEmpty()) {
+            showToast(Ui.tr("This title has no trailer."));
+            return;
+        }
+        if (!Prefs.trailers() || !TrailerPlayer.available()) {
+            openYoutube(trailerId);
+            return;
+        }
+        if (trailer == null) trailer = new TrailerPlayer(getContext(), trailerListener);
+        View v = trailer.play(trailerId, 30 * k);
+        if (v.getParent() != this) addView(v, indexOfChild(browseLayer) + 1);
+        float left = MARGIN * k;
+        v.measure(MeasureSpec.makeMeasureSpec(Math.round(w - 2 * left), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(Math.round(540 * k), MeasureSpec.EXACTLY));
+        v.layout(Math.round(left), Math.round(40 * k), Math.round(w - left), Math.round(580 * k));
+        trailerOn = true;
+        browseDirty = true;
+    }
+
+    private void stopTrailer() {
+        if (!trailerOn) return;
+        trailerOn = false;
+        trailer.stop();
+        browseDirty = true;
+        wake();
+    }
+
+    private void openYoutube(String id) {
+        String watch = "https://www.youtube.com/watch?v=" + id;
+        String[][] tries = {{"vnd.youtube:" + id, null}, {watch, "com.google.android.youtube.tv"}, {watch, null}};
+        for (String[] t : tries) {
+            try {
+                android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(t[0]));
+                if (t[1] != null) i.setPackage(t[1]);
+                activity.startActivity(i);
+                return;
+            } catch (RuntimeException e) {
+                AppLog.w("trailer " + t[0] + ": " + e.getMessage());
+            }
+        }
+        showToast(Ui.tr("Couldn't open YouTube."));
+    }
+
+    /** The small "Hold OK for the trailer" pill at the card's foot, while there is a trailer and it isn't playing. */
+    private void drawTrailerHint(Canvas c) {
+        if (zone != Z_BROWSE || trailerOn || browseInfo == null || browseInfo.trailer.isEmpty()) return;
+        String text = Ui.tr("Hold OK for the trailer");
+        float pad = 24 * k, arrow = 18 * k, gap = 14 * k, hh = 54 * k;
+        float x = panel.left + 56 * k, y = panel.bottom - 30 * k - hh;
+        pill.set(x, y, x + pad + arrow + gap + lBrowseFacts.measureText(text) + pad, y + hh);
+        fill.setShader(null);
+        fill.setColor(0x80000000);
+        c.drawRoundRect(pill, hh / 2, hh / 2, fill);
+        playArrow.reset();
+        playArrow.moveTo(pill.left + pad, y + hh / 2 - arrow / 2);
+        playArrow.lineTo(pill.left + pad + arrow, y + hh / 2);
+        playArrow.lineTo(pill.left + pad, y + hh / 2 + arrow / 2);
+        playArrow.close();
+        fill.setColor(0xFFFFFFFF);
+        c.drawPath(playArrow, fill);
+        c.drawText(text, pill.left + pad + arrow + gap, y + hh / 2 + Ui.halfCap(lBrowseFacts), lBrowseFacts);
     }
 
     // MARK: - Toasts
@@ -2570,7 +2670,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : canReorder();
+                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : zone == Z_BROWSE || canReorder();
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
                         hold();
@@ -2581,6 +2681,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (okDown && !okHeld && !e.isCanceled() && spoken.keyClick()) activate();
                     okDown = okHeld = false;
                 }
+                return true;
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (zone != Z_BROWSE || sheetOpen) return false;
+                if (down && e.getRepeatCount() == 0) trailerKey();
                 return true;
             case KeyEvent.KEYCODE_BACK:
                 if (opening != null) {      // Back only cancels the open that is waiting for its answer
@@ -2603,6 +2709,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void back() {
         if (sheetOpen) {
             closeSheet();
+        } else if (trailerOn) {      // Back stops the trailer first
+            stopTrailer();
         } else if (zone == Z_BROWSE) {
             leaveBrowse();
             retarget(false);
@@ -2622,6 +2730,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void move(int dx, int dy) {
+        stopTrailer();      // an arrow ends the trailer, and moves on
         if (sheetOpen) {
             moveGrid(dx, dy);
             return;
@@ -2755,6 +2864,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         if (opening != null) return;      // still looking up where a title streams
+        if (!sheetOpen && zone == Z_BROWSE && trailerOn) {      // OK while the trailer plays: pause or play
+            trailer.togglePause();
+            return;
+        }
         HomeApps.Item it;
         RectF r;
         if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
@@ -2909,6 +3022,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Holding OK: All Apps puts the app on the shelf or takes it off; on the shelf, the app is lifted to move
 
     private void hold() {
+        if (!sheetOpen && zone == Z_BROWSE) {       // the trailer of the focused title
+            handler.removeCallbacks(holdStart);
+            holdArmed = false;
+            okHeld = true;
+            if (!trailerOn) startTrailer();
+            return;
+        }
         if (sheetOpen) toggleShelf(); else startReorder();
     }
 

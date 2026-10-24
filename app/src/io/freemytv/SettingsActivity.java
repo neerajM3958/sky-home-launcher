@@ -1127,7 +1127,7 @@ public class SettingsActivity extends Activity {
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
         /** Home Settings: color scheme and visual theme are independent controls. */
-        private static final int LOOK_ROW = 3, CITY_ROW = 6, WATCH_NEXT_ROW = 7, COIN_ROWS = 9;
+        private static final int LOOK_ROW = 3, CITY_ROW = 6, WATCH_NEXT_ROW = 7, TRAILER_ROW = 8, QUOTES_ROW = 9, COIN_ROWS = 10;
 
         private boolean dollar() {
             return "BRL".equalsIgnoreCase(Config.CURRENCY.trim());
@@ -1143,6 +1143,7 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("Weather widget"));
             l.add(Ui.tr("City"));
             l.add(Ui.tr("Apps' Continue Watching"));
+            l.add(Ui.tr("Trailers on the home screen"));
             l.add(Ui.tr("Quotes widget"));
             l.add("Bitcoin");
             l.add("Ethereum");
@@ -1167,7 +1168,8 @@ public class SettingsActivity extends Activity {
                     : Prefs.autoLocation() ? Ui.tr("Automatic") + (Prefs.city().isEmpty() ? "" : " · " + Prefs.city())
                     : Prefs.city().isEmpty() ? "—" : Prefs.city();
             v[WATCH_NEXT_ROW] = onOff(Prefs.watchNext() && WatchNext.permitted(getContext()));
-            v[8] = onOff(Prefs.quotes());
+            v[TRAILER_ROW] = onOff(Prefs.trailers());
+            v[QUOTES_ROW] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
             return v;
@@ -1285,7 +1287,8 @@ public class SettingsActivity extends Activity {
                         activity.requestPermissions(new String[] {WatchNext.PERMISSION}, WatchNext.ASK);
                     }
                     break;
-                case 8: Prefs.setQuotes(!Prefs.quotes()); break;
+                case TRAILER_ROW: Prefs.setTrailers(!Prefs.trailers()); break;
+                case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
                     Prefs.setCoin(focus - COIN_ROWS, !Prefs.coin(focus - COIN_ROWS));

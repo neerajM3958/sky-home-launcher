@@ -234,6 +234,18 @@ final class Prefs {
     static boolean watchNext() { return app == null ? Config.WATCH_NEXT : sp().getBoolean("watchNext", Config.WATCH_NEXT); }
     static void setWatchNext(boolean on) { put("watchNext", on); }
 
+    /**
+     * Trailers play inside the home screen (an embedded YouTube player); off, the YouTube app opens them. On unless the TV is
+     * short of memory (a low-RAM device or a 720p UI) and the person hasn't chosen.
+     */
+    static boolean trailers() { return sp().contains("trailers") ? sp().getBoolean("trailers", true) : !shortOfMemory(); }
+    static void setTrailers(boolean on) { put("trailers", on); }
+
+    private static boolean shortOfMemory() {
+        android.app.ActivityManager am = (android.app.ActivityManager) app.getSystemService(Context.ACTIVITY_SERVICE);
+        return Backdrop.W <= 1280 || (am != null && am.isLowRamDevice());
+    }
+
     /** The TV has been asked once for the permission to read it (the home screen doesn't ask again). */
     static boolean watchNextAsked() { return sp().getBoolean("watchNextAsked", false); }
     static void setWatchNextAsked(boolean asked) { sp().edit().putBoolean("watchNextAsked", asked).apply(); }

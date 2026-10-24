@@ -33,14 +33,14 @@ import java.util.concurrent.Executors;
  */
 final class Details {
     static final class Info {
-        String tagline = "", overview = "", genres = "", facts = "", backdrop = "", logo = "";
+        String tagline = "", overview = "", genres = "", facts = "", backdrop = "", logo = "", trailer = "";
         long at;
     }
 
     interface Listener { void onDetails(); }
 
     private static final long FRESH_MS = 7 * 24 * 3600_000L;
-    private static final int VERSION = 1, KEEP = 200;
+    private static final int VERSION = 2, KEEP = 200;
     private static final String IMAGES = "https://image.tmdb.org/t/p/" + (Backdrop.W <= 1280 ? "w780" : "w1280");
 
     private static Details instance;
@@ -120,7 +120,8 @@ final class Details {
     }
 
     private Info fetch(String kind, int id) throws Exception {
-        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang() + "&append_to_response=watch/providers");
+        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang() + "&append_to_response=watch/providers,videos&include_video_language="
+                + Ui.language.replaceAll("-.*", "") + ",en,null");
         Info info = new Info();
         info.at = System.currentTimeMillis();
         info.tagline = o.optString("tagline");
@@ -144,7 +145,28 @@ final class Details {
         if (rating > 0 && o.optInt("vote_count") >= 10) facts.add(String.format(Ui.locale(), "★ %.1f", rating));
         info.facts = String.join(" · ", facts);
         info.logo = logo(o.optJSONObject("watch/providers"));
+        info.trailer = trailer(o.optJSONObject("videos"));
         return info;
+    }
+
+    /** The YouTube id of the best trailer (in the TV's language, official first; a teaser if there is no trailer), or "". */
+    private static String trailer(JSONObject videos) {
+        JSONArray list = videos == null ? null : videos.optJSONArray("results");
+        String language = Ui.language.replaceAll("-.*", ""), best = "";
+        int bestScore = 0;
+        for (int i = 0; list != null && i < list.length(); i++) {
+            JSONObject v = list.optJSONObject(i);
+            if (v == null || !"YouTube".equals(v.optString("site")) || v.optString("key").isEmpty()) continue;
+            int score = "Trailer".equals(v.optString("type")) ? 10 : "Teaser".equals(v.optString("type")) ? 1 : 0;
+            if (score == 0) continue;
+            if (language.equals(v.optString("iso_639_1"))) score += 4;
+            if (v.optBoolean("official")) score += 2;
+            if (score > bestScore) {
+                bestScore = score;
+                best = v.optString("key");
+            }
+        }
+        return best;
     }
 
     /** The logo of the best service it streams on (subscription first), or "". */
@@ -242,6 +264,7 @@ final class Details {
             info.facts = o.optString("facts");
             info.backdrop = o.optString("backdrop");
             info.logo = o.optString("logo");
+            info.trailer = o.optString("trailer");
             return info;
         } catch (Exception e) {
             return null;
@@ -252,7 +275,7 @@ final class Details {
         try {
             String text = new JSONObject().put("v", VERSION).put("at", info.at).put("tagline", info.tagline)
                     .put("overview", info.overview).put("genres", info.genres).put("facts", info.facts)
-                    .put("backdrop", info.backdrop).put("logo", info.logo).toString();
+                    .put("backdrop", info.backdrop).put("logo", info.logo).put("trailer", info.trailer).toString();
             //noinspection ResultOfMethodCallIgnored
             f.getParentFile().mkdirs();
             File part = new File(f.getPath() + ".part");
