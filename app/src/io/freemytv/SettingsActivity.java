@@ -45,6 +45,7 @@ import java.util.Set;
  */
 public class SettingsActivity extends Activity {
     private SettingsView view;
+    private boolean fromHome;    // the preview was opened by the home screen's Screensaver button
     private DreamView preview;   // "Screensaver": the screensaver right here, without changing the system setting
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +62,7 @@ public class SettingsActivity extends Activity {
         // From ADB: am start -n io.freemytv/.SettingsActivity --ez screensaver true (straight to the preview).
         if (preview == null && getIntent().getBooleanExtra("screensaver", false)) {
             getIntent().removeExtra("screensaver");
+            fromHome = getIntent().getBooleanExtra("fromHome", false);   // the home screen's button: closing goes back there
             view.pause();
             showPreview();
         }
@@ -68,6 +70,7 @@ public class SettingsActivity extends Activity {
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        fromHome = false;
         setIntent(intent);
     }
 
@@ -88,7 +91,10 @@ public class SettingsActivity extends Activity {
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
                 case KeyEvent.KEYCODE_BACK:
-                    if (event.getAction() == KeyEvent.ACTION_UP) closePreview();
+                    if (event.getAction() == KeyEvent.ACTION_UP) {
+                        closePreview();
+                        if (fromHome) finish();
+                    }
                     return true;
                 default:
                     return super.dispatchKeyEvent(event);
