@@ -74,6 +74,18 @@
             </intent-filter>
         </activity>
 
+        <!-- The episodes of a show from Trakt (opened from the home screen's "Shows you watch" row). -->
+        <activity
+            android:name=".EpisodesActivity"
+            android:process=":home"
+            android:exported="false"
+            android:label="Free My TV"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/FreeMyTV.Home" />
+
         <!-- The home screen. Its own process (:home): if it ever crashes, the safety net in the main process still
              works. It only becomes the TV's home screen in Free My TV mode (cmd package set-home-activity). -->
         <activity

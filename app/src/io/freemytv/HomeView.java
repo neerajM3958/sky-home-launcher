@@ -105,7 +105,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6;
     // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
     // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
-    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 400, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
+    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 440, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
 
     private final Activity activity;
     private final Scene scene = new Scene();
@@ -223,7 +223,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int catRowIndex;
     private boolean catDirty, catWasMoving;
     private Paint lCatTitle, lCatLabel;
-    private final RectF cardRect = new RectF();
+    private final RectF cardRect = new RectF(), barRect = new RectF();
     private int drawerIndex;
 
     // "All Apps" sheet
@@ -1993,10 +1993,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
                 }
                 drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
+                if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
+                    barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
+                    fill.setShader(null);
+                    fill.setColor(0x73FFFFFF);
+                    c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
+                    barRect.right = barRect.left + barRect.width() * Math.min(1f, it.progress);
+                    fill.setColor(0xFFFFFFFF);
+                    c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
+                }
                 fitPaint.set(lCatLabel);
                 c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
                         cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
-                if (it.stars != null) c.drawText(it.stars, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
+                String meta = it.sub != null ? it.sub : it.stars;
+                if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
             }
         }
     }
@@ -2371,12 +2381,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             String app = recs.catalogApp();
             if (app == null || catRows.isEmpty()) return;
             listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
+            if (listed.episodes) {      // a show you watch: its episodes, not the app
+                click.open();
+                activity.startActivity(EpisodesActivity.intent(activity, listed));
+                return;
+            }
             Recs.Pick p = new Recs.Pick();
             p.id = listed.id;
             p.kind = listed.kind;
             p.title = listed.title;
             p.pkg = app;
             p.link = listed.link;
+            if (p.link == null && listed.imdb != null && Recs.STREMIO.equals(app)) p.link = Recs.stremioLink(listed.kind, listed.imdb);
             pick = p;
             it = HomeApps.app(app, listed.title, p.link);
             r = new RectF();

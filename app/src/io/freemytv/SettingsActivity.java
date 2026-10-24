@@ -119,13 +119,14 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6;
+        private static final int TRAKT_ROW = 6;   // the main menu's row that opens it
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
-        // The main menu: seven rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
+        // The main menu: eight rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
         // one 1080 px screen.
-        private static final float MAIN_TOP = 140, ROW_H = 62, MAIN_GAP = 4;
+        private static final float MAIN_TOP = 122, ROW_H = 56, MAIN_GAP = 4;
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
 
         private final SettingsActivity activity;
@@ -221,9 +222,12 @@ public class SettingsActivity extends Activity {
                         return Ui.trf("Home Screen, {mode}", "mode", value);
                     }
                     String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
-                            Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"), Ui.tr("TV Settings")};
+                            Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"),
+                            Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TV Settings")};
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
+                case TRAKT:
+                    return traktAction();
                 case HOME_CHOICE: {
                     String name = row == 0 ? "Free My TV, " + Ui.tr("no ads, with the new screensaver")
                             : "Original, " + Ui.tr("the TV's factory home screen");
@@ -303,6 +307,7 @@ public class SettingsActivity extends Activity {
             w = width;
             h = height;
             k = w / 1920f;
+            wraps.clear();
             scene.setSize(w, h);
             title = Ui.text(Ui.displaySemibold, 50 * k, 0xFFFFFFFF);
             title.setTextAlign(Paint.Align.CENTER);
@@ -347,7 +352,8 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 7;
+                case MAIN: return 8;
+                case TRAKT: return 1;
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -380,7 +386,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -389,8 +395,8 @@ public class SettingsActivity extends Activity {
             String mode = freeActive() ? "Free My TV" : Ui.tr("Original");
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
-                    Ui.tr("Remote Buttons"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", ""};
+                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TV Settings")};
+            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -403,6 +409,10 @@ public class SettingsActivity extends Activity {
                 if (i >= 2) {
                     float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
                     Symbols.draw(getContext(), c, "chevron_right", right - cw / 2, rowRect.centerY(), 22 * k, blend(0x66FFFFFF, 0x991C1C1E, f));
+                    if (!values[i].isEmpty()) {
+                        rowValue.setColor(blend(0x8CFFFFFF, 0x8C1C1C1E, f));
+                        c.drawText(values[i], right - cw - 14 * k, base, rowValue);
+                    }
                 } else if (i == 0 && working) {
                     // Switching: the current step in place of the value, with the spinning arc.
                     String text = busyText.isEmpty() ? Ui.tr("Starting…") : busyText;
@@ -624,6 +634,10 @@ public class SettingsActivity extends Activity {
                             } else if (screen == PICKER) {
                                 focus = pickFor - 1;
                                 screen = REMOTE_KEYS;
+                            } else if (screen == TRAKT) {
+                                Trakt.get(getContext()).cancelLogin();
+                                focus = TRAKT_ROW;
+                                screen = MAIN;
                             } else {
                                 focus = screen == HOME_SETTINGS ? 2 : screen == SHELF_EDIT ? (editingTop ? 4 : 3)
                                         : screen == REMOTE_KEYS ? 5 : 0;
@@ -637,6 +651,143 @@ public class SettingsActivity extends Activity {
                     return true;
                 default:
                     return false;
+            }
+        }
+
+        // MARK: - Trakt
+
+        /** The main menu's value: whether Trakt is connected. */
+        private String traktStatus() {
+            Trakt t = Trakt.get(getContext());
+            if (!Trakt.configured()) return Ui.tr("Not set up");
+            if (t.connected()) return Ui.tr("Connected");
+            return t.needsReconnect() ? Ui.tr("Reconnect") : Ui.tr("Not connected");
+        }
+
+        /** The one button of the Trakt screen. */
+        private String traktAction() {
+            Trakt t = Trakt.get(getContext());
+            if (t.loginState() != Trakt.IDLE) return Ui.tr("Cancel");
+            if (t.connected()) return Ui.tr("Disconnect");
+            return t.needsReconnect() ? Ui.tr("Reconnect") : Ui.tr("Connect");
+        }
+
+        private void traktPressed() {
+            Trakt t = Trakt.get(getContext());
+            if (!Trakt.configured()) return;
+            if (t.loginState() != Trakt.IDLE) t.cancelLogin();
+            else if (t.connected()) t.disconnect();
+            else t.startLogin();
+        }
+
+        private final java.util.Map<String, StaticLayout> wraps = new java.util.HashMap<>();
+
+        /** `text` wrapped to `width`, made once per text (the screen draws it every frame). */
+        private StaticLayout wrapped(String text, int width) {
+            String key = width + ":" + text;
+            StaticLayout l = wraps.get(key);
+            if (l == null) {
+                l = StaticLayout.Builder.obtain(text, 0, text.length(), notice, width).build();
+                wraps.put(key, l);
+            }
+            return l;
+        }
+
+        private float drawWrapped(Canvas c, String text, float x, float y, float gap) {
+            return drawWrapped(c, text, x, y, gap, 790 * k);
+        }
+
+        // The sign-in code as a QR code (the address with the code in it, so the phone's camera needs no typing).
+        private final Paint qrInk = new Paint(), qrBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private String qrFor = "";
+        private android.graphics.Path qrPath;
+        private int qrModules;
+
+        private void drawQr(Canvas c, String code, float x, float top) {
+            if (!code.equals(qrFor)) {
+                qrFor = code;
+                boolean[][] m = Qr.encode("https://trakt.tv/activate/" + code);
+                qrPath = null;
+                if (m != null) {
+                    qrModules = m.length;
+                    qrPath = new android.graphics.Path();
+                    for (int y = 0; y < m.length; y++) for (int i = 0; i < m.length; i++) if (m[y][i]) qrPath.addRect(i, y, i + 1, y + 1, android.graphics.Path.Direction.CW);
+                }
+            }
+            if (qrPath == null) return;
+            float side = 330 * k, module = side / (qrModules + 8);      // a four-module quiet zone, as the standard asks
+            qrBg.setColor(0xFFFFFFFF);
+            tmp.set(x, top, x + side, top + side);
+            c.drawRoundRect(tmp, 16 * k, 16 * k, qrBg);
+            qrInk.setColor(0xFF000000);
+            c.save();
+            c.translate(x + 4 * module, top + 4 * module);
+            c.scale(module, module);
+            c.drawPath(qrPath, qrInk);
+            c.restore();
+            drawWrapped(c, Ui.tr("Or scan this with your phone's camera."), x + side + 32 * k, top + side / 2 - 12 * k, 0, LIST_R * k - (x + side + 32 * k));
+        }
+
+        /** Draws wrapped text with its first baseline at `y`; returns where the next text's first baseline goes, `gap` below this one. */
+        private float drawWrapped(Canvas c, String text, float x, float y, float gap, float width) {
+            StaticLayout l = wrapped(text, Math.round(width));
+            c.save();
+            c.translate(x, y - l.getLineBaseline(0));
+            l.draw(c);
+            c.restore();
+            return y + (l.getLineBaseline(l.getLineCount() - 1) - l.getLineBaseline(0)) + 34 * k + gap;
+        }
+
+        private String traktError(int error) {
+            switch (error) {
+                case Trakt.ERR_NETWORK: return Ui.tr("Couldn't reach Trakt. Check the network and try again.");
+                case Trakt.ERR_DENIED: return Ui.tr("Trakt said no: the code was denied.");
+                case Trakt.ERR_EXPIRED: return Ui.tr("The code expired. Press Connect for a new one.");
+                case Trakt.ERR_REFUSED: return Ui.tr("Trakt refused the Client ID: check trakt_client_id in config.properties.");
+                default: return "";
+            }
+        }
+
+        private void drawTrakt(Canvas c) {
+            Trakt t = Trakt.get(getContext());
+            float x = LIST_X * k + 30 * k;
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            c.drawText(Ui.tr("Trakt"), x, (LIST_TOP - 24) * k, heading);
+            float y0 = (LIST_TOP + 20) * k;
+            rowRect.set(LIST_X * k, y0, LIST_R * k, y0 + LIST_ROW_H * k);
+            float f = drawRowBackground(c, 0);
+            boolean usable = Trakt.configured();
+            rowLabel.setColor(blend(usable ? 0xF2FFFFFF : 0x73FFFFFF, usable ? INK : 0x731C1C1E, f));
+            c.drawText(traktAction(), rowRect.left + 30 * k, rowRect.centerY() + Ui.halfCap(rowLabel), rowLabel);
+            rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+            c.drawText(traktStatus(), rowRect.right - 30 * k, rowRect.centerY() + Ui.halfCap(rowLabel), rowValue);
+
+            float y = (LIST_TOP + 20 + LIST_ROW_H + 64) * k;
+            int state = t.loginState();
+            if (!usable) {
+                drawWrapped(c, Ui.tr("No Trakt Client ID: see the README (config.properties)."), x, y, 0);
+            } else if (state == Trakt.WAITING) {
+                y = drawWrapped(c, Ui.trf("On your phone or computer, go to {url} and enter this code:", "url", t.loginUrl()), x, y, 30 * k);
+                Paint code = Ui.text(Ui.displaySemibold, 92 * k, 0xFFFFFFFF);
+                code.setLetterSpacing(0.14f);
+                c.drawText(t.loginCode(), x, y + 70 * k, code);
+                long left = t.loginSecondsLeft();
+                c.drawText(Ui.trf("Expires in {time}", "time", String.format(Ui.locale(), "%d:%02d", left / 60, left % 60)),
+                        x, y + 134 * k, notice);
+                drawQr(c, t.loginCode(), x, y + 178 * k);
+            } else if (state == Trakt.STARTING) {
+                c.drawText(Ui.tr("Asking Trakt for a code…"), x, y, notice);
+            } else {
+                String error = traktError(t.loginError());
+                if (!error.isEmpty()) y = drawWrapped(c, error, x, y, 24 * k);
+                else if (t.needsReconnect() && !t.connected()) y = drawWrapped(c, Ui.tr("Trakt asked you to sign in again."), x, y, 24 * k);
+                if (t.connected()) {
+                    y = drawWrapped(c, Ui.tr("Continue Watching and Watchlist show under the cards on the home screen."), x, y, 14 * k);
+                    drawWrapped(c, Ui.tr("Free My TV only reads your Trakt lists."), x, y, 0);
+                } else {
+                    y = drawWrapped(c, Ui.tr("Connect your Trakt account to see Continue Watching and Watchlist under the home screen's cards."), x, y, 14 * k);
+                    drawWrapped(c, Ui.tr("You sign in on your phone or computer with a short code. Free My TV only reads your lists."), x, y, 0);
+                }
             }
         }
 
@@ -1029,6 +1180,11 @@ public class SettingsActivity extends Activity {
                 toggleShelfApp();
                 invalidate();
                 return;
+            } else if (screen == TRAKT) {
+                traktPressed();
+                invalidate();
+                spoken.focusMoved();
+                return;
             } else if (screen == REMOTE_KEYS) {
                 openPicker(focus + 1);
             } else if (screen == HOME_SETTINGS && focus == 0) {
@@ -1058,6 +1214,9 @@ public class SettingsActivity extends Activity {
                 HomeMode.ensureRemoteService(c, 0);   // the buttons work from inside other apps through this service
                 loadApps();
                 screen = REMOTE_KEYS;
+                focus = 0;
+            } else if (focus == TRAKT_ROW) {
+                screen = TRAKT;
                 focus = 0;
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

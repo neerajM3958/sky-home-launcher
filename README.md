@@ -109,6 +109,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `tmdb_key` | Your free TMDB key, for the picks | empty |
 | `tmdb_region` | Your country (two letters): which titles are on which app | `US` |
 | `watchmode_key` | Optional, free [Watchmode](https://api.watchmode.com/) key: a pick opens the title's page in its app | empty |
+| `trakt_client_id` | Optional, your free [Trakt](https://trakt.tv) Client ID: *Continue Watching* and *Watchlist* rows under the home screen's cards (see [Your Trakt lists](#your-trakt-lists-optional)) | empty |
 | `latitude`, `longitude` | Your city, for the weather and the sunset | New York |
 | `city` | The name on the weather card | `Weather` |
 | `hide_animation` | Leave cartoons and anime out of the picks | `false` |
@@ -134,6 +135,18 @@ Free, and it takes two minutes: create an account at [themoviedb.org](https://ww
 ### Opening a title, not just its app (optional)
 
 With a free [Watchmode](https://api.watchmode.com/) key (`watchmode_key=` in `config.properties`), a pick opens its own page in the streaming app instead of the app's home. The free plan (2,500 credits a month) is enough: each title costs two requests the first time and is remembered after that. It works where the app takes the title's web address (tested: Prime Video and JioHotstar); where it doesn't, the pick just opens the app, as without a key.
+
+### Your Trakt lists (optional)
+
+Free Trakt account, Android and Google TV only. Three rows appear first under the home screen's cards: *Continue Watching* (what you stopped part-way and the next episode of the shows you follow, with a bar on what's part-way), *Shows you watch* (the one you watched most recently first; one you saw once, over a year ago, was a try and is left out) and *Watchlist*.
+
+1. Create an app at [app.trakt.tv/settings/apps/api/new](https://app.trakt.tv/settings/apps/api/new). The form asks for a redirect URI that Free My TV never uses: put `urn:ietf:wg:oauth:2.0:oob`. There is no secret; copy the *Client ID*.
+2. Paste it after `trakt_client_id=` in `config.properties`, run `./build.sh` and install again.
+3. On the TV: *Free My TV* → *Trakt* → *Connect*. It shows a short code and a QR code: scan the QR code with your phone's camera (the code is already in the link), or open the address and enter the code. No password is typed on the TV, and Free My TV only reads your lists.
+
+OK on a show in *Shows you watch* opens its episodes: every episode with its number and air date, watched ones marked, and a bar of four buttons on top: **sort** (number or date, newest or oldest first), **season**, **date** (last 7 or 30 days, this year, a year, not aired yet) and **watched** (all, unwatched, watched). The filters combine, *Clear filters* resets them, and the sort is remembered. It opens on the next episode you haven't seen; ← → jump a season, Channel + and − scroll a page, Back goes up to the buttons and then out; OK opens the episode in Stremio.
+
+Other titles open in the app of the `*` rule of `service_map` (Stremio opens on the title's page), so the rows need that rule, like `catalogs`. *Trakt* → *Disconnect* forgets the sign-in. The rows follow what Trakt has: Stremio, for one, adds to your history only when you connect Trakt in its settings.
 
 ## Going back
 
@@ -235,7 +248,7 @@ reference (fix them by hand); the others were machine-made, and corrections from
 
 ## Privacy
 
-No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, and Watchmode only when you set a `watchmode_key`. Your settings stay on your computer and your TV.
+No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, Watchmode only when you set a `watchmode_key`, and Trakt only after you connect it (your sign-in stays on your TV). Your settings stay on your computer and your TV.
 
 ## Credits
 
