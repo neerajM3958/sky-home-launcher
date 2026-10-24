@@ -519,6 +519,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cancelReorder(true);
         handler.removeCallbacks(holdStart);
         okHeld = holdArmed = false;
+        cancelAutoTrailer();
         stopTrailer();
         if (trailer != null) {      // the WebView's memory goes back while the home screen is away
             trailer.release();
@@ -1981,6 +1982,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         browseInfo = details.info(browseShown.kind, browseShown.id);
         browseTextGen = -1;
         browseDirty = true;
+        scheduleAutoTrailer();
         wake();
     }
 
@@ -2213,6 +2215,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void leaveBrowse() {
+        cancelAutoTrailer();
         stopTrailer();
         browseIn.target = 0;
         if (!catRows.isEmpty()) zone = Z_CATALOG;
@@ -2279,6 +2282,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         browseTextGen = -1;
         browseDirty = true;
+        trailerSpent = false;
+        cancelAutoTrailer();
+        scheduleAutoTrailer();
         wake();
     }
 
@@ -2431,6 +2437,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private TrailerPlayer trailer;
     private boolean trailerOn;
+    private static final long AUTO_TRAILER_MS = 3000;
+    /** This title's trailer has played or been stopped: no new automatic start until the focus moves to another title. */
+    private boolean trailerSpent, autoPending;
+    private final Runnable autoTrailer = () -> {
+        autoPending = false;
+        if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer();
+    };
     private String trailerId = "";
     private final RectF pill = new RectF();
     private final Paint spin = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -2455,6 +2468,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     };
 
+    /** Resting on a title starts its trailer after a few seconds, when trailers are on the home screen and the player can run. */
+    private boolean autoTrailerOk() {
+        return Prefs.trailers() && TrailerPlayer.available() && browseInfo != null && !browseInfo.trailer.isEmpty();
+    }
+
+    private void scheduleAutoTrailer() {
+        if (autoPending || trailerSpent || trailerOn || zone != Z_BROWSE || !autoTrailerOk()) return;
+        autoPending = true;
+        handler.postDelayed(autoTrailer, AUTO_TRAILER_MS);
+    }
+
+    private void cancelAutoTrailer() {
+        autoPending = false;
+        handler.removeCallbacks(autoTrailer);
+    }
+
     /** Long press on OK or the remote's Play/Pause: starts the trailer, or pauses or resumes the one playing. */
     private void trailerKey() {
         if (trailerOn) trailer.togglePause();
@@ -2463,6 +2492,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void startTrailer() {
         if (zone != Z_BROWSE) return;
+        cancelAutoTrailer();
+        trailerSpent = true;
         trailerId = browseInfo == null ? "" : browseInfo.trailer;
         if (trailerId.isEmpty()) {
             showToast(Ui.tr("This title has no trailer."));
@@ -2481,6 +2512,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void stopTrailer() {
         if (!trailerOn) return;
+        trailerSpent = true;
         trailerOn = false;
         trailer.stop();
         browseDirty = true;
