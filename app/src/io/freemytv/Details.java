@@ -33,14 +33,14 @@ import java.util.concurrent.Executors;
  */
 final class Details {
     static final class Info {
-        String tagline = "", overview = "", genres = "", facts = "", backdrop = "", logo = "", trailer = "";
+        String tagline = "", overview = "", genres = "", facts = "", backdrop = "", logo = "", trailer = "", trailers = "";      // trailers: the YouTube ids worth trying, best first, comma apart; trailer: the first
         long at;
     }
 
     interface Listener { void onDetails(); }
 
     private static final long FRESH_MS = 7 * 24 * 3600_000L;
-    private static final int VERSION = 2, KEEP = 200;
+    private static final int VERSION = 3, KEEP = 200, TRAILERS = 4;
     private static final String IMAGES = "https://image.tmdb.org/t/p/" + (Backdrop.W <= 1280 ? "w780" : "w1280");
 
     private static Details instance;
@@ -145,15 +145,20 @@ final class Details {
         if (rating > 0 && o.optInt("vote_count") >= 10) facts.add(String.format(Ui.locale(), "★ %.1f", rating));
         info.facts = String.join(" · ", facts);
         info.logo = logo(o.optJSONObject("watch/providers"));
-        info.trailer = trailer(o.optJSONObject("videos"));
+        info.trailers = trailers(o.optJSONObject("videos"));
+        info.trailer = info.trailers.split(",")[0];
         return info;
     }
 
-    /** The YouTube id of the best trailer (in the TV's language, official first; a teaser if there is no trailer), or "". */
-    private static String trailer(JSONObject videos) {
+    /**
+     * The YouTube ids of the trailers worth trying, best first, up to TRAILERS, comma apart ("" when there is none): in the TV's
+     * language first, official first, trailers before teasers. A trailer can be blocked in the region or for embedding, so the
+     * player tries the next one before it gives up.
+     */
+    private static String trailers(JSONObject videos) {
         JSONArray list = videos == null ? null : videos.optJSONArray("results");
-        String language = Ui.language.replaceAll("-.*", ""), best = "";
-        int bestScore = 0;
+        String language = Ui.language.replaceAll("-.*", "");
+        List<String[]> found = new ArrayList<>();       // {score, key}
         for (int i = 0; list != null && i < list.length(); i++) {
             JSONObject v = list.optJSONObject(i);
             if (v == null || !"YouTube".equals(v.optString("site")) || v.optString("key").isEmpty()) continue;
@@ -161,12 +166,14 @@ final class Details {
             if (score == 0) continue;
             if (language.equals(v.optString("iso_639_1"))) score += 4;
             if (v.optBoolean("official")) score += 2;
-            if (score > bestScore) {
-                bestScore = score;
-                best = v.optString("key");
-            }
+            boolean seen = false;
+            for (String[] f : found) seen |= f[1].equals(v.optString("key"));
+            if (!seen) found.add(new String[] {String.valueOf(100 - score), v.optString("key")});      // 100 - score: sorts best first as text of the same length
         }
-        return best;
+        java.util.Collections.sort(found, (x, y) -> Integer.compare(Integer.parseInt(x[0]), Integer.parseInt(y[0])));
+        List<String> keys = new ArrayList<>();
+        for (int i = 0; i < found.size() && i < TRAILERS; i++) keys.add(found.get(i)[1]);
+        return String.join(",", keys);
     }
 
     /** The logo of the best service it streams on (subscription first), or "". */
@@ -265,6 +272,7 @@ final class Details {
             info.backdrop = o.optString("backdrop");
             info.logo = o.optString("logo");
             info.trailer = o.optString("trailer");
+            info.trailers = o.optString("trailers");
             return info;
         } catch (Exception e) {
             return null;
@@ -275,7 +283,7 @@ final class Details {
         try {
             String text = new JSONObject().put("v", VERSION).put("at", info.at).put("tagline", info.tagline)
                     .put("overview", info.overview).put("genres", info.genres).put("facts", info.facts)
-                    .put("backdrop", info.backdrop).put("logo", info.logo).put("trailer", info.trailer).toString();
+                    .put("backdrop", info.backdrop).put("logo", info.logo).put("trailer", info.trailer).put("trailers", info.trailers).toString();
             //noinspection ResultOfMethodCallIgnored
             f.getParentFile().mkdirs();
             File part = new File(f.getPath() + ".part");

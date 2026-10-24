@@ -2447,6 +2447,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer(true);
     };
     private String trailerId = "";
+    private String[] trailerIds = new String[0];     // this title's candidates, best first, and which one plays
+    private int trailerAt;
     private final RectF pill = new RectF();
     private final Paint spin = new Paint(Paint.ANTI_ALIAS_FLAG);
     {
@@ -2465,9 +2467,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
 
         @Override public void onFailed() {
+            if (trailerOn && trailerAt + 1 < trailerIds.length) {      // blocked here or not embeddable: the next trailer of the title
+                trailerAt++;
+                playTrailerAt();
+                return;
+            }
             boolean auto = trailerAuto;
             stopTrailer();
-            if (!auto) openYoutube(trailerId);       // asked for with a long press, and the embedded player won't play it: the YouTube app will
+            if (!auto) openYoutube(trailerIds.length > 0 ? trailerIds[0] : trailerId);       // asked for with a long press, and the embedded player won't play it: the YouTube app will
         }
     };
 
@@ -2499,7 +2506,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cancelAutoTrailer();
         trailerSpent = true;
         trailerAuto = auto;
-        trailerId = browseInfo == null ? "" : browseInfo.trailer;
+        trailerIds = browseInfo == null || browseInfo.trailers.isEmpty() ? new String[0] : browseInfo.trailers.split(",");
+        trailerAt = 0;
+        trailerId = trailerIds.length > 0 ? trailerIds[0] : "";
         if (trailerId.isEmpty()) {
             if (!auto) showToast(Ui.tr("This title has no trailer."));
             return;
@@ -2509,9 +2518,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         if (trailer == null) trailer = new TrailerPlayer(getContext(), trailerListener);
-        browseStage(stage);
-        trailer.play(trailerId, Math.round(stage.left), Math.round(stage.top), Math.round(stage.width()), Math.round(stage.height()));
         trailerOn = true;
+        playTrailerAt();
+    }
+
+    /** Plays the candidate `trailerAt` in the video window. */
+    private void playTrailerAt() {
+        browseStage(stage);
+        trailerId = trailerIds[trailerAt];
+        trailer.play(trailerId, Math.round(stage.left), Math.round(stage.top), Math.round(stage.width()), Math.round(stage.height()));
         browseDirty = true;
     }
 
