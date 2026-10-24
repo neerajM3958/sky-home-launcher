@@ -2215,6 +2215,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void leaveBrowse() {
+        browseTouched = "";
         cancelAutoTrailer();
         stopTrailer();
         browseIn.target = 0;
@@ -2282,8 +2283,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         browseTextGen = -1;
         browseDirty = true;
-        trailerSpent = false;
-        cancelAutoTrailer();
+        String key = it == null ? "" : it.kind + it.id;
+        if (!key.equals(browseTouched)) {      // another title (not just the lists made again): its trailer may start by itself
+            browseTouched = key;
+            trailerSpent = false;
+            cancelAutoTrailer();
+        }
         scheduleAutoTrailer();
         wake();
     }
@@ -2447,6 +2452,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer(true);
     };
     private String trailerId = "";
+    /** Titles whose every trailer the embedded player refused (this run): no hint and no autoplay for them. */
+    private final java.util.Set<String> trailerBlocked = new java.util.HashSet<>();
+    private String browseTouched = "";      // the title focused last: kind + id
     private String[] trailerIds = new String[0];     // this title's candidates, best first, and which one plays
     private int trailerAt;
     private final RectF pill = new RectF();
@@ -2473,14 +2481,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return;
             }
             boolean auto = trailerAuto;
+            if (browseShown != null) trailerBlocked.add(browseShown.kind + browseShown.id);
             stopTrailer();
-            if (!auto) openYoutube(trailerIds.length > 0 ? trailerIds[0] : trailerId);       // asked for with a long press, and the embedded player won't play it: the YouTube app will
+            if (!auto) showToast(Ui.tr("This trailer isn't available in your region."));      // asked for with a long press: say why nothing plays       // asked for with a long press, and the embedded player won't play it: the YouTube app will
         }
     };
 
     /** Resting on a title starts its trailer after a few seconds, when trailers are on the home screen and the player can run. */
     private boolean autoTrailerOk() {
-        return Prefs.trailers() && TrailerPlayer.available() && browseInfo != null && !browseInfo.trailer.isEmpty();
+        return Prefs.trailers() && TrailerPlayer.available() && playableTrailer();
+    }
+
+    /** The focused title has a trailer and the embedded player hasn't refused them all. */
+    private boolean playableTrailer() {
+        return browseInfo != null && !browseInfo.trailer.isEmpty() && browseShown != null
+                && !trailerBlocked.contains(browseShown.kind + browseShown.id);
     }
 
     private void scheduleAutoTrailer() {
@@ -2506,6 +2521,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cancelAutoTrailer();
         trailerSpent = true;
         trailerAuto = auto;
+        if (!auto && browseShown != null && trailerBlocked.contains(browseShown.kind + browseShown.id)) {      // refused before: don't try again
+            showToast(Ui.tr("This trailer isn't available in your region."));
+            return;
+        }
         trailerIds = browseInfo == null || browseInfo.trailers.isEmpty() ? new String[0] : browseInfo.trailers.split(",");
         trailerAt = 0;
         trailerId = trailerIds.length > 0 ? trailerIds[0] : "";
@@ -2575,7 +2594,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The small "Hold OK for the trailer" pill at the video window's foot, while there is a trailer and it isn't playing. */
     private void drawTrailerHint(Canvas c) {
-        if (zone != Z_BROWSE || trailerOn || browseInfo == null || browseInfo.trailer.isEmpty()) return;
+        if (zone != Z_BROWSE || trailerOn || !playableTrailer()) return;
         String text = Ui.tr("Hold OK for the trailer");
         float pad = 24 * k, arrow = 18 * k, gap = 14 * k, hh = 54 * k;
         float x = stage.left + 24 * k, y = stage.bottom - 24 * k - hh;
