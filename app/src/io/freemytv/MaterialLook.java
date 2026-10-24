@@ -331,23 +331,32 @@ final class MaterialLook extends Look {
         return REGULAR;
     }
 
-    @Override boolean cardCaption(Canvas c, RectF cell, float radius, int index, String title, String meta, float f, float night) {
-        boolean wide = index == 0;
-        if (!wide && meta != null) {
+    private static float lerp(float a, float b, float t) {
+        return a + (b - a) * t;
+    }
+
+    private static int fade(int color, float a) {
+        return (Math.round((color >>> 24) * Math.max(0, Math.min(1, a))) << 24) | (color & 0x00FFFFFF);
+    }
+
+    @Override boolean cardCaption(Canvas c, RectF cell, float radius, float wide, String title, String meta, float f, float night, float reveal) {
+        if (wide < 0.5f && meta != null) {
             // Room for the genre and the rating only.
             String[] parts = meta.split(" · ");
             if (parts.length > 2) meta = parts[parts.length - 2] + " · " + parts[parts.length - 1];
         }
-        float pad = (wide ? 32 : 20) * k, width = cell.width() - 2 * pad;
-        Paint t = wide ? heroTitle : cardTitle, d = wide ? heroMeta : cardMeta;
+        float pad = lerp(20, 32, wide) * k, width = cell.width() - 2 * pad;
+        Paint t = heroTitle, d = heroMeta;
+        t.setTextSize(lerp(34, 56, wide) * k);
+        d.setTextSize(lerp(23, 30, wide) * k);
         // A scrim over the bottom of the artwork keeps the text readable on any picture: dark, but on the small cards
         // by day a light fade with dark text.
-        float top = cell.bottom - cell.height() * (wide ? 0.62f : 0.5f);
+        float top = cell.bottom - cell.height() * lerp(0.5f, 0.62f, wide);
         scrimMatrix.setScale(1, cell.bottom - top);
         scrimMatrix.postTranslate(0, top);
         scrim.setLocalMatrix(scrimMatrix);
         scrimLight.setLocalMatrix(scrimMatrix);
-        float dayAmt = wide ? 0 : 1 - night;
+        float dayAmt = (1 - wide) * (1 - night);
         if (dayAmt < 0.999f) {
             paint.setShader(scrim);
             paint.setAlpha(Math.round(255 * (1 - dayAmt)));
@@ -360,8 +369,10 @@ final class MaterialLook extends Look {
         }
         paint.setShader(null);
         paint.setAlpha(255);
-        int ink = blend(0xFFFFFFFF, palette(ON_SURFACE, night), dayAmt), inkDim = blend(0xCCFFFFFF, palette(ON_VARIANT, night), dayAmt);
-        float base = cell.bottom - pad;
+        int ink = fade(blend(0xFFFFFFFF, palette(ON_SURFACE, night), dayAmt), reveal);
+        int inkDim = fade(blend(0xCCFFFFFF, palette(ON_VARIANT, night), dayAmt), reveal);
+        // The text comes in a beat after the picture: it rises a little as it appears.
+        float base = cell.bottom - pad + (1 - reveal) * 18 * k;
         if (meta != null && !meta.isEmpty()) {
             d.setColor(inkDim);
             // The rating's star in yellow, the rest of the line in the secondary ink.
@@ -374,7 +385,7 @@ final class MaterialLook extends Look {
                 String before = line.substring(0, star);
                 c.drawText(before, x, base, d);
                 x += d.measureText(before);
-                d.setColor(STAR);
+                d.setColor(fade(STAR, reveal));
                 c.drawText("★", x, base, d);
                 x += d.measureText("★");
                 d.setColor(inkDim);

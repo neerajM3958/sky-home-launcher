@@ -140,6 +140,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // At the top: tabs (0 to 2) and icon-only buttons (3 to 5); the three cards
     private int tab, topIndex, cardIndex;
+    private final Recs.Pick[] prevCards = new Recs.Pick[3];     // the picks the cards showed before the change in progress
+    private final RectF fadeBounds = new RectF();
+    // The picks travel through the cards: `carousel` is the position of the row in cards (it follows `carouselTarget`, the
+    // number of steps taken, on a spring with a little overshoot), the pick `a` sits `a - position` cards from the first.
+    private final Spring carousel = new Spring(0.44f, 0.8f, 0);
+    private int carouselTarget;
+    private final RectF slotA = new RectF(), slotB = new RectF(), travel = new RectF();
+    private final Rect imageSrc = new Rect();
+    private long cardMixAt;         // when the cards last changed their picks (0: never)
+    private int cardMixDir;         // 1: the next picks (slide left), -1: the previous ones, 0: just fade
+    private boolean cardsAnimating; // a picture is fading in (set while drawing)
     private int cardStart;      // with more than 3 picks: the one in the first card; the others follow, in a circle
     private int widgetIndex;    // with TalkBack on, the drawer's weather (0) or quotes (1) card can take the focus
     private List<Recs.Pick> cards = new ArrayList<>();
@@ -358,7 +369,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Runnable rotate = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            if (zone != Z_CARDS && !sheetOpen && !drawerOpen) rotateCards(1);
+            if (zone != Z_CARDS && !sheetOpen && !drawerOpen && cards.size() > 3) rotateCards(1);
             handler.postDelayed(this, Config.PICK_ROTATE_SECONDS * 1000L);
         }
     };
@@ -727,6 +738,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean catMoving = catIn.step(dt) | catRow.step(dt) | catFocus.step(dt) | step(catShift, dt);
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
+        heroMoving |= tickCards(up);
+        heroMoving |= carousel.step(dt);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
@@ -1413,12 +1426,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * a 49 ms frame), so there the image is the shader of a rounded rectangle instead, which looks the same.
      */
     private void roundImage(Canvas c, Bitmap image, RectF cell, float r) {
+        roundImage(c, image, cell, r, 0);
+    }
+
+    /** As above; the picture is cropped to the shape of `cell` (never stretched), `shift` moving the crop sideways (a share of its width). */
+    private void roundImage(Canvas c, Bitmap image, RectF cell, float r, float shift) {
         if (!Ui.LEGACY) {
+            int iw = image.getWidth(), ih = image.getHeight();
+            float want = cell.width() / cell.height(), sw = iw, sh = ih;
+            if ((float) iw / ih > want) sw = ih * want;
+            else sh = iw / want;
+            float sx = Math.max(0, Math.min(iw - sw, (iw - sw) / 2 + shift * sw)), sy = (ih - sh) / 2;
+            imageSrc.set(Math.round(sx), Math.round(sy), Math.round(sx + sw), Math.round(sy + sh));
             clip.reset();
             clip.addRoundRect(cell, r, r, Path.Direction.CW);
             c.save();
             c.clipPath(clip);
-            c.drawBitmap(image, null, cell, bitmapPaint);
+            c.drawBitmap(image, imageSrc, cell, bitmapPaint);
             c.restore();
             return;
         }
@@ -2974,8 +2998,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void updateCards() {
         List<Recs.Pick> list = recs.now(TAB_KIND[tab]);
         if (!samePicks(list, cards)) {
+            startCardTransition(0);
             cards = list;
             cardStart = 0;
+            carouselTarget = 0;
+            carousel.snap(0);
             cardIndex = Math.min(cardIndex, Math.max(0, Math.min(3, list.size()) - 1));
             if (zone == Z_CARDS && list.isEmpty()) {
                 zone = Z_SHELF;
@@ -3003,11 +3030,156 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return slot < 0 || slot >= Math.min(3, n) ? null : cards.get((cardStart + slot) % n);
     }
 
-    /** Slides the cards by `step` picks (more than three picks only). */
+    /** Keeps what the cards show now, to fade it out while the new picks come in (called before they change). */
+    private void startCardTransition(int dir) {
+        if (Ui.LEGACY) return;
+        for (int i = 0; i < prevCards.length; i++) prevCards[i] = cardAt(i);
+        cardMixAt = SystemClock.uptimeMillis();
+        cardMixDir = dir;
+        wake();
+    }
+
+    /** True while the cards change their picks (the frames go on until it is done). */
+    private boolean tickCards(long up) {
+        boolean on = cardsAnimating || (cardMixAt != 0 && up - cardMixAt < look.m.cardFadeMs + 50);
+        cardsAnimating = false;
+        return on;
+    }
+
+    /** Card `i`: when the picks just changed, the old one slides out and fades while the new one slides in and fades. */
+    private void drawCardSlot(Canvas c, int i) {
+        long up = SystemClock.uptimeMillis();
+        float t = cardMixAt == 0 ? 1 : (up - cardMixAt) / (float) look.m.cardFadeMs;
+        if (t >= 1) {
+            drawLightCard(c, i, cardAt(i));
+            return;
+        }
+        cardsAnimating = true;
+        float stagger = look.m.cardStagger;
+        float u = Ui.clamp((t - i * stagger) / (1 - 2 * stagger));
+        u = u * u * (3 - 2 * u);
+        Recs.Pick old = prevCards[i], now = cardAt(i);
+        float d = look.m.cardSlide * k * cardMixDir;
+        boolean same = old == now;
+        if (old != null && !same) drawFaded(c, i, old, 1 - u, -d * u);
+        if (now != null) drawFaded(c, i, now, same ? 1 : u, same ? 0 : d * (1 - u));
+    }
+
+    private static float lerp(float a, float b, float t) {
+        return a + (b - a) * t;
+    }
+
+    /** The rectangle of card slot `j` (0 to 2 are the cards; -1 is where a card leaves to, 3 where one comes from). */
+    private void slotRect(int j, RectF out) {
+        RectF r0 = cardRects[0], r1 = cardRects[1], r2 = cardRects[2];
+        float tall = r1.width(), gap = r1.left - r0.right;
+        if (j < 0) out.set(r0.left - gap - tall, r0.top, r0.left - gap, r0.bottom);
+        else if (j > 2) out.set(r2.right + gap, r2.top, r2.right + gap + tall, r2.bottom);
+        else out.set(cardRects[j]);
+    }
+
+    /** The rectangle of a card `x` slots from the first: between the two slots it is moving between. */
+    private void slotAt(float x, RectF out) {
+        int j = Math.max(-1, Math.min(2, (int) Math.floor(x)));
+        float t = x - j;
+        slotRect(j, slotA);
+        slotRect(j + 1, slotB);
+        out.set(lerp(slotA.left, slotB.left, t), lerp(slotA.top, slotB.top, t), lerp(slotA.right, slotB.right, t), lerp(slotA.bottom, slotB.bottom, t));
+    }
+
+    /** The cards while the picks travel: each pick moves from its slot to the next, changing shape on the way. */
+    private void drawCarousel(Canvas c) {
+        float pos = carousel.value;
+        int first = (int) Math.floor(pos) - 1, last = (int) Math.floor(pos) + 3, nearest = first;
+        for (int a = first; a <= last; a++) if (Math.abs(a - pos) < Math.abs(nearest - pos)) nearest = a;
+        for (int a = first; a <= last; a++) if (a != nearest) drawTravelCard(c, a, pos);
+        drawTravelCard(c, nearest, pos);
+    }
+
+    private void drawTravelCard(Canvas c, int a, float pos) {
+        float x = a - pos;
+        if (x <= -1 || x >= 3) return;
+        int n = cards.size();
+        Recs.Pick p = cards.get(((a % n) + n) % n);
+        slotAt(x, travel);
+        float wideRatio = cardRects[0].width() / cardRects[0].height(), tallRatio = cardRects[1].width() / cardRects[1].height();
+        float wide = Ui.clamp((travel.width() / travel.height() - tallRatio) / (wideRatio - tallRatio));
+        float alpha = x < 0 ? 1 + x : x > 2 ? 3 - x : 1;
+        float f = Ui.clamp(cardFocus[0].value) * Math.max(0, 1 - Math.abs(x));
+        float left = pos - carouselTarget;       // how far the row still has to go
+        float reveal = a == carouselTarget ? Ui.clamp(1 - Math.abs(left) * 1.6f) : 1;
+        float s = 1 + look.m.cardGrow * f, bw = travel.width(), bh = travel.height();
+        float cx = travel.centerX(), cy = travel.centerY() - look.m.cardLift * k * f;
+        cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
+        float r0 = lerp(look.cardRadius(1), look.cardRadius(0), wide) * k, r = r0 * s;
+        fadeBounds.set(cell.left - 70 * k, cell.top - 70 * k, cell.right + 70 * k, cell.bottom + 160 * k);
+        int saved = alpha < 0.995f ? c.saveLayerAlpha(fadeBounds, Math.round(255 * alpha)) : c.save();
+        c.save();
+        c.translate(cx, cy);
+        c.scale(s, s);
+        tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
+        tmp.offset(0, (10 + 14 * f) * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
+        shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
+        c.restore();
+        Backdrop b = recs.backdrop(p);
+        if (b != null && (b.tall != null || b.wide != null)) {
+            // The small card's picture and the hero's cross-fade as the shape changes; each is cropped to fit, and lags a
+            // little behind its card while the row moves.
+            Bitmap lo = b.tall != null ? b.tall : b.wide, hi = b.wide != null ? b.wide : b.tall;
+            float shift = -left * 0.12f;
+            roundImage(c, lo, cell, r, shift);
+            if (hi != lo && wide > 0.01f) {
+                bitmapPaint.setAlpha(Math.round(255 * wide));
+                roundImage(c, hi, cell, r, shift);
+                bitmapPaint.setAlpha(255);
+            }
+        } else {
+            fill.setShader(null);
+            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
+            c.drawRoundRect(cell, r, r, fill);
+        }
+        if (!look.focusRing(c, cell, r, f, dark()) && f > 0.01f) {
+            rim.setShader(null);
+            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.7f * f));
+            c.drawRoundRect(cell, r, r, rim);
+        }
+        if (!look.cardCaption(c, cell, r, wide, p.title, p.meta, f, dark(), reveal)) {
+            fitPaint.set(lCardTitle);
+            c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), travel.left, travel.bottom + 46 * k, lCardTitle);
+            if (wide > 0.5f && p.meta != null && !p.meta.isEmpty()) {
+                int old = lCardMeta.getAlpha();
+                lCardMeta.setAlpha(Math.round(old * (wide - 0.5f) * 2));
+                fitPaint.set(lCardMeta);
+                c.drawText(TextUtils.ellipsize(p.meta, fitPaint, bw, TextUtils.TruncateAt.END).toString(), travel.left, travel.bottom + 80 * k, lCardMeta);
+                lCardMeta.setAlpha(old);
+            }
+        }
+        c.restoreToCount(saved);
+    }
+
+    private void drawFaded(Canvas c, int i, Recs.Pick pick, float alpha, float dx) {
+        if (alpha <= 0.01f) return;
+        if (alpha >= 0.995f && dx == 0) {
+            drawLightCard(c, i, pick);
+            return;
+        }
+        RectF r = cardRects[i];
+        fadeBounds.set(r.left - 70 * k + dx, r.top - 70 * k, r.right + 70 * k + dx, r.bottom + 160 * k);
+        int saved = c.saveLayerAlpha(fadeBounds, Math.round(255 * alpha));
+        c.translate(dx, 0);
+        drawLightCard(c, i, pick);
+        c.restoreToCount(saved);
+    }
+
+    /** Moves the picks by `step` through the cards, in a circle. */
     private void rotateCards(int step) {
         int n = cards.size();
-        if (n <= 3) return;
-        cardStart = ((cardStart + step) % n + n) % n;
+        if (n < 2) return;
+        carouselTarget += step;
+        carousel.target = carouselTarget;
+        if (Ui.LEGACY) carousel.snap(carouselTarget);
+        cardStart = ((carouselTarget % n) + n) % n;
         showCards();
         invalidateAll();
     }
@@ -3135,8 +3307,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int top = -1;
         for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
         if (!(cards.isEmpty() && recs.noPicks())) {      // no picks to show and none coming: no empty cards either
-            for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
-            if (top >= 0) drawLightCard(c, top);
+            if (!Ui.LEGACY && cards.size() > 1 && carousel.value != carousel.target) {
+                drawCarousel(c);
+            } else {
+                for (int i = 0; i < 3; i++) if (i != top) drawCardSlot(c, i);
+                if (top >= 0) drawCardSlot(c, top);
+            }
         }
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
@@ -3198,9 +3374,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * a soft shadow; when focused, it grows 5%, rises and lights up its border. Below it, the title (and on the large
      * card, genre · runtime · service).
      */
-    private void drawLightCard(Canvas c, int i) {
+    private void drawLightCard(Canvas c, int i, Recs.Pick p) {
         RectF base = cardRects[i];
-        Recs.Pick p = cardAt(i);
         float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + look.m.cardGrow * v;
         float bw = base.width(), bh = base.height(), r0 = look.cardRadius(i) * k;
         float cx = base.centerX(), cy = base.centerY() - look.m.cardLift * k * v;
@@ -3216,12 +3391,29 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.restore();
         Backdrop b = p == null ? null : recs.backdrop(p);
         Bitmap img = b == null ? null : (i == 0 ? b.wide : b.tall);
+        float shown = 1;
         if (img != null) {
-            roundImage(c, img, cell, r);
-        } else {
+            // The picture fades in over its placeholder (not again while the whole card is already fading in).
+            long now = SystemClock.uptimeMillis();
+            if (p.shownAt == 0) p.shownAt = cardMixAt != 0 && now - cardMixAt < look.m.cardFadeMs ? now - look.m.imageFadeMs : now;
+            if (!Ui.LEGACY && look.m.imageFadeMs > 0) shown = Ui.clamp((now - p.shownAt) / (float) look.m.imageFadeMs);
+            if (shown < 1) {
+                cardsAnimating = true;
+                wake();
+            }
+        }
+        if (img == null || shown < 1) {
             fill.setShader(null);
             fill.setColor(look.color(Look.PLACEHOLDER, dark()));
             c.drawRoundRect(cell, r, r, fill);
+        }
+        if (img != null) {
+            int alpha = Math.round(255 * shown);
+            bitmapPaint.setAlpha(alpha);
+            imageFill.setAlpha(alpha);
+            roundImage(c, img, cell, r);
+            bitmapPaint.setAlpha(255);
+            imageFill.setAlpha(255);
         }
         if (!look.focusRing(c, cell, r, f, dark()) && f > 0.01f) {
             if (lightSheens.length != cardRects.length) {
@@ -3252,7 +3444,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.restore();
         }
         if (p == null) return;
-        if (look.cardCaption(c, cell, r, i, p.title, p.meta, f, dark())) return;
+        if (look.cardCaption(c, cell, r, i == 0 ? 1 : 0, p.title, p.meta, f, dark(), 1)) return;
         fitPaint.set(lCardTitle);
         c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 46 * k, lCardTitle);
         if (i == 0 && p.meta != null && !p.meta.isEmpty()) {
@@ -3299,20 +3491,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     topIndex = picksOn() ? tab : 3;
                 } else {
                     zone = Z_CARDS;
-                    cardIndex = nearest(cardRects, cards.size(), shelf.isEmpty() ? w / 2f : tileRects[shelfIndex].centerX());
+                    cardIndex = 0;
                 }
                 break;
             case Z_CARDS:
                 if (dx != 0) {
-                    int visible = Math.min(3, cards.size());
-                    int next = cardIndex + dx;
-                    if (cards.size() > 3 && (next < 0 || next >= visible)) {
-                        rotateCards(dx);    // past the last card: the next pick, in a circle
-                    } else {
-                        next = Math.max(0, Math.min(visible - 1, next));
-                        if (next == cardIndex) return true;
-                        cardIndex = next;
-                    }
+                    // The focus stays on the first card: right brings the next pick into it (the cards move left), left
+                    // the previous one, in a circle.
+                    if (cards.size() < 2) return true;
+                    rotateCards(dx);
                 } else if (dy < 0) {
                     zone = Z_TOP;
                     topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
@@ -3332,7 +3519,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         zone = Z_SHELF;
                     } else {
                         zone = Z_CARDS;
-                        cardIndex = nearest(cardRects, cards.size(), topRects[topIndex].centerX());
+                        cardIndex = 0;
                     }
                 } else if (topIndex < 3 && !lightButtons.isEmpty()) {
                     topIndex = 3;   // up from the tabs reaches the corner buttons without walking the row

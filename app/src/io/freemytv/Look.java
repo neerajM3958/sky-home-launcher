@@ -24,6 +24,12 @@ abstract class Look {
         float cardsTop = 262, cardH = 442, tallW = 320, cardGap = 40;
         float cardGrow = 0.05f, cardLift = 6;           // a focused card grows by this much and rises by this many px
         float tabGrow = 0.05f, buttonGrow = 0.1f;
+        // When the picks change (the next ones, another tab): the old cards slide out and fade, the new ones slide in
+        // and fade, hero first. Not on Android 8 to 11.
+        float cardSlide = 56;                           // how far, in px, the cards travel (0: they only fade)
+        int cardFadeMs = 420;
+        float cardStagger = 0.14f;                      // share of the time the next card starts after the one before
+        int imageFadeMs = 250;                          // a picture fades in over its placeholder when it is ready
         float shelfPad = 40, shelfGap = 48;             // the shelf bar's side padding; the gap between app tiles
         float shelfGrow = 0.2f;                         // a focused shelf tile grows by this much
         boolean focusGlow = false;                      // the background glows under the focused item (redrawn while focus moves)
@@ -87,9 +93,11 @@ abstract class Look {
 
     /**
      * The title and details of a pick card, drawn by the look over the card (`cell` is the card now, `f` how focused
-     * it is). Returns false when the look draws none, and the screen writes them under the card.
+     * it is). `wide` is 0 for a small card and 1 for the hero (a card on its way from one to the other is in between), and
+     * `reveal` how far its text has come in (0 to 1: it arrives a beat after the picture). Returns false when the look
+     * draws none, and the screen writes them under the card.
      */
-    boolean cardCaption(Canvas c, RectF cell, float radius, int index, String title, String meta, float f, float night) {
+    boolean cardCaption(Canvas c, RectF cell, float radius, float wide, String title, String meta, float f, float night, float reveal) {
         return false;
     }
 
