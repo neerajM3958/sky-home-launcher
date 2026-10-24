@@ -42,15 +42,15 @@ def read_config(path):
 
     def number(key, default):
         v = values.get(key, '') or default
-        if not re.match(r'^-?\d+(\.\d+)?$', v):
+        if v and not re.match(r'^-?\d+(\.\d+)?$', v):
             sys.exit('config.properties: %s must be a number (got "%s")' % (key, v))
         return v
 
     return {
         'tmdbKey': values.get('tmdb_key', ''),
         'tmdbRegion': values.get('tmdb_region', 'US') or 'US',
-        'latitude': number('latitude', '40.7128'),
-        'longitude': number('longitude', '-74.0060'),
+        'latitude': number('latitude', ''),       # empty: the TV's time zone says where (web/zones.js)
+        'longitude': number('longitude', ''),
         'city': values.get('city', ''),
         'language': values.get('language', 'auto') or 'auto',
         'currency': values.get('currency', 'USD') or 'USD',

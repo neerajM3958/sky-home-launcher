@@ -91,7 +91,10 @@ final class Launcher {
         }
         @Override public boolean installed(String pkg) { return recs.appInstalled(pkg); }
         @Override public boolean stremio() { return recs.stremioInstalled(); }
-        @Override public boolean toStremio(String key) { return Prefs.toStremio(key); }
+        // The choice is for a service whose app is there; without the app its titles follow the fallback.
+        @Override public boolean toStremio(String key) {
+            return Prefs.toStremio(key) && (key.equals(Routing.OTHER) || recs.serviceAppInstalled(key));
+        }
         @Override public boolean stremioForMissing() { return Prefs.stremioForMissing(); }
         @Override public boolean hidden(String name) { return recs.hiddenService(name); }
     };

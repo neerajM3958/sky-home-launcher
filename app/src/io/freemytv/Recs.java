@@ -712,16 +712,23 @@ final class Recs {
         return out;
     }
 
+    /** The app of this service (a Routing service key) is on the TV, whether or not the service is hidden. */
+    boolean serviceAppInstalled(String key) {
+        for (String[] s : SERVICES) {
+            if (s[1].equals(key) && HomeApps.launchIntent(context.getPackageManager(), s[2]) != null) return true;
+        }
+        return false;
+    }
+
     /** Stremio is on the TV (without it every "Stremio" choice is off). */
     boolean stremioInstalled() {
         return installed(STREMIO);
     }
 
-    /** The service is in hide_services: it never opens, even when its app is on the TV. */
+    /** The service is one the person hides (Free My TV > TMDB > Hidden services): it never opens, even when its app is on the TV. */
     boolean hiddenService(String providerName) {
-        String n = providerName.toLowerCase(Locale.ROOT);
-        for (String key : HIDDEN) if (n.contains(key)) return true;
-        return false;
+        String[] row = service(providerName);
+        return row != null && Prefs.hiddenServices().contains(row[1]);
     }
 
     String appName(String pkg) {
@@ -851,15 +858,6 @@ final class Recs {
         return first;
     }
 
-    /** Services named in hide_services (config.properties), trimmed and lowercased: never a source of picks. */
-    private static final Set<String> HIDDEN = new HashSet<>();
-    static {
-        for (String s : Config.HIDE_SERVICES.split(",")) {
-            String key = s.trim().toLowerCase(Locale.ROOT);
-            if (!key.isEmpty()) HIDDEN.add(key);
-        }
-    }
-
     /** The app's own name on the TV ("Stremio"), or its package. */
     private String appLabel(String pkg) {
         try {
@@ -872,7 +870,8 @@ final class Recs {
     /** The service's app is on the TV, and the service isn't hidden (an app the TV ships without a subscription, say). */
     private boolean installed(String pkg) {
         if (ROUTED.equals(pkg)) return true;
-        if (!HIDDEN.isEmpty()) for (String[] s : SERVICES) if (s[2].equals(pkg) && HIDDEN.contains(s[1])) return false;
+        List<String> hidden = Prefs.hiddenServices();
+        if (!hidden.isEmpty()) for (String[] s : SERVICES) if (s[2].equals(pkg) && hidden.contains(s[1])) return false;
         return HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
     }
 

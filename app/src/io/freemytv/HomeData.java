@@ -2,6 +2,8 @@ package io.freemytv;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -47,6 +49,7 @@ final class HomeData {
             + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=2";
 
     private static String weatherPlace() {
+        if (!Prefs.locationKnown()) return "?";      // not New York's: no forecast belongs to a place not found yet
         return Prefs.latitude() + "," + Prefs.longitude();
     }
 
@@ -151,7 +154,27 @@ final class HomeData {
     private volatile boolean fetchingPrices, fetchingWeather;
     private volatile long pricesFailedAt, weatherFailedAt;
 
+    private final Context appContext;
+
+    /** When the network (re)appears, what failed for lack of it is tried again now: the weather, the prices and the TV's place. */
+    private void retryWhenOnline() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+            cm.registerDefaultNetworkCallback(new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) {
+                    Locator.retryNow();
+                    weatherFailedAt = 0;
+                    pricesFailedAt = 0;
+                    refreshIfStale();
+                }
+            });
+        } catch (RuntimeException e) {
+            AppLog.w("network callback: " + e.getMessage());
+        }
+    }
+
     private HomeData(Context c) {
+        appContext = c;
         cache = c.getSharedPreferences("homedata", Context.MODE_PRIVATE);
         inDollars = CURRENCY.equals(cache.getString("dollarsFor", ""));
         try {
@@ -167,6 +190,7 @@ final class HomeData {
                 weatherAt = cache.getLong("weatherAt", 0);
             }
         } catch (Exception ignored) {}
+        retryWhenOnline();
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
@@ -206,6 +230,12 @@ final class HomeData {
             fetchingWeather = true;
             io.execute(() -> {
                 try {
+                    if (Prefs.autoLocation()) {
+                        Locator.refresh(appContext);        // where the TV is, from its internet address
+                        // Not found yet (no internet, say): no forecast, and so no sunrise and sunset, rather than another city's.
+                        // The theme uses 6:00 and 18:00 meanwhile; the network coming back tries again (below).
+                        if (!Prefs.locationKnown()) throw new IOException("the TV's place isn't known yet");
+                    }
                     String body = get(weatherUrl());
                     weather = parseWeather(body);
                     weatherAt = System.currentTimeMillis();

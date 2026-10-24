@@ -53,7 +53,7 @@ About ten minutes. You need a Google TV or Android TV (Android 8 or newer) and a
    ```bash
    ./build.sh
    ```
-   The first run creates `config.properties`. Set your city and your [TMDB key](#the-tmdb-key) there, then run it again.
+   The first run creates `config.properties`. Set your [TMDB key](#the-tmdb-key) there, then run it again.
 4. **Install:**
    ```bash
    adb connect 192.168.1.50:5555
@@ -72,7 +72,7 @@ The same home screen as an LG app: the picks, the glass shelf with your apps, th
 You need an LG TV (webOS 3 or newer) and a computer on the same Wi-Fi, with Python 3.
 
 1. **On the TV**, open the LG Content Store and install **Developer Mode**. Sign in with a free [LG developer account](https://webostv.developer.lge.com), turn on **Dev Mode Status** (the TV restarts), then turn on **Key Server**. Write down the IP address and the passphrase it shows.
-2. **On your computer**, get the code and build. `config.properties` works as for Google TV (your city, your [TMDB key](#the-tmdb-key)):
+2. **On your computer**, get the code and build. `config.properties` works as for Google TV (your [TMDB key](#the-tmdb-key)):
    ```bash
    git clone https://github.com/simbasjungles/free-my-tv && cd free-my-tv
    python3 webos/build.py
@@ -98,7 +98,7 @@ You need a Samsung TV from 2017 or newer (Tizen 3+) and a computer on the same W
 3. **Install from GitHub:** type `simbasjungles/free-my-tv`. On 2023 and newer TVs it asks you to sign in to your Samsung account once, to sign the app for your TV.
 4. **Straight to it:** in the TV's settings, under Start Screen Options, turn on **Autorun Last App**: the TV turns on into Free My TV.
 
-This build takes your city from the TV's time zone. For your exact city and the trending picks, build it with your own `config.properties` and [TMDB key](#the-tmdb-key): open the folder in Claude Code and say *"Install Free My TV on my Samsung TV at 192.168.1.50. I live in Lisbon."* It sets up Samsung's tools, and on 2023 and newer TVs you sign in to your Samsung account in the browser to make the certificate. Your signed build installs with `python3 tizen/install.py 192.168.1.50`, which needs only Python: no Tizen Studio, and no Rosetta on Apple Silicon Macs.
+This build takes your city from the TV's time zone. For your exact city and the trending picks, build it with your own `config.properties` and [TMDB key](#the-tmdb-key): open the folder in Claude Code and say *"Install Free My TV on my Samsung TV at 192.168.1.50."* It sets up Samsung's tools, and on 2023 and newer TVs you sign in to your Samsung account in the browser to make the certificate. Your signed build installs with `python3 tizen/install.py 192.168.1.50`, which needs only Python: no Tizen Studio, and no Rosetta on Apple Silicon Macs.
 
 ## Settings
 
@@ -110,8 +110,6 @@ The first values come from `config.properties`, created by the first build (Goog
 | `tmdb_region` | Your country (two letters): which titles are on which app | `US` |
 | `watchmode_key` | Optional, free [Watchmode](https://api.watchmode.com/) key: a pick opens the title's page in its app | empty |
 | `trakt_client_id` | Optional, your free [Trakt](https://trakt.tv) Client ID: *Continue Watching* and *Watchlist* rows under the home screen's cards (see [Your Trakt lists](#your-trakt-lists-optional)) | empty |
-| `latitude`, `longitude` | Your city, for the weather and the sunset | New York |
-| `city` | The name on the weather card | `Weather` |
 | `hide_animation` | Leave cartoons and anime out of the picks | `false` |
 | `flatrate_only` | `false`: picks and catalogs may be any popular title, not only ones on a subscription service in your region | `true` |
 | `tmdb_languages` | Only titles whose original language is one of these (`en,hi,ko`), for the picks and the catalogs; empty for any. Free My TV → TMDB → Languages changes it on the TV | empty |
@@ -125,7 +123,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `look` | The look the home screen starts with: `material3-expressive` or `glass` (Liquid Glass). *Home Settings* on the TV changes it | `material3-expressive` |
 | `theme` | `auto` (dark from sunset to sunrise), `dark` or `light`. Also changeable on the TV | `auto` |
 | `disable_assistant` | Also turn off Google Assistant | `false` |
-| `hide_services` | Streaming services to leave out of the picks even when their app is on the TV (`netflix`, `prime`, `disney`…), comma separated; for apps the TV ships that you don't subscribe to. Google TV only | empty |
+| `hide_services` | Streaming services to leave out of the picks even when their app is on the TV (`netflix`, `prime`, `disney`…), comma separated; for apps the TV ships that you don't subscribe to. Google TV only; the first value: *TMDB* → *Hidden services* sets them on the TV | empty |
 | `pick_count` | How many picks the home screen rotates through, 3 to 12. At 3 it shows this hour's three; with more, left and right slide through them in a circle | 3 |
 | `pick_rotate_seconds` | If above 0, the picks move by themselves this often while focus is not on them | 0 |
 | `hide_apps` | Apps to leave out of the shelf, All Apps and the picks, by id or name (part of it), comma separated; for apps the TV ships that can't be uninstalled, like Samsung's built-in Netflix. LG and Samsung only | empty |
@@ -140,7 +138,7 @@ Free, and it takes two minutes: create an account at [themoviedb.org](https://ww
 
 A card in the catalogs, the Trakt rows or the picks opens **the app of the service that streams the title in your region** (`tmdb_region`): a Netflix title in Netflix, and so on. When that app isn't on the TV it opens the app's **Play Store page** (on a TV where Free My TV turned the app off, the page has an *Enable* button); when the title is on no service there, it says "This title is unavailable in your region." A title on several services opens in one you have, then by price (subscription, then free, then rent or buy). While the answer comes (one TMDB request, kept for a day) the card shows three blinking dots, and Back or moving away cancels it; if it takes over 3 seconds it says it couldn't check.
 
-Free My TV → *Stremio* (when Stremio is installed) says which services open in Stremio on the title's page instead of in their own app, and *Use Stremio for what is missing* sends it the titles whose app isn't on the TV and the ones that stream nowhere we can check; it is greyed out when Stremio isn't installed. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key. `service_map` is gone: if you had it in `config.properties`, set the Stremio screen once on the TV instead.
+Free My TV → *Stremio* (when Stremio is installed) says which services open in Stremio on the title's page instead of in their own app, and *Use Stremio as fallback OTT* sends it the titles whose app isn't on the TV and the ones that stream nowhere we can check; it is greyed out when Stremio isn't installed. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key. `service_map` is gone: if you had it in `config.properties`, set the Stremio screen once on the TV instead.
 
 ### Opening the title's page in its app (optional)
 
@@ -258,7 +256,7 @@ reference (fix them by hand); the others were machine-made, and corrections from
 
 ## Privacy
 
-No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, Watchmode only when you set a `watchmode_key`, and Trakt only after you connect it (your sign-in stays on your TV). Your settings stay on your computer and your TV.
+No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (for your city, which Android TVs find from the TV's internet address through ipwho.is unless you choose one, and LG and Samsung from your time zone), and Binance only when `show_crypto=true`, Watchmode only when you set a `watchmode_key`, and Trakt only after you connect it (your sign-in stays on your TV). Your settings stay on your computer and your TV.
 
 ## Credits
 

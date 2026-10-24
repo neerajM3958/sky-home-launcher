@@ -113,14 +113,50 @@ final class Prefs {
 
     // MARK: - City
 
-    static String city() { return sp().getString("city", Config.CITY).trim(); }
-    static String latitude() { return sp().getString("latitude", Config.LATITUDE); }
-    static String longitude() { return sp().getString("longitude", Config.LONGITUDE); }
+    /** The place is found from the TV's internet address (Locator) rather than chosen; the config's first value is "yes" when it names no place. */
+    static boolean autoLocation() { return sp().getBoolean("autoLocation", Config.AUTO_LOCATION); }
+    static void setAutoLocation(boolean on) { put("autoLocation", on); }
+
+    /** False while the place is to be found from the TV's internet address and hasn't been yet: nothing is known about where the TV is. */
+    static boolean locationKnown() {
+        return !autoLocation() || Locator.cached(app) != null;
+    }
+
+    static String city() {
+        String[] here = autoLocation() ? Locator.cached(app) : null;
+        return here != null ? here[0] : autoLocation() ? "" : sp().getString("city", Config.CITY).trim();
+    }
+
+    static String latitude() {
+        String[] here = autoLocation() ? Locator.cached(app) : null;
+        return here != null ? here[1] : sp().getString("latitude", Config.LATITUDE);
+    }
+
+    static String longitude() {
+        String[] here = autoLocation() ? Locator.cached(app) : null;
+        return here != null ? here[2] : sp().getString("longitude", Config.LONGITUDE);
+    }
 
     static void setCity(String name, String latitude, String longitude) {
-        sp().edit().putString("city", name).putString("latitude", latitude).putString("longitude", longitude).apply();
+        sp().edit().putString("city", name).putString("latitude", latitude).putString("longitude", longitude)
+                .putBoolean("autoLocation", false).apply();
         version++;
     }
+
+    // MARK: - Hidden services (Free My TV > TMDB)
+
+    /** Streaming services (the keys of Recs.serviceNames: "netflix", "prime"...) never recommended or opened; the config's hide_services first. */
+    static List<String> hiddenServices() {
+        String v = app == null ? Config.HIDE_SERVICES : sp().getString("hiddenServices", Config.HIDE_SERVICES);
+        List<String> out = new ArrayList<>();
+        for (String p : v.split(",")) {
+            p = p.trim().toLowerCase(Locale.ROOT);
+            if (!p.isEmpty() && !out.contains(p)) out.add(p);
+        }
+        return out;
+    }
+
+    static void setHiddenServices(List<String> keys) { put("hiddenServices", String.join(",", keys)); }
 
     /** The home screen's soft click when moving and opening. */
     static boolean sounds() { return sp().getBoolean("sounds", true); }

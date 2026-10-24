@@ -36,6 +36,8 @@ number() {
   [[ "$v" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo "config.properties: $1 must be a number (got \"$v\")" >&2; exit 1; }
   printf '%s' "$v"
 }
+# No city in the config: the Android app finds it from the TV's internet address (Free My TV > Home Settings > City).
+AUTOLOC=false; [ -z "$(prop city '')" ] && [ -z "$(prop latitude '')" ] && [ -z "$(prop longitude '')" ] && AUTOLOC=true
 LAT="$(number latitude 40.7128)"
 LON="$(number longitude -74.0060)"
 ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
@@ -81,6 +83,7 @@ final class Config {
     static final boolean FLATRATE_ONLY = $FLATRATE;
     static final boolean INCLUDE_RENT_BUY = $RENTBUY;
     static final boolean WATCH_NEXT = $WATCHNEXT;
+    static final boolean AUTO_LOCATION = $AUTOLOC;
     static final String CATALOGS = "$CATALOGS";
     static final int PICK_COUNT = $PICKS;
     static final int PICK_ROTATE_SECONDS = $ROTATE;

@@ -245,7 +245,7 @@ final class Catalogs {
     private static String wanted() {
         return String.join(",", keys()) + (Prefs.hideAnimation() ? "|noanimation" : "")
                 + "|" + (Prefs.recommendFromApps() ? "apps" : "any") + (Prefs.flatrateOnly() ? "S" : "") + (Prefs.flatrateOnly() && Prefs.includeRentBuy() ? "R" : "")
-                + Recs.region() + Prefs.languages();
+                + Recs.region() + Prefs.languages() + Prefs.hiddenServices();
     }
 
     static String title(String key) {
