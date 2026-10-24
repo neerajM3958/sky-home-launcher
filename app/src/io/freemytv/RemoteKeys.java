@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.provider.Settings;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 
@@ -15,6 +16,9 @@ import android.view.KeyEvent;
  * On Vestel TVs and Formovie (Xiaomi) projectors only the Netflix button is ours: the system opens Netflix itself (a
  * global key, after the filter).
  * On KTC TVs (NextStar) only the Tabii button is ours, a global key too: the TV's hot-key receiver opens Tabii with it.
+ * On Skyworth TVs the Netflix, YouTube, Prime Video and Disney+ buttons (STEM_1, STEM_2, F8, F6) and the gear button
+ * (NOTIFICATION) are ours: Skyworth's own receiver opens the real apps, which may not be installed, and the gear button
+ * needs the stock launcher; a button set to "TV Settings" opens Android's Settings.
  * On Sony TVs, the app buttons (and the Google Play button of older remotes) are global keys for Sony's own receiver;
  * the filter sees them first, the same way.
  */
@@ -24,16 +28,20 @@ final class RemoteKeys {
     /** Some TCL remotes (BT_RC833) send TCL's own YouTube key instead of BUTTON_3: the same button. */
     private static final int KEY_YOUTUBE_TCL = 4065;
 
+    /** Vendor id of the Skyworth remote (Vendor_0957_*.kl). */
+    private static final int SKYWORTH_REMOTE = 0x0957;
+
     /**
      * The key codes are the brand's own: on other brands they can be other buttons, so nothing here runs there.
      * Vestel builds TVs sold under other brands (F&U...), so BRAND varies: check the maker too.
      */
-    static final boolean TCL = is("TCL"), VESTEL = is("Vestel"), KTC = is("KTC"), SONY = is("Sony"), FORMOVIE = is("Formovie");
+    static final boolean TCL = is("TCL"), VESTEL = is("Vestel"), KTC = is("KTC"), SONY = is("Sony"), FORMOVIE = is("Formovie"),
+            SKYWORTH = is("Skyworth");
     /** Brands whose Netflix button is STEM_1, a global key (MediaTek): only that button is ours. */
     static final boolean STEM_NETFLIX = VESTEL || FORMOVIE;
 
     static boolean supported() {
-        return TCL || STEM_NETFLIX || KTC || SONY;
+        return TCL || STEM_NETFLIX || KTC || SONY || SKYWORTH;
     }
 
     private static boolean is(String maker) {
@@ -54,11 +62,23 @@ final class RemoteKeys {
                 || keyCode == KeyEvent.KEYCODE_BUTTON_9)) {
             keyCode = Prefs.SONY_KEY + e.getScanCode();
         }
+        // Skyworth's Prime Video and Disney+ buttons are F8 and F6: a keyboard's F keys stay a keyboard's.
+        if (SKYWORTH && (keyCode == Prefs.KEY_SKY_PRIME || keyCode == Prefs.KEY_SKY_DISNEY)) {
+            InputDevice device = e.getDevice();
+            if (device == null || device.getVendorId() != SKYWORTH_REMOTE) return false;
+        }
         boolean ours = false;
         for (int key : Prefs.KEYS) ours |= key == keyCode;
         if (!ours) return false;
         String pkg = Prefs.keyApp(keyCode);
         if (pkg.isEmpty()) return false;   // "Nothing": the key goes on as if we weren't here
+        if (pkg.equals(Prefs.TV_SETTINGS)) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                AppLog.w("remote key " + e.getKeyCode() + " -> TV Settings");
+                c.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            }
+            return true;
+        }
         if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
             Intent intent = launchIntent(c.getPackageManager(), pkg);
             AppLog.w("remote key " + e.getKeyCode() + " -> " + pkg + (intent == null ? " (not installed)" : ""));

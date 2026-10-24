@@ -25,6 +25,11 @@ final class Prefs {
     static final int KEY_NETFLIX = 4062, KEY_YOUTUBE = 190, KEY_PRIME = 4099, KEY_TCL_CHANNEL = 4020;
     /** The Netflix button on Vestel TVs and Formovie projectors: STEM_1, which the TV hands to its Netflix key receiver (dumpsys window policy). */
     static final int KEY_STEM_NETFLIX = KeyEvent.KEYCODE_STEM_1;
+    /** Skyworth remotes (Vendor_0957_Product_000f.kl): Netflix is STEM_1 (above), YouTube STEM_2, Prime Video F8, Disney+ F6, and the gear button NOTIFICATION. */
+    static final int KEY_SKY_YOUTUBE = KeyEvent.KEYCODE_STEM_2, KEY_SKY_PRIME = KeyEvent.KEYCODE_F8, KEY_SKY_DISNEY = KeyEvent.KEYCODE_F6,
+            KEY_SKY_SETTINGS = KeyEvent.KEYCODE_NOTIFICATION;
+    /** Not an app: a remote button set to this opens the TV's own Settings. */
+    static final String TV_SETTINGS = "android:settings";
     /** KTC's (NextStar) Tabii button: BUTTON_8, which the TV hands to its hot-key receiver (its log: "keycode = 195"). */
     static final int KEY_KTC_TABII = KeyEvent.KEYCODE_BUTTON_8;
     /** Sony's app buttons, as SONY_KEY + scan code (read from a BRAVIA's log; the key codes are shared). */
@@ -32,7 +37,9 @@ final class Prefs {
     static final int KEY_SONY_CORE = SONY_KEY + 496, KEY_SONY_NETFLIX = SONY_KEY + 583, KEY_SONY_DISNEY = SONY_KEY + 491,
             KEY_SONY_PRIME = SONY_KEY + 490, KEY_SONY_YOUTUBE = SONY_KEY + 485, KEY_SONY_CRUNCHYROLL = SONY_KEY + 507,
             KEY_SONY_PLAY = SONY_KEY + 587;   // the Google Play button of older remotes: BUTTON_8 (BRAVIA 4K UR3, Android 10)
-    static final int[] KEYS = RemoteKeys.SONY
+    static final int[] KEYS = RemoteKeys.SKYWORTH
+            ? new int[] {KEY_STEM_NETFLIX, KEY_SKY_YOUTUBE, KEY_SKY_PRIME, KEY_SKY_DISNEY, KEY_SKY_SETTINGS}
+            : RemoteKeys.SONY
             ? new int[] {KEY_SONY_CORE, KEY_SONY_NETFLIX, KEY_SONY_DISNEY, KEY_SONY_PRIME, KEY_SONY_YOUTUBE, KEY_SONY_CRUNCHYROLL,
                     KEY_SONY_PLAY}
             : RemoteKeys.STEM_NETFLIX ? new int[] {KEY_STEM_NETFLIX}
@@ -164,8 +171,10 @@ final class Prefs {
     private static String defaultApp(int keyCode) {
         switch (keyCode) {
             case KEY_NETFLIX: case KEY_STEM_NETFLIX: return "com.netflix.ninja";
-            case KEY_YOUTUBE: return "com.google.android.youtube.tv";
-            case KEY_PRIME: return "com.amazon.amazonvideo.livingroom";
+            case KEY_YOUTUBE: case KEY_SKY_YOUTUBE: return "com.google.android.youtube.tv";
+            case KEY_PRIME: case KEY_SKY_PRIME: return "com.amazon.amazonvideo.livingroom";
+            case KEY_SKY_DISNEY: return "com.disney.disneyplus";
+            case KEY_SKY_SETTINGS: return TV_SETTINGS;
             case KEY_TCL_CHANNEL: return "";
             default: return "";
         }
