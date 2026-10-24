@@ -193,6 +193,13 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   Comments in English, short, only where the why isn't obvious.
 - Settings come from `config.properties` through the generated `out/gen/io/freemytv/Config.java` (never edit that).
   What the person changes on the TV (`Prefs`: Home Settings, Shelf, Remote Buttons) wins over those first values.
+- Continue Watching also lists Android TV's Watch Next (`WatchNext`, merged in `Catalogs.rebuild()`, newest first, Trakt's
+  items win a tie by TMDB id or name). It is a local query that needs `READ_TV_LISTINGS`, a runtime permission the home
+  screen asks for once (`HomeActivity`); denied, the row is Trakt's alone. An entry no activity answers (its app is gone or
+  turned off) is left out, and turning an app off makes Android drop its entries until it publishes them again. To test
+  without a publishing app: `content insert` on `content://android.media.tv/watch_next_program` from the shell (the
+  provider records `com.android.shell` as the publisher, and values can't hold a `:`, so write the intent as
+  `#Intent;action=...;component=pkg/cls;end` and no art address).
 - The remote's app buttons (`RemoteKeys`, `RemoteKeyService`) use each brand's key codes: they run only on TCL,
   Vestel, KTC (NextStar) and Sony TVs and Formovie projectors, the service is on only in Free My TV mode, and *Original* takes it out of the enabled accessibility
   services. The system waits for the service on every key, so it lives alone in the `:keys` process: what it reads is

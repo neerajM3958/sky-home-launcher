@@ -371,6 +371,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             wake();
             data.refreshIfStale();
             recs.refreshIfStale();
+            catalogs.refreshWatchNext(false);       // the row may be the only one: nothing else would open the drawer for it
             if (drawerOpen) catalogs.refreshIfStale();
             checkNotices();
             updatePalette();
@@ -451,6 +452,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogs.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
+        catalogs.refreshWatchNext(false);
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
         if (Config.PICK_ROTATE_SECONDS > 0) handler.postDelayed(rotate, Config.PICK_ROTATE_SECONDS * 1000L);
@@ -2403,7 +2405,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (catRows.isEmpty()) return;
             Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
             click.open();
-            if (listed.episodes) {      // a show you watch: its episodes, not the app
+            if (listed.launch != null) {        // what an app says you were watching: back into that app
+                openWatchNext(listed);
+            } else if (listed.episodes) {      // a show you watch: its episodes, not the app
                 activity.startActivity(EpisodesActivity.intent(activity, listed));
             } else {
                 openTitle(listed);
@@ -2452,6 +2456,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             catDirty = true;
             show(target, from);
         });
+    }
+
+    /** A Continue Watching card from the TV's apps (Watch Next): its own intent resumes it; the entry was checked when read. */
+    private void openWatchNext(Catalogs.Item item) {
+        try {
+            activity.startActivity(new android.content.Intent(item.launch));
+        } catch (RuntimeException e) {
+            AppLog.w("watch next " + item.title + ": " + e);
+            showToast(Ui.trf("Couldn't open {app}.", "app", Launcher.get(activity).appName(item.appPkg)));
+        }
     }
 
     /** A pick from anything popular: no dots on it, but the answer is usually already there (Recs looks it up ahead). */
