@@ -119,9 +119,9 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
-        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_ANIMATION = 5, TMDB_CATALOGS = 6;   // the TMDB screen's rows after Region   // the main menu's rows that open them
+        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -151,6 +151,8 @@ public class SettingsActivity extends Activity {
         private JSONObject state = new JSONObject(), recs = new JSONObject();
         private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
         private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
+        private final List<String[]> hiddenRows = new ArrayList<>();     // the Hidden services screen: {key, name}
+        private final java.util.Set<String> stremioInstalled = new java.util.HashSet<>();   // services whose app is on the TV (read when the screen opens)
         private final List<String[]> stremioRows = new ArrayList<>();     // the Stremio screen: {key, name}, "missing" first
         private int screen = MAIN, focus;
         private boolean running, okDown, backDown, wasBusy;
@@ -216,6 +218,7 @@ public class SettingsActivity extends Activity {
 
         /** A main menu row that needs something it doesn't have (Trakt without a Client ID, TMDB without its key): greyed, and OK does nothing. */
         private boolean disabledRow(int row) {
+            if (screen == STREMIO) return pickScroll + row < stremioRows.size() && stremioOff(pickScroll + row);
             if (screen == TMDB) return row == RENT_BUY_ROW && !Prefs.flatrateOnly();     // everything is included then
             return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext()))
                     || (row == STREMIO_ROW && !stremioOn));
@@ -246,6 +249,10 @@ public class SettingsActivity extends Activity {
                 case TMDB: {
                     String[] labels = tmdbLabels(), values = tmdbValues();
                     return row < labels.length ? labels[row] + ", " + values[row] : "";
+                }
+                case HIDDEN: {
+                    int at = pickScroll + row;
+                    return at < hiddenRows.size() ? hiddenRows.get(at)[1] + (hiddenChecked(at) ? Ui.tr(", hidden") : "") : "";
                 }
                 case LANGUAGES: {
                     int at = pickScroll + row;
@@ -387,6 +394,7 @@ public class SettingsActivity extends Activity {
                 case TMDB: return tmdbLabels().length;
                 case STREMIO: return Math.min(PICK_VISIBLE, stremioRows.size());
                 case LANGUAGES: return Math.min(PICK_VISIBLE, langRows.size());
+                case HIDDEN: return Math.min(PICK_VISIBLE, hiddenRows.size());
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -419,7 +427,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -645,7 +653,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -692,6 +700,9 @@ public class SettingsActivity extends Activity {
                                 screen = MAIN;
                             } else if (screen == LANGUAGES) {
                                 focus = TMDB_LANGS;
+                                screen = TMDB;
+                            } else if (screen == HIDDEN) {
+                                focus = TMDB_HIDDEN;
                                 screen = TMDB;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
@@ -866,14 +877,14 @@ public class SettingsActivity extends Activity {
 
         private String[] tmdbLabels() {
             return new String[] {Ui.tr("Region"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
-                    Ui.tr("Languages"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
+                    Ui.tr("Languages"), Ui.tr("Hidden services"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
         }
 
         private String[] tmdbValues() {
             int on = 0;
             for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
             return new String[] {regionValue(), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
-                    onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()), languagesValue(),
+                    onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()), languagesValue(), hiddenValue(),
                     onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
         }
 
@@ -979,6 +990,56 @@ public class SettingsActivity extends Activity {
                     (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
         }
 
+        // MARK: - Hidden services (Free My TV > TMDB)
+
+        private String hiddenValue() {
+            List<String> names = new ArrayList<>();
+            for (String[] s : Recs.serviceNames()) if (Prefs.hiddenServices().contains(s[0])) names.add(s[1]);
+            return names.isEmpty() ? Ui.tr("None") : String.join(", ", names);
+        }
+
+        private boolean hiddenChecked(int at) {
+            return Prefs.hiddenServices().contains(hiddenRows.get(at)[0]);
+        }
+
+        private void openHidden() {
+            hiddenRows.clear();
+            hiddenRows.addAll(Recs.serviceNames());
+            pickScroll = 0;
+            focus = 0;
+            screen = HIDDEN;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void toggleHidden() {
+            String key = hiddenRows.get(pickScroll + focus)[0];
+            List<String> keys = Prefs.hiddenServices();
+            if (!keys.remove(key)) keys.add(key);
+            Prefs.setHiddenServices(keys);
+        }
+
+        private void drawHidden(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            c.drawText(Ui.tr("Hidden services"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(hiddenRows.get(at)[1], rowRect.left + 30 * k, base, rowLabel);
+                if (hiddenChecked(at)) {
+                    float cw = Symbols.width(getContext(), "check", 26 * k);
+                    Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
+                }
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            c.drawText(Ui.tr("OK hides or shows a service. Hidden ones are never used."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
         // MARK: - Stremio
 
         /** The main menu's value: whether Stremio is there, and whether anything is sent to it. */
@@ -992,21 +1053,31 @@ public class SettingsActivity extends Activity {
         /** The first row is "use Stremio for what is missing", then each service we know, then the ones we don't. */
         private void openStremio() {
             stremioRows.clear();
-            stremioRows.add(new String[] {"", Ui.tr("Use Stremio for what is missing")});
+            stremioRows.add(new String[] {"", Ui.tr("Use Stremio as fallback OTT")});
             for (String[] s : Recs.serviceNames()) stremioRows.add(s);
             stremioRows.add(new String[] {Routing.OTHER, Ui.tr("Other services")});
+            stremioInstalled.clear();
+            for (String[] service : Recs.serviceNames()) if (Recs.get(getContext()).serviceAppInstalled(service[0])) stremioInstalled.add(service[0]);
             pickScroll = 0;
             focus = 0;
             screen = STREMIO;
             for (Spring s : pop) s.snap(0);
         }
 
+        /** A service whose app isn't on the TV: nothing to choose (its titles follow the fallback). */
+        private boolean stremioOff(int at) {
+            String key = stremioRows.get(at)[0];
+            return !key.isEmpty() && !key.equals(Routing.OTHER) && !stremioInstalled.contains(key);
+        }
+
         private String stremioValue(int at) {
             String key = stremioRows.get(at)[0];
+            if (stremioOff(at)) return Ui.tr("Not installed");
             return key.isEmpty() ? onOff(Prefs.stremioForMissing()) : Prefs.toStremio(key) ? Ui.tr("Stremio") : Ui.tr("Its app");
         }
 
         private void toggleStremio() {
+            if (stremioOff(pickScroll + focus)) return;
             String key = stremioRows.get(pickScroll + focus)[0];
             if (key.isEmpty()) Prefs.setStremioForMissing(!Prefs.stremioForMissing());
             else Prefs.setToStremio(key, !Prefs.toStremio(key));
@@ -1020,16 +1091,21 @@ public class SettingsActivity extends Activity {
                 float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
                 float f = drawRowBackground(c, i);
-                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
-                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                boolean off = stremioOff(pickScroll + i);
+                rowLabel.setColor(blend(off ? 0x73FFFFFF : 0xF2FFFFFF, off ? 0x731C1C1E : INK, f));
+                rowValue.setColor(blend(off ? 0x73FFFFFF : 0xB3FFFFFF, off ? 0x731C1C1E : 0xB31C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 c.drawText(TextUtils.ellipsize(stremioRows.get(pickScroll + i)[1], new TextPaint(rowLabel), 560 * k, TextUtils.TruncateAt.END).toString(),
                         rowRect.left + 30 * k, base, rowLabel);
                 c.drawText(stremioValue(pickScroll + i), rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
-            c.drawText(Ui.tr("Each service opens in its own app or in Stremio. OK changes it."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+            // What the focused row does, in words.
+            int at = pickScroll + focus;
+            String caption = at >= stremioRows.size() ? "" : stremioRows.get(at)[0].isEmpty()
+                    ? Ui.tr("When a title's app isn't on the TV, or no service we know streams it, open it in Stremio instead of its Play Store page.")
+                    : stremioOff(at) ? Ui.tr("This app isn't installed, so its titles follow the fallback above.")
+                    : Ui.tr("Each service opens in its own app or in Stremio. OK changes it.");
+            drawWrapped(c, caption, LIST_X * k + 30 * k, (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, 0);
         }
 
         // MARK: - Home Settings and Remote Buttons
@@ -1070,7 +1146,9 @@ public class SettingsActivity extends Activity {
             v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
             v[3] = onOff(Prefs.sounds());
             v[4] = onOff(Prefs.weather());
-            v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus : Prefs.city().isEmpty() ? "—" : Prefs.city();
+            v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus
+                    : Prefs.autoLocation() ? Ui.tr("Automatic") + (Prefs.city().isEmpty() ? "" : " · " + Prefs.city())
+                    : Prefs.city().isEmpty() ? "—" : Prefs.city();
             v[WATCH_NEXT_ROW] = onOff(Prefs.watchNext() && WatchNext.permitted(getContext()));
             v[7] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
@@ -1137,6 +1215,10 @@ public class SettingsActivity extends Activity {
 
         /** Changes the focused row's value one step (OK and → go forward, ← goes back). */
         private void adjust(int dir) {
+            if (screen == HIDDEN) {
+                toggleHidden();
+                return;
+            }
             if (screen == LANGUAGES) {
                 toggleLanguage();
                 return;
@@ -1199,6 +1281,11 @@ public class SettingsActivity extends Activity {
                     .setTitle(Ui.tr("City"))
                     .setView(field)
                     .setPositiveButton(Ui.tr("Search"), (d, which) -> searchCity(field.getText().toString()))
+                    .setNeutralButton(Ui.tr("Automatic"), (d, which) -> {        // from the TV's internet address
+                        Prefs.setAutoLocation(true);
+                        HomeData.get(getContext()).settingsChanged();
+                        invalidate();
+                    })
                     .setNegativeButton(Ui.tr("Cancel"), null)
                     .create();
             field.setOnEditorActionListener((v, action, event) -> {
@@ -1241,11 +1328,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1474,11 +1561,17 @@ public class SettingsActivity extends Activity {
                     openRowsEditor();
                 } else if (focus == TMDB_LANGS) {
                     openLanguages();
+                } else if (focus == TMDB_HIDDEN) {
+                    openHidden();
                 } else {
                     adjust(1);
                     invalidate();
                     return;
                 }
+            } else if (screen == HIDDEN) {
+                toggleHidden();
+                invalidate();
+                return;
             } else if (screen == LANGUAGES) {
                 toggleLanguage();
                 invalidate();

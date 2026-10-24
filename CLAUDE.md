@@ -16,15 +16,15 @@ before you do it, and let them do the taps on the TV.
 
 ## Installing it for someone
 
-1. **Ask** for the TV's IP address and their city, if they didn't say.
+1. **Ask** for the TV's IP address and their country, if they didn't say.
 2. **Tools:** a JDK 17+, the Android SDK command-line tools (build-tools 34+, platform android-34) and adb. Check
    what's already there (`java -version`, `$ANDROID_HOME`, `adb version`) and install only what's missing.
    - macOS: `brew install --cask temurin android-commandlinetools android-platform-tools`, then
      `sdkmanager "build-tools;34.0.0" "platforms;android-34"`.
    - Linux: OpenJDK 17, Android's command-line tools and adb from the package manager, then the same `sdkmanager` line.
    - Windows: Git Bash (what Claude Code runs there; `build.sh` handles it) or WSL, then as on Linux.
-3. **Settings:** run `./build.sh` once; it creates `config.properties`. Fill in `latitude` and `longitude` (decimal
-   degrees) and `city` for their city, `tmdb_region` (two-letter country), `show_crypto`, `currency` and `temperature` to match.
+3. **Settings:** run `./build.sh` once; it creates `config.properties`. Fill in `tmdb_region` (two-letter
+   country), `show_crypto`, `currency` and `temperature` to match. The city for the weather is found by the app itself.
 4. **The TMDB key is theirs and secret.** Ask them to create one (free: themoviedb.org → Settings → API) and paste it
    after `tmdb_key=` in `config.properties` themselves. Don't ask for it in the chat, never print it, never commit
    it. If they paste it in the chat anyway, put it only in `config.properties`.
@@ -59,7 +59,7 @@ before you do it, and let them do the taps on the TV.
 On LG it's an app, installed through LG's Developer Mode, and it changes nothing else on the TV: LG's home screen
 stays, and Free My TV opens with a long press of a number key.
 
-1. **Ask** for the TV's IP address and their city, if they didn't say. Tools: Python 3 and OpenSSH (`ssh`,
+1. **Ask** for the TV's IP address and their country, if they didn't say. Tools: Python 3 and OpenSSH (`ssh`,
    `ssh-keygen`), already on macOS, Linux and Windows 10+.
 2. **On the TV** (they do it): LG Content Store → *Developer Mode* → sign in with a free LG developer account
    (webostv.developer.lge.com) → *Dev Mode Status* on (the TV restarts) → *Key Server* on. It shows the IP and a
@@ -83,9 +83,9 @@ screen stays. Two ways:
 - **The release, no tools:** TizenBrew Installer (github.com/reisxd/TizenBrewInstaller) installs the latest GitHub
   release when they type `simbasjungles/free-my-tv`, and on 2023+ TVs signs it with their Samsung account. That build
   has no TMDB key (no picks) and takes the city from the TV's time zone. Walk them through the README's steps.
-- **Their own build** (their city, their TMDB key), below.
+- **Their own build** (their TMDB key), below.
 
-1. **Ask** for the TV's IP address and their city, if they didn't say.
+1. **Ask** for the TV's IP address and their country, if they didn't say.
 2. **On the TV** (they do it): *Apps* → type `1 2 3 4 5` on the remote → *Developer mode* on, *Host PC IP* = this
    computer's IP → restart the TV.
 3. **Tools:** Samsung's `tizen` command to sign (Tizen Studio's CLI, or Samsung's Claude Code plugin
@@ -193,6 +193,10 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   Comments in English, short, only where the why isn't obvious.
 - Settings come from `config.properties` through the generated `out/gen/io/freemytv/Config.java` (never edit that).
   What the person changes on the TV (`Prefs`: Home Settings, Shelf, Remote Buttons) wins over those first values.
+- The weather's place is found from the TV's internet address (`Locator`, ipwho.is then ipapi.co, kept 12 hours) when
+  the config names no city (`Prefs.autoLocation`); *Home Settings > City* picks one by hand (a city search) or goes back
+  to *Automatic*. Until a place is found there is no forecast (never another city's: the theme uses 6:00 and 18:00),
+  and `HomeData` tries again when the network comes back (a `NetworkCallback`). `hide_services` is the first value of *TMDB > Hidden services* (`Prefs.hiddenServices`, by service key).
 - Continue Watching also lists Android TV's Watch Next (`WatchNext`, merged in `Catalogs.rebuild()`, newest first, Trakt's
   items win a tie by TMDB id or name). It is a local query that needs `READ_TV_LISTINGS`, a runtime permission the home
   screen asks for once (`HomeActivity`); denied, the row is Trakt's alone. An entry no activity answers (its app is gone or
