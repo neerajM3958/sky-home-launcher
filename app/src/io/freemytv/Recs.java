@@ -59,7 +59,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 3;
+    private static final int CACHE_VERSION = 8;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -184,7 +184,7 @@ final class Recs {
         return now(null);
     }
 
-    /** This hour's 3, movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
+    /** This hour's picks (pick_count, 3 by default), movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
     List<Pick> now(String kind) {
         List<Pick> list = new ArrayList<>();
         if (!hasKey(context)) return list;    // no TMDB key: no recommendations
@@ -195,10 +195,11 @@ final class Recs {
         }
         if (list.isEmpty()) return list;
         long hour = System.currentTimeMillis() / 3600_000L;
-        // Three per hour, never two from the same franchise ("Law & Order" and "Law & Order: Special…").
+        // Three per hour (pick_count: more, that the home screen slides through), never two from the same franchise
+        // ("Law & Order" and "Law & Order: Special…").
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (int i = 0; i < list.size() && out.size() < 3; i++) {
+        for (int i = 0; i < list.size() && out.size() < Config.PICK_COUNT; i++) {
             Pick p = list.get((int) ((hour * 3 + i) % list.size()));
             if (seen.add(franchise(p.title))) out.add(p);
         }
@@ -215,12 +216,14 @@ final class Recs {
 
     /** Name of the service the pick is on ("Netflix"), or empty. */
     static String serviceName(Pick p) {
-        return p == null || p.app == null ? "" : SERVICE_NAME.get(p.app);
+        if (p == null || p.app == null) return "";
+        String name = SERVICE_NAME.get(p.app);
+        return name != null ? name : p.app;   // with service_map, p.app is the service's name on TMDB
     }
 
     /** The pick's ready backdrop (or null: builds it in the background and notifies when it's ready). */
     Backdrop backdrop(Pick p) {
-        if (p == null || p.backdrop == null) return null;
+        if (p == null || p.backdrop == null || !p.detailed) return null;   // the details choose the image: wait for them
         final String key = p.backdrop;    // the details may swap the image midway
         synchronized (images) {
             Backdrop b = images.get(key);
@@ -364,9 +367,29 @@ final class Recs {
         });
     }
 
-    /** This hour's picks for the three tabs (Explore, Movies, Shows), without repeats. */
+    /** Cards on screen at once: the window that gets details is this page and the next one. */
+    private static final int PAGE = 3;
+    private volatile String viewKind;   // the tab on screen (null = Explore)
+    private volatile int viewStart;     // its first card
+
+    /** The home screen says which tab and card it is on; with pick_count > 3 only this page and the next get details. */
+    void setView(String kind, int start) {
+        viewKind = kind;
+        viewStart = start;
+    }
+
+    /**
+     * What needs details and images: with pick_count > 3, the cards on screen and the next page of the current tab (the
+     * cards slide one by one, so the next page is ready before it shows); otherwise this hour's picks for the three
+     * tabs (Explore, Movies, Shows), without repeats.
+     */
     List<Pick> wanted() {
         List<Pick> out = new ArrayList<>();
+        if (Config.PICK_COUNT > PAGE) {
+            List<Pick> list = now(viewKind);
+            for (int i = 0; i < Math.min(2 * PAGE, list.size()); i++) out.add(list.get((viewStart + i) % list.size()));
+            return out;
+        }
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (String kind : new String[] {null, "movie", "tv"}) {
             for (Pick p : now(kind)) if (seen.add(key(p))) out.add(p);
@@ -387,7 +410,7 @@ final class Recs {
 
     private void fetchList(int p) throws Exception {
         // None of the services we know is on the TV (or hide_services hides them all): no region would change that.
-        boolean any = false;
+        boolean any = mapped();
         for (String[] s : SERVICES) any |= installed(s[2]);
         if (!any) throw new IOException(NO_KNOWN_APPS);
         // The services the TV has, by their TMDB ids in your region.
@@ -395,31 +418,27 @@ final class Recs {
         JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + REGION).getJSONArray("results");
         for (int i = 0; i < providers.length(); i++) {
             JSONObject o = providers.getJSONObject(i);
+            if (mapped()) {
+                if (target(o.optString("provider_name"), false) != null) services.put(o.getInt("provider_id"), new String[0]);
+                continue;
+            }
             String[] s = service(o.optString("provider_name"));
             if (s != null && installed(s[2])) services.put(o.getInt("provider_id"), s);
         }
         if (services.isEmpty()) throw new IOException(NO_APPS);
         StringBuilder ids = new StringBuilder();
         for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
-        String common = "&language=" + lang() + "&watch_region=" + REGION + "&with_watch_monetization_types=flatrate&include_adult=false"
-                + "&sort_by=popularity.desc&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
+        String common = "&language=" + lang() + "&watch_region=" + REGION + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "") + "&include_adult=false"
+                + "&sort_by=popularity.desc" + (mapped() ? "" : "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8"))
                 + (Config.HIDE_ANIMATION ? "&without_genres=" + ANIMATION : "");
-        // 1. Trending this week (TMDB goes by what people are watching and searching for right now), only what is
-        //    on one of the TV's services: the details say where (and are then ready).
+        // 1. The most popular right now (TMDB's popularity follows what people are watching and searching for), already
+        //    filtered to the TV's services: one request each. The details (which service, runtime) come later, only for
+        //    the titles that are shown.
         List<Pick> hotMovies = new ArrayList<>(), hotShows = new ArrayList<>();
-        for (String kind : new String[] {"movie", "tv"}) {
-            JSONArray hot = get("/trending/" + kind + "/week?language=" + lang()).getJSONArray("results");
-            List<Pick> candidates = new ArrayList<>();
-            for (int i = 0; i < hot.length() && i < 20; i++) add(candidates, hot.getJSONObject(i), kind);
-            for (Pick pick : candidates) {
-                try {
-                    fetchDetails(pick);
-                } catch (Exception e) {
-                    continue;
-                }
-                if (pick.pkg != null) (kind.equals("movie") ? hotMovies : hotShows).add(pick);
-            }
-        }
+        JSONArray hotM = get("/discover/movie?vote_count.gte=100" + common).getJSONArray("results");
+        JSONArray hotS = get("/discover/tv?vote_count.gte=50" + common).getJSONArray("results");
+        for (int i = 0; i < hotM.length(); i++) add(hotMovies, hotM.getJSONObject(i), "movie");
+        for (int i = 0; i < hotS.length(); i++) add(hotShows, hotS.getJSONObject(i), "tv");
         // 2. Recent releases on the TV's services: movies from the past year and shows with a new episode in the
         //    past 3 months.
         JSONArray movies = get("/discover/movie?vote_count.gte=30&primary_release_date.gte=" + day(-365)
@@ -429,12 +448,28 @@ final class Recs {
         List<Pick> newMovies = new ArrayList<>(), newShows = new ArrayList<>();
         for (int i = 0; i < movies.length(); i++) add(newMovies, movies.getJSONObject(i), "movie");
         for (int i = 0; i < shows.length(); i++) add(newShows, shows.getJSONObject(i), "tv");
-        // Trending first, then the new releases; movies and shows alternating, without repeats, up to 24.
+        // Popular first (12), then the new releases; movies and shows alternating, without repeats, up to 24.
         List<Pick> list = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        alternate(list, seen, hotMovies, hotShows, 24);
+        alternate(list, seen, hotMovies, hotShows, 12);
         alternate(list, seen, newMovies, newShows, 24);
         if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
+        // Titles still in the list keep their details (same language and same apps), so a refresh asks for new ones only.
+        if (listLanguage.equals(Ui.language) && cache.getLong("keyStamp", 0) == keyStamp) {
+            Map<String, Pick> old = new HashMap<>();
+            for (Pick o : picks) if (o.detailed) old.put(key(o), o);
+            for (Pick q : list) {
+                Pick o = old.get(key(q));
+                if (o == null) continue;
+                q.title = o.title;
+                q.backdrop = o.backdrop;
+                q.meta = o.meta;
+                q.app = o.app;
+                q.pkg = o.pkg;
+                q.link = o.link;
+                q.detailed = true;
+            }
+        }
         picks = list;
         period = p;
         listAt = System.currentTimeMillis();
@@ -487,7 +522,7 @@ final class Recs {
     /** Genre, runtime (or seasons) and the service it's on, among the ones the TV has. */
     private void fetchDetails(Pick p) throws Exception {
         JSONObject o = get("/" + p.kind + "/" + p.id
-                + "?language=" + lang() + "&append_to_response=watch/providers,images&include_image_language=null," + Ui.language.replaceAll("-.*", "") + ",en");
+                + "?language=" + lang() + "&append_to_response=watch/providers,images,external_ids&include_image_language=null," + Ui.language.replaceAll("-.*", "") + ",en");
         p.title = title(p, o);
         String best = bestBackdrop(o.optJSONObject("images"));
         if (best != null) p.backdrop = best;
@@ -505,17 +540,48 @@ final class Recs {
             int seasons = o.optInt("number_of_seasons");
             if (seasons > 0) parts.add(Ui.plural("plural|one:{n} season|other:{n} seasons", seasons));
         }
+        // TMDB's own rating, from the same answer (a title with too few votes has none worth showing).
+        double rating = o.optDouble("vote_average", 0);
+        if (rating > 0 && o.optInt("vote_count") >= 10) parts.add(String.format(Ui.locale(), "★ %.1f", rating));
         JSONObject wp = o.optJSONObject("watch/providers");
         JSONObject br = wp == null ? null : wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(REGION);
         JSONArray flat = br == null ? null : br.optJSONArray("flatrate");
-        for (int i = 0; flat != null && i < flat.length() && p.app == null; i++) {
+        if (mapped()) {
+            // A service with its own rule first, then the first of the others (the "*" rule).
+            for (int pass = 0; pass < 2 && p.app == null; pass++) {
+                for (int i = 0; flat != null && i < flat.length() && p.app == null; i++) {
+                    String name = flat.getJSONObject(i).optString("provider_name");
+                    String pkg = target(name, pass == 0);
+                    if (pkg != null) {
+                        p.app = name;
+                        p.pkg = pkg;
+                    }
+                }
+            }
+        }
+        for (int i = 0; !mapped() && flat != null && i < flat.length() && p.app == null; i++) {
             String[] s = service(flat.getJSONObject(i).optString("provider_name"));
             if (s != null && installed(s[2])) {
                 p.app = s[1];
                 p.pkg = s[2];
             }
         }
-        if (p.app != null) parts.add(SERVICE_NAME.get(p.app));
+        if (mapped() && p.app == null && !Config.FLATRATE_ONLY) {
+            // No service of its own in this region: the "*" rule's app, named after the app itself.
+            String pkg = target("", false);
+            if (pkg != null) {
+                p.pkg = pkg;
+                p.app = appLabel(pkg);
+            }
+        }
+        // Stremio opens the title's own page from its IMDb id (a movie has it in the details, a show in external_ids).
+        if (STREMIO.equals(p.pkg)) {
+            String imdb = o.optString("imdb_id");
+            JSONObject ids = o.optJSONObject("external_ids");
+            if (!imdb.startsWith("tt") && ids != null) imdb = ids.optString("imdb_id");
+            if (imdb.startsWith("tt")) p.link = "stremio:///detail/" + (p.kind.equals("movie") ? "movie" : "series") + "/" + imdb;
+        }
+        if (p.app != null) parts.add(serviceName(p));
         p.meta = String.join(" · ", parts);
         p.detailed = true;
     }
@@ -596,6 +662,53 @@ final class Recs {
         }
     }
 
+    /**
+     * service_map (config.properties): "netflix,prime=app.one;youtube=app.two;*=app.three". Each rule is the part of a
+     * service's name on TMDB (lowercase) that it matches, and the app that opens for it; "*" is every other service.
+     */
+    private static final List<String[]> MAP = new ArrayList<>();   // {name, package}, "*" last
+    static {
+        String fallback = null;
+        for (String rule : Config.SERVICE_MAP.split(";")) {
+            int eq = rule.indexOf('=');
+            if (eq < 0) continue;
+            String pkg = rule.substring(eq + 1).trim();
+            if (pkg.isEmpty()) continue;
+            for (String name : rule.substring(0, eq).split(",")) {
+                name = name.trim().toLowerCase(Locale.ROOT);
+                if (name.equals("*")) fallback = pkg;
+                else if (!name.isEmpty()) MAP.add(new String[] {name, pkg});
+            }
+        }
+        if (fallback != null) MAP.add(new String[] {"*", fallback});
+    }
+
+    private static final String STREMIO = "com.stremio.one";
+
+    /** The app's own name on the TV ("Stremio"), or its package. */
+    private String appLabel(String pkg) {
+        try {
+            return String.valueOf(context.getPackageManager().getApplicationLabel(context.getPackageManager().getApplicationInfo(pkg, 0)));
+        } catch (Exception e) {
+            return pkg;
+        }
+    }
+
+    private static boolean mapped() {
+        return !MAP.isEmpty();
+    }
+
+    /** The app service_map opens for this service (its name on TMDB), when it's on the TV; the "*" rule only if !explicit. */
+    private String target(String service, boolean explicit) {
+        String n = service.toLowerCase(Locale.ROOT);
+        for (String key : HIDDEN) if (n.contains(key)) return null;
+        for (String[] rule : MAP) {
+            if (rule[0].equals("*") ? explicit : !n.contains(rule[0])) continue;
+            if (HomeApps.launchIntent(context.getPackageManager(), rule[1]) != null) return rule[1];
+        }
+        return null;
+    }
+
     /** The service's app is on the TV, and the service isn't hidden (an app the TV ships without a subscription, say). */
     private boolean installed(String pkg) {
         if (!HIDDEN.isEmpty()) for (String[] s : SERVICES) if (s[2].equals(pkg) && HIDDEN.contains(s[1])) return false;
@@ -604,6 +717,8 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = (Config.TMDB_KEY.hashCode() * 31L + REGION.hashCode()) * 31L + (Config.HIDE_ANIMATION ? 1 : 0);
+        for (String[] rule : MAP) stamp = stamp * 31L + rule[0].hashCode() * 31L + rule[1].hashCode()
+                + (HomeApps.launchIntent(context.getPackageManager(), rule[1]) != null ? 1 : 0);
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
     }
@@ -622,7 +737,7 @@ final class Recs {
     /** A key is set and Watchmode hasn't refused it (a refused key isn't tried again until it changes). */
     private boolean linksOn() {
         String key = Config.WATCHMODE_KEY.trim();
-        return !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
+        return !mapped() && !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
     }
 
     /** Sets p.link from what was looked up before, or looks it up (2 requests of the free plan's 2,500 a month). */
@@ -748,7 +863,7 @@ final class Recs {
             if (forLight != light) return;   // the design changed midway: this one is stale
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
-                while (images.size() > (forLight ? 10 : 4)) images.remove(images.keySet().iterator().next());
+                while (images.size() > (forLight ? Math.max(10, Config.PICK_COUNT + 3) : 4)) images.remove(images.keySet().iterator().next());
             }
             notifyListeners();
         } catch (IOException | RuntimeException | OutOfMemoryError e) {
