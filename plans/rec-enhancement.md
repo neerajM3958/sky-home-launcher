@@ -1,6 +1,6 @@
 # Recommendations and launching: make them flexible and configurable
 
-**Status: phases 1 to 3 are built (branch `rec-routing`, tried on a Skyworth Google TV Stick); phase 4 is not.** The
+**Status: all four phases are built (branch `rec-routing`, tried on a Skyworth Google TV Stick).** The
 questions that need an answer are in *Open questions* at the end, each with the default I would take if you say nothing.
 
 What phase 1 taught, and where it differs from the plan:
@@ -34,6 +34,14 @@ What phase 3 taught:
   `Launcher` like every card (`Pick.pkg == Recs.ROUTED`). Phase 4 adds the setting that turns it back on. A pick's
   service is looked up ahead of time (`Launcher.prefetch`), so there are no dots on a pick.
 - The main menu has ten rows and still fits the comparison and two notices.
+
+What phase 4 taught:
+- The TMDB section is now Region, *Recommend from*, *Only titles I can stream*, *Include rent or buy*, *Hide cartoons
+  and anime*, *Catalogs*; the status block below still fits. *Include rent or buy* is greyed while the one above is off.
+- `flatrate_only` (and the new `include_rent_buy`) are the first values; the TV's choice wins. The discover filter is
+  `with_watch_monetization_types=flatrate`, or `flatrate|rent|buy` (the `|` is `%7C`), or none.
+- Not done: a rent or buy pick doesn't say so in its meta line (question 10). Picks from anything popular carry no
+  service, so the line has no name to put it next to.
 
 ## Goal
 

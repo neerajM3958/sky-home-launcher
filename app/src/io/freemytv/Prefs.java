@@ -161,8 +161,17 @@ final class Prefs {
         put("catalogRows", sb.length() == 0 ? "none" : sb.toString());
     }
 
-    /** Picks only from titles on the apps the TV has, rather than anything popular (the TMDB section's choice, in the next change). */
+    /** Picks only from titles on the apps the TV has, rather than anything popular. */
     static boolean recommendFromApps() { return app != null && sp().getBoolean("recommendApps", false); }
+    static void setRecommendFromApps(boolean on) { put("recommendApps", on); }
+
+    /** Only titles on a streaming service in the region (subscription, free or with ads); the config's flatrate_only first. */
+    static boolean flatrateOnly() { return app == null ? Config.FLATRATE_ONLY : sp().getBoolean("flatrateOnly", Config.FLATRATE_ONLY); }
+    static void setFlatrateOnly(boolean on) { put("flatrateOnly", on); }
+
+    /** With flatrateOnly: also the titles that can only be rented or bought. */
+    static boolean includeRentBuy() { return app == null ? Config.INCLUDE_RENT_BUY : sp().getBoolean("includeRentBuy", Config.INCLUDE_RENT_BUY); }
+    static void setIncludeRentBuy(boolean on) { put("includeRentBuy", on); }
 
     // MARK: - Stremio (Free My TV > Stremio)
 

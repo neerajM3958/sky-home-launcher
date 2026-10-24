@@ -437,7 +437,7 @@ final class Recs {
         if (services.isEmpty()) throw new IOException(NO_APPS);
         StringBuilder ids = new StringBuilder();
         for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
-        String common = "&language=" + lang() + "&watch_region=" + region() + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "") + "&include_adult=false"
+        String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + "&include_adult=false"
                 + "&sort_by=popularity.desc" + "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
                 + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         // 1. The most popular right now (TMDB's popularity follows what people are watching and searching for), already
@@ -483,6 +483,12 @@ final class Recs {
         period = p;
         listAt = System.currentTimeMillis();
         listLanguage = Ui.language;
+    }
+
+    /** The discover filter on how a title streams: subscription (and free), plus rent or buy when asked, or no filter. */
+    private static String monetization() {
+        if (!Prefs.flatrateOnly()) return "";
+        return "&with_watch_monetization_types=" + (Prefs.includeRentBuy() ? "flatrate%7Crent%7Cbuy" : "flatrate");
     }
 
     /** Language of titles and genres (TMDB's "fr-FR", "zh-CN"…); the services come from the region. */
@@ -595,7 +601,7 @@ final class Recs {
     }
 
     private void fetchListOnly(int p) throws Exception {
-        String common = "&language=" + lang() + "&watch_region=" + region() + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "")
+        String common = "&language=" + lang() + "&watch_region=" + region() + monetization()
                 + "&include_adult=false&sort_by=popularity.desc" + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         boolean genres = !loadSavedGenres();
         List<String> paths = new ArrayList<>();
@@ -848,7 +854,7 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = (Config.TMDB_KEY.hashCode() * 31L + region().hashCode()) * 31L + (Prefs.hideAnimation() ? 1 : 0);
-        stamp = stamp * 31L + (listOnly() ? 1 : 0);
+        stamp = stamp * 31L + (listOnly() ? 1 : 0) + (Prefs.flatrateOnly() ? 2 : 0) + (Prefs.includeRentBuy() ? 4 : 0);
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
     }

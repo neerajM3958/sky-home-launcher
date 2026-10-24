@@ -120,7 +120,8 @@ public class SettingsActivity extends Activity {
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8;
-        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;   // the main menu's rows that open them
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
+        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_ANIMATION = 4, TMDB_CATALOGS = 5;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -214,6 +215,7 @@ public class SettingsActivity extends Activity {
 
         /** A main menu row that needs something it doesn't have (Trakt without a Client ID, TMDB without its key): greyed, and OK does nothing. */
         private boolean disabledRow(int row) {
+            if (screen == TMDB) return row == RENT_BUY_ROW && !Prefs.flatrateOnly();     // everything is included then
             return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext()))
                     || (row == STREMIO_ROW && !stremioOn));
         }
@@ -493,6 +495,7 @@ public class SettingsActivity extends Activity {
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
+            else if (count > 0 && !Prefs.recommendFromApps()) line = Ui.trf("On · {n} titles, 3 new ones every hour.", "n", count);
             else if (count > 0) line = Ui.trf("On · {n} titles from the TV's apps, 3 new ones every hour.", "n", count);
             else line = Ui.tr("Fetching titles…");
             c.drawText(TextUtils.ellipsize(line, notice, 790 * k, TextUtils.TruncateAt.END).toString(), x, y + 42 * k, notice);
@@ -673,7 +676,7 @@ public class SettingsActivity extends Activity {
                                 focus = 0;
                                 screen = TMDB;
                             } else if (screen == SHELF_EDIT && editingRows) {
-                                focus = 2;
+                                focus = TMDB_CATALOGS;
                                 screen = TMDB;
                             } else if (screen == TMDB) {
                                 focus = TMDB_ROW;
@@ -853,13 +856,16 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] tmdbLabels() {
-            return new String[] {Ui.tr("Region"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
+            return new String[] {Ui.tr("Region"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
+                    Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
         }
 
         private String[] tmdbValues() {
             int on = 0;
             for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
-            return new String[] {regionValue(), onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
+            return new String[] {regionValue(), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
+                    onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()),
+                    onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
         }
 
         private void drawTmdb(Canvas c) {
@@ -870,8 +876,9 @@ public class SettingsActivity extends Activity {
                 float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
                 float f = drawRowBackground(c, i);
-                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
-                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                boolean off = disabledRow(i);
+                rowLabel.setColor(blend(off ? 0x73FFFFFF : 0xF2FFFFFF, off ? 0x731C1C1E : INK, f));
+                rowValue.setColor(blend(off ? 0x73FFFFFF : 0xB3FFFFFF, off ? 0x731C1C1E : 0xB31C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
                 c.drawText(TextUtils.ellipsize(values[i], new TextPaint(rowValue), 420 * k, TextUtils.TruncateAt.END).toString(),
@@ -1041,7 +1048,10 @@ public class SettingsActivity extends Activity {
                 return;
             }
             if (screen == TMDB) {
-                if (focus == 1) Prefs.setHideAnimation(!Prefs.hideAnimation());
+                if (focus == TMDB_FROM) Prefs.setRecommendFromApps(!Prefs.recommendFromApps());
+                else if (focus == TMDB_STREAM) Prefs.setFlatrateOnly(!Prefs.flatrateOnly());
+                else if (focus == RENT_BUY_ROW && !disabledRow(RENT_BUY_ROW)) Prefs.setIncludeRentBuy(!Prefs.includeRentBuy());
+                else if (focus == TMDB_ANIMATION) Prefs.setHideAnimation(!Prefs.hideAnimation());
                 return;
             }
             if (screen == REMOTE_KEYS) {
@@ -1356,12 +1366,12 @@ public class SettingsActivity extends Activity {
             } else if (screen == TMDB) {
                 if (focus == 0) {
                     openPicker(PICK_REGION);
-                } else if (focus == 1) {
+                } else if (focus == TMDB_CATALOGS) {
+                    openRowsEditor();
+                } else {
                     adjust(1);
                     invalidate();
                     return;
-                } else {
-                    openRowsEditor();
                 }
             } else if (screen == STREMIO) {
                 toggleStremio();
