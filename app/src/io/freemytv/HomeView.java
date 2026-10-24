@@ -61,7 +61,7 @@ import java.util.function.Consumer;
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
-final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener {
+final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Catalogs.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
@@ -89,7 +89,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
@@ -102,7 +102,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static String[] tabs;
     private static int tabsGeneration = -1;
     private static final String[] TAB_KIND = {null, "movie", "tv"};
-    private static final int Z_TOP = 4, Z_CARDS = 5;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6;
+    // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
+    // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
+    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 400, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
 
     private final Activity activity;
     private final Scene scene = new Scene();
@@ -211,6 +214,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final RectF weatherCard = new RectF(), quotesCard = new RectF();
     private final Spring drawer = new Spring(0.46f, 0.92f, 0);
     private boolean drawerOpen;
+    private final Catalogs catalogs;
+    private final Layer catalogLayer;
+    private final Spring catIn = new Spring(0.5f, 0.92f, 0), catRow = new Spring(0.42f, 0.92f, 0), catFocus = new Spring(0.3f, 0.82f, 0);
+    private List<Catalogs.Row> catRows = new ArrayList<>();
+    private Spring[] catShift = new Spring[0];     // per row: the first poster shown, in posters
+    private int[] catCol = new int[0];
+    private int catRowIndex;
+    private boolean catDirty, catWasMoving;
+    private Paint lCatTitle, lCatLabel;
+    private final RectF cardRect = new RectF();
     private int drawerIndex;
 
     // "All Apps" sheet
@@ -319,6 +332,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case PLATTER: drawPlatter(c); break;
                 case TILES: drawTiles(c); break;
                 case DRAWER: drawDrawer(c); break;
+                case CATALOG: drawCatalog(c); break;
                 case SHEET: drawSheet(c); break;
                 default: drawToast(c); break;
             }
@@ -359,6 +373,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             wake();
             data.refreshIfStale();
             recs.refreshIfStale();
+            if (drawerOpen) catalogs.refreshIfStale();
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -384,19 +399,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         platter = new Layer(a, PLATTER);
         tiles = new Layer(a, TILES);
         drawerLayer = new Layer(a, DRAWER);
+        catalogLayer = new Layer(a, CATALOG);
+        catalogs = Catalogs.get(a);
         sheetLayer = new Layer(a, SHEET);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer}) {
+        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, catalogLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, sheetLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
         setContentDescription("Free My TV");
         drawerLayer.setVisibility(INVISIBLE);
+        catalogLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < topFocus.length; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
@@ -432,6 +450,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lastStep = 0;
         data.addListener(this);
         recs.addListener(this);
+        catalogs.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
@@ -462,6 +481,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         handler.removeCallbacks(reloadSoon);
         data.removeListener(this);
         recs.removeListener(this);
+        catalogs.removeListener(this);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
@@ -482,9 +502,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (animated) {
             sheet.target = 0;
             drawer.target = 0;
+            catIn.target = 0;
+            catRow.target = 0;
         } else {
             sheet.snap(0);
             drawer.snap(0);
+            catIn.snap(0);
+            catRow.snap(0);
         }
         if (pickIndex != 0 && !picks.isEmpty()) {
             pickIndex = 0;
@@ -549,6 +573,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(platter, width, Math.round(320 * kk));
         measure(tiles, width, Math.round(270 * kk));
         measure(drawerLayer, width, Math.round(600 * kk));
+        measure(catalogLayer, width, height);
         measure(sheetLayer, width, height);
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
@@ -567,6 +592,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         place(platter, 0, Math.round(750 * kk));
         place(tiles, 0, Math.round(790 * kk));
         place(drawerLayer, 0, Math.round(470 * kk));
+        catalogLayer.layout(0, 0, width, height);
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
@@ -616,6 +642,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(Ui.medium, 25 * k, L_DIM);
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
+        lCatTitle = Ui.text(Ui.semibold, 32 * k, L_INK);
+        lCatLabel = Ui.text(Ui.medium, 25 * k, L_INK);
         lTip = Ui.text(Ui.semibold, 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
         lDate = Ui.text(Ui.semibold, 34 * k, L_DIM);
@@ -685,12 +713,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt);
+        boolean catMoving = catIn.step(dt) | catRow.step(dt) | catFocus.step(dt) | step(catShift, dt);
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
-        if (drawerMoving || sheetMoving || motionDirty) updateMotion();
+        if (drawerMoving || sheetMoving || catMoving || motionDirty) updateMotion();
         // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
         // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
         // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
@@ -700,10 +729,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
+        if (catMoving || catDirty) catalogLayer.invalidate();
         if (drawerMoving || bgFading) sky.invalidate();
         if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
         drawerWasMoving = drawerMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = false;
+        if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
+        catWasMoving = catMoving;
+        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = false;
         if (updateClock()) {
             layoutStatus();
             status.invalidate();
@@ -716,7 +748,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || sheetMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
+                || sheetMoving || catMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
                 || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
@@ -742,15 +774,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float d = drawer.value, dc = Ui.clamp(d), s = Ui.clamp(sheet.value);
         float home = 1 - s, top = home * (1 - smoothstep(0, 0.32f, dc));
         float shift = SHIFT * k;
-        float lift = -d * shift;
+        float catLift = (catIn.value * CAT_LIFT + catRow.value * CAT_PITCH) * k;     // the poster rows pull everything further up
+        float lift = -d * shift - catLift;
         show(heroLayer, top, lift);
         show(status, top, lift);
         show(platter, home, lift);
         show(tiles, home, lift);
         float da = home * smoothstep(0.1f, 0.6f, dc);
-        drawerLayer.setTranslationY((1 - d) * shift);
+        drawerLayer.setTranslationY((1 - d) * shift - catLift);
         drawerLayer.setAlpha(da);
         drawerLayer.setVisibility(da > 0.002f ? VISIBLE : INVISIBLE);
+        float ca = home * smoothstep(0, 0.35f, Ui.clamp(catIn.value));
+        catalogLayer.setAlpha(ca);
+        catalogLayer.setVisibility(ca > 0.002f ? VISIBLE : INVISIBLE);
         sheetLayer.setVisibility(s > 0.001f || sheetOpen ? VISIBLE : INVISIBLE);
         sheetLayer.setAlpha(s);
         float scale = 1.04f - 0.04f * s;
@@ -1495,6 +1531,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void openDrawer() {
         if (drawerItems.isEmpty()) return;
+        catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
         drawerOpen = true;
         drawer.target = 1;
         zone = Z_DRAWER;
@@ -1506,6 +1543,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void closeDrawer() {
         drawerOpen = false;
         drawer.target = 0;
+        catIn.target = 0;
+        catRow.target = 0;
         zone = Z_SHELF;
         for (Spring f : drawerFocus) f.snap(0);   // the drawer goes away: its focus doesn't need to animate
         if (!shelf.isEmpty() && drawerIndex < drawerRects.length) shelfIndex = nearest(tileRects, drawerRects[drawerIndex].centerX());
@@ -1888,6 +1927,122 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    // MARK: - Poster rows (under the drawer's weather and quotes; Down from the drawer's buttons)
+
+    private static final int CAT_VISIBLE = 8;
+
+    @Override public void onCatalogs() {
+        wake();
+        syncRows();
+        catDirty = true;
+    }
+
+    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus where it was when it can. */
+    private void syncRows() {
+        List<Catalogs.Row> rows = catalogs.rows();
+        if (rows == catRows) return;
+        catRows = rows;
+        catShift = new Spring[rows.size()];
+        for (int i = 0; i < catShift.length; i++) catShift[i] = new Spring(0.34f, 1f, 0);
+        int[] cols = new int[rows.size()];
+        for (int i = 0; i < cols.length && i < catCol.length; i++) cols[i] = Math.min(catCol[i], Math.max(0, rows.get(i).items.size() - 1));
+        catCol = cols;
+        for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
+        catRowIndex = Math.min(catRowIndex, Math.max(0, rows.size() - 1));
+        if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
+    }
+
+    private boolean enterCatalog() {
+        syncRows();
+        if (catRows.isEmpty()) return false;
+        zone = Z_CATALOG;
+        catRowIndex = 0;
+        catIn.target = 1;
+        catRow.target = 0;
+        popCatalogFocus();
+        return true;
+    }
+
+    private void leaveCatalog() {
+        zone = Z_DRAWER;
+        catIn.target = 0;
+        catRow.target = 0;
+        catDirty = true;
+        wake();
+    }
+
+    private void popCatalogFocus() {
+        catFocus.snap(0);
+        catFocus.target = 1;
+        catDirty = true;
+    }
+
+    /** Arrows inside the rows: left and right along a row, up and down between rows (up from the first goes back to the drawer). */
+    private boolean moveCatalog(int dx, int dy) {
+        if (catRows.isEmpty()) return false;
+        int r = catRowIndex;
+        if (dx != 0) {
+            int next = Math.max(0, Math.min(catRows.get(r).items.size() - 1, catCol[r] + dx));
+            if (next == catCol[r]) return false;
+            catCol[r] = next;
+            float first = catShift[r].target;
+            if (next < first) first = next;
+            else if (next > first + CAT_VISIBLE - 1) first = next - CAT_VISIBLE + 1;
+            catShift[r].target = first;
+        } else if (dy < 0) {
+            if (r == 0) {
+                leaveCatalog();
+                return true;
+            }
+            catRowIndex--;
+            catRow.target = catRowIndex;
+        } else {
+            if (r >= catRows.size() - 1) return false;
+            catRowIndex++;
+            catRow.target = catRowIndex;
+        }
+        popCatalogFocus();
+        return true;
+    }
+
+    /** Where poster `i` of row `r` is on screen now. */
+    private void posterRect(int r, int i, RectF out) {
+        float y0 = (CAT_Y0 + r * CAT_PITCH - catIn.value * CAT_LIFT - catRow.value * CAT_PITCH) * k;
+        float x = MARGIN * k + (i - catShift[r].value) * (CAT_POSTER_W + CAT_GAP) * k;
+        out.set(x, y0 + 50 * k, x + CAT_POSTER_W * k, y0 + (50 + CAT_POSTER_H) * k);
+    }
+
+    private void drawCatalog(Canvas c) {
+        if (catRows.isEmpty() || catIn.value < 0.002f || lCatTitle == null) return;
+        lCatTitle.setColor(tone(L_INK, WHITE));
+        lCatLabel.setColor(tone(L_INK, WHITE));
+        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
+        for (int r = 0; r < catRows.size(); r++) {
+            float y0 = (CAT_Y0 + r * CAT_PITCH - catIn.value * CAT_LIFT - catRow.value * CAT_PITCH) * k;
+            if (y0 > h || y0 + CAT_PITCH * k < 0) continue;
+            Catalogs.Row row = catRows.get(r);
+            c.drawText(row.title, MARGIN * k + 4 * k, y0 + 30 * k, lCatTitle);
+            int first = Math.max(0, (int) Math.floor(catShift[r].value)), last = Math.min(row.items.size() - 1, first + CAT_VISIBLE + 1);
+            for (int i = first; i <= last; i++) {
+                posterRect(r, i, cardRect);
+                if (cardRect.right < 0 || cardRect.left > w) continue;
+                Catalogs.Item it = row.items.get(i);
+                Bitmap poster = catalogs.poster(it, Math.round(CAT_POSTER_W * k * 1.25f));
+                float f = zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0;
+                if (poster == null) {
+                    fill.setShader(null);
+                    fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
+                    c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
+                }
+                drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
+                fitPaint.set(lCatLabel);
+                c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
+                        cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
+                if (it.stars != null) c.drawText(it.stars, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
+            }
+        }
+    }
+
     // MARK: - Toasts
 
     void showToast(String text) {
@@ -2075,6 +2230,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void back() {
         if (sheetOpen) {
             closeSheet();
+        } else if (zone == Z_CATALOG) {
+            leaveCatalog();
+            retarget(false);
         } else if (zone == Z_DRAWER || zone == WIDGETS) {
             closeDrawer();
             retarget(false);
@@ -2140,6 +2298,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     return;
                 }
                 break;
+            case Z_CATALOG:
+                if (!moveCatalog(dx, dy)) return;
+                break;
             case WIDGETS: {
                 List<Integer> on = widgets();
                 int at = on.indexOf(widgetIndex);
@@ -2159,6 +2320,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     drawerIndex = next;
                 } else if (dy < 0) {
                     closeDrawer();
+                } else if (enterCatalog()) {
+                    // Down from the drawer's buttons: the poster rows come in below the weather and quotes
                 } else if (talkBack() && !widgets().isEmpty()) {
                     // Only with TalkBack: the widgets are there to be read, and this is how it gets to them.
                     zone = WIDGETS;
@@ -2213,6 +2376,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         HomeApps.Item it;
         RectF r;
+        Recs.Pick pick = null;      // a pick that may need its IMDb id first
+        Catalogs.Item listed = null;    // the poster it came from, which remembers the id
         if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
         if (sheetOpen) {
             if (others.isEmpty()) return;
@@ -2221,6 +2386,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
+            pick = p;
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = heroButton;
         } else if (zone == Z_STATUS) {
@@ -2241,8 +2407,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardAt(cardIndex);
             if (p == null || p.pkg == null) return;
+            pick = p;
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = cardRects[cardIndex];
+        } else if (zone == Z_CATALOG) {
+            String app = recs.catalogApp();
+            if (app == null || catRows.isEmpty()) return;
+            listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
+            Recs.Pick p = new Recs.Pick();
+            p.id = listed.id;
+            p.kind = listed.kind;
+            p.title = listed.title;
+            p.pkg = app;
+            p.link = listed.link;
+            pick = p;
+            it = HomeApps.app(app, listed.title, p.link);
+            r = new RectF();
+            posterRect(catRowIndex, catCol[catRowIndex], r);
         } else {
             if (shelf.isEmpty()) return;
             it = shelf.get(shelfIndex);
@@ -2264,6 +2445,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             retarget(false);
             return;
         }
+        if (pick != null && recs.needsTitleLink(pick)) {
+            // The IMDb id is looked up now (one request); then the app opens on the title.
+            final Recs.Pick wanted = pick;
+            final HomeApps.Item item = it;
+            final Catalogs.Item poster = listed;
+            final RectF from = new RectF(r);
+            recs.resolveLink(pick, () -> {
+                if (poster != null) poster.link = wanted.link;
+                item.uri = wanted.link;     // null if TMDB has no IMDb id: the app's home
+                launch(item, from);
+            });
+            return;
+        }
+        launch(it, r);
+    }
+
+    private void launch(HomeApps.Item it, RectF r) {
         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top),
                 Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.trf("Couldn't open {app}.", "app", it.label));

@@ -59,7 +59,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 8;
+    private static final int CACHE_VERSION = 11;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -409,6 +409,10 @@ final class Recs {
     // MARK: - TMDB
 
     private void fetchList(int p) throws Exception {
+        if (listOnly()) {
+            fetchListOnly(p);
+            return;
+        }
         // None of the services we know is on the TV (or hide_services hides them all): no region would change that.
         boolean any = mapped();
         for (String[] s : SERVICES) any |= installed(s[2]);
@@ -477,7 +481,7 @@ final class Recs {
     }
 
     /** Language of titles and genres (TMDB's "fr-FR", "zh-CN"…); the services come from the region. */
-    private static String lang() {
+    static String lang() {
         String lang = Ui.language;
         if (lang.equals("en")) return "en-US";
         if (lang.equals("pt")) return "pt-BR";
@@ -501,16 +505,169 @@ final class Recs {
         return String.format(Locale.US, "%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH));
     }
 
-    private static void add(List<Pick> list, JSONObject o, String kind) {
+    private static Pick add(List<Pick> list, JSONObject o, String kind) {
         String backdrop = o.optString("backdrop_path", "");
-        if (backdrop.isEmpty() || "null".equals(backdrop)) return;
-        if (Config.HIDE_ANIMATION && animated(o)) return;
+        if (backdrop.isEmpty() || "null".equals(backdrop)) return null;
+        if (Config.HIDE_ANIMATION && animated(o)) return null;
         Pick p = new Pick();
         p.id = o.optInt("id");
         p.kind = kind;
         p.title = o.optString(kind.equals("movie") ? "title" : "name");
         p.backdrop = backdrop;
         list.add(p);
+        return p;
+    }
+
+    // MARK: - List-only picks (service_map with just "*": every title opens one app)
+
+    /**
+     * Every title opens the same app, so nothing about the service is needed: a pick is built from the list answer alone
+     * (title, backdrop, genre, rating) and the only per-title request is the IMDb id, when one is clicked.
+     */
+    private static boolean listOnly() {
+        return MAP.size() == 1 && MAP.get(0)[0].equals("*");
+    }
+
+    private static final String STREMIO = "com.stremio.one";
+    private static final long GENRES_EVERY = 7 * 24 * 3600_000L;
+    private final Map<String, String> genreNames = new HashMap<>();   // "movie28" → "Action"
+    private final ExecutorService net = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "tmdb");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Several requests at once (four at a time); the answers come back in the order of the paths. */
+    JSONObject[] getAll(String... paths) throws Exception {
+        List<java.util.concurrent.Future<JSONObject>> pending = new ArrayList<>();
+        for (String path : paths) pending.add(net.submit(() -> get(path)));
+        JSONObject[] out = new JSONObject[paths.length];
+        for (int i = 0; i < out.length; i++) {
+            try {
+                out[i] = pending.get(i).get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw e.getCause() instanceof Exception ? (Exception) e.getCause() : e;
+            }
+        }
+        return out;
+    }
+
+    /** The genre names from the last week's answer (same language), or false: they need fetching. */
+    private boolean loadSavedGenres() {
+        long at = cache.getLong("genresAt", 0), now = System.currentTimeMillis();
+        String movie = cache.getString("genres:movie", null), tv = cache.getString("genres:tv", null);
+        if (movie == null || tv == null || !lang().equals(cache.getString("genresLang", "")) || now < at || now - at > GENRES_EVERY) return false;
+        try {
+            readGenres("movie", new JSONObject(movie));
+            readGenres("tv", new JSONObject(tv));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void readGenres(String kind, JSONObject answer) {
+        JSONArray list = answer.optJSONArray("genres");
+        for (int i = 0; list != null && i < list.length(); i++) {
+            JSONObject g = list.optJSONObject(i);
+            if (g != null) genreNames.put(kind + g.optInt("id"), g.optString("name"));
+        }
+    }
+
+    private void fetchListOnly(int p) throws Exception {
+        String pkg = target("", false);     // the "*" rule's app, when it is on the TV
+        if (pkg == null) throw new IOException(NO_KNOWN_APPS);
+        String common = "&language=" + lang() + "&watch_region=" + REGION + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "")
+                + "&include_adult=false&sort_by=popularity.desc" + (Config.HIDE_ANIMATION ? "&without_genres=" + ANIMATION : "");
+        boolean genres = !loadSavedGenres();
+        List<String> paths = new ArrayList<>();
+        paths.add("/discover/movie?vote_count.gte=100" + common);
+        paths.add("/discover/tv?vote_count.gte=50" + common);
+        paths.add("/discover/movie?vote_count.gte=30&primary_release_date.gte=" + day(-365) + "&primary_release_date.lte=" + day(0) + common);
+        paths.add("/discover/tv?vote_count.gte=20&air_date.gte=" + day(-90) + "&air_date.lte=" + day(0) + common);
+        if (genres) {
+            paths.add("/genre/movie/list?language=" + lang());
+            paths.add("/genre/tv/list?language=" + lang());
+        }
+        JSONObject[] r = getAll(paths.toArray(new String[0]));
+        if (genres) {
+            readGenres("movie", r[4]);
+            readGenres("tv", r[5]);
+            cache.edit().putString("genres:movie", r[4].toString()).putString("genres:tv", r[5].toString())
+                    .putString("genresLang", lang()).putLong("genresAt", System.currentTimeMillis()).apply();
+        }
+        List<Pick> hotMovies = listed(r[0], "movie", pkg), hotShows = listed(r[1], "tv", pkg);
+        List<Pick> newMovies = listed(r[2], "movie", pkg), newShows = listed(r[3], "tv", pkg);
+        List<Pick> list = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        alternate(list, seen, hotMovies, hotShows, 12);
+        alternate(list, seen, newMovies, newShows, 24);
+        if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
+        Map<String, Pick> old = new HashMap<>();
+        for (Pick o : picks) old.put(key(o), o);
+        for (Pick q : list) {       // a title still in the list keeps the IMDb id it already found
+            Pick o = old.get(key(q));
+            if (o != null) {
+                q.link = o.link;
+                if (o.detailed) {       // its best backdrop was already chosen
+                    q.backdrop = o.backdrop;
+                    q.detailed = true;
+                }
+            }
+        }
+        picks = list;
+        period = p;
+        listAt = System.currentTimeMillis();
+        listLanguage = Ui.language;
+    }
+
+    private List<Pick> listed(JSONObject answer, String kind, String pkg) {
+        List<Pick> out = new ArrayList<>();
+        JSONArray results = answer.optJSONArray("results");
+        for (int i = 0; results != null && i < results.length(); i++) {
+            JSONObject o = results.optJSONObject(i);
+            Pick p = o == null ? null : add(out, o, kind);
+            if (p == null) continue;
+            p.pkg = pkg;
+            p.app = appLabel(pkg);
+            // not detailed yet: the best backdrop is chosen when the card is about to show (fetchBackdrop)
+            List<String> parts = new ArrayList<>();
+            if (kind.equals("tv")) parts.add(Ui.tr("Series"));
+            JSONArray ids = o.optJSONArray("genre_ids");
+            String genre = ids != null && ids.length() > 0 ? genreNames.get(kind + ids.optInt(0)) : null;
+            if (genre != null) parts.add(genre(genre));
+            double rating = o.optDouble("vote_average", 0);
+            if (rating > 0 && o.optInt("vote_count") >= 10) parts.add(String.format(Ui.locale(), "★ %.1f", rating));
+            parts.add(serviceName(p));
+            p.meta = String.join(" · ", parts);
+        }
+        return out;
+    }
+
+    /** The app a catalog row's title opens (the "*" rule of service_map, when every title opens the same app), or null: no rows. */
+    String catalogApp() {
+        return listOnly() ? target("", false) : null;
+    }
+
+    /** A pick that opens Stremio and doesn't know its IMDb id yet. */
+    boolean needsTitleLink(Pick p) {
+        return listOnly() && STREMIO.equals(p.pkg) && p.link == null;
+    }
+
+    /** Looks up the title's IMDb id (one request), sets its Stremio page as the pick's link and then runs `done` on the main thread. */
+    void resolveLink(Pick p, Runnable done) {
+        net.execute(() -> {
+            try {
+                String imdb = get("/" + p.kind + "/" + p.id + "/external_ids").optString("imdb_id");
+                if (imdb.startsWith("tt")) {
+                    p.link = "stremio:///detail/" + (p.kind.equals("movie") ? "movie" : "series") + "/" + imdb;
+                    save();
+                }
+            } catch (Exception e) {
+                AppLog.w("imdb id: " + e.getMessage());     // the app's home opens instead
+            }
+            main.post(done);
+        });
     }
 
     private static boolean animated(JSONObject o) {
@@ -519,8 +676,19 @@ final class Recs {
         return false;
     }
 
+    /** List-only picks: the title's best backdrop (no text over it, closest to 1920 wide), one small request; TMDB's default stays if it has none. */
+    private void fetchBackdrop(Pick p) throws Exception {
+        String best = bestBackdrop(get("/" + p.kind + "/" + p.id + "/images?include_image_language=null"));
+        if (best != null) p.backdrop = best;
+        p.detailed = true;
+    }
+
     /** Genre, runtime (or seasons) and the service it's on, among the ones the TV has. */
     private void fetchDetails(Pick p) throws Exception {
+        if (listOnly()) {
+            fetchBackdrop(p);
+            return;
+        }
         JSONObject o = get("/" + p.kind + "/" + p.id
                 + "?language=" + lang() + "&append_to_response=watch/providers,images,external_ids&include_image_language=null," + Ui.language.replaceAll("-.*", "") + ",en");
         p.title = title(p, o);
@@ -683,7 +851,6 @@ final class Recs {
         if (fallback != null) MAP.add(new String[] {"*", fallback});
     }
 
-    private static final String STREMIO = "com.stremio.one";
 
     /** The app's own name on the TV ("Stremio"), or its package. */
     private String appLabel(String pkg) {
