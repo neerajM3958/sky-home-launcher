@@ -1481,9 +1481,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Bottom drawer
 
     private static List<HomeApps.Item> drawerList(Context c) {
-        List<HomeApps.Item> list = HomeApps.allInputs(c);
-        list.addAll(HomeApps.drawerShortcuts());
-        return list;
+        return HomeApps.allInputs(c);       // the inputs only; the old Shortcuts row is gone
     }
 
     private void setDrawerItems(List<HomeApps.Item> list) {
@@ -1530,8 +1528,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void openDrawer() {
-        if (drawerItems.isEmpty()) return;
         catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
+        syncRows();
+        if (drawerItems.isEmpty()) {
+            // No inputs (a streamer): the drawer opens on the poster rows; with none either, one button keeps it open.
+            if (catRows.isEmpty()) setDrawerItems(HomeApps.drawerFallback());
+            else {
+                drawerOpen = true;
+                drawer.target = 1;
+                drawerDirty = true;
+                enterCatalog();
+                return;
+            }
+        }
         drawerOpen = true;
         drawer.target = 1;
         zone = Z_DRAWER;
@@ -1573,7 +1582,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawDrawer(Canvas c) {
-        if (drawerItems.isEmpty()) return;
         rowTitle.setColor(tone(L_DIM, 0xB3FFFFFF));
         cardTitle.setColor(tone(L_DIM, 0xB3FFFFFF));
         cardText.setColor(drawerInk(0.95f));
@@ -1964,10 +1972,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void leaveCatalog() {
-        zone = Z_DRAWER;
         catIn.target = 0;
         catRow.target = 0;
         catDirty = true;
+        if (drawerItems.isEmpty()) closeDrawer();       // nothing in the drawer to land on: back to the shelf
+        else zone = Z_DRAWER;
         wake();
     }
 
@@ -2267,7 +2276,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         return;
                     }
                 } else {
-                    if (drawerItems.isEmpty()) return;
                     openDrawer();
                 }
                 break;
@@ -2593,6 +2601,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void shiftReorder(int dx) {
         int i = shelfIndex, j = i + dx;
         if (j < 0 || j >= shelf.size()) return;
+        if (shelf.get(j).kind != HomeApps.APP) return;      // "All Apps" stays the last tile
         HomeApps.Item it = shelf.get(i);
         shelf.set(i, shelf.get(j));
         shelf.set(j, it);
@@ -2629,7 +2638,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         retarget(false);
         if (!changed) return;
         final List<String> order = new ArrayList<>();
-        for (HomeApps.Item it : shelf) order.add(it.pkg);
+        for (HomeApps.Item it : shelf) if (it.kind == HomeApps.APP && it.pkg != null) order.add(it.pkg);
         final Context c = getContext().getApplicationContext();
         LOADER.execute(() -> {
             // The saved list may hold more than the shelf shows (apps not installed, past the limit): the shown ones

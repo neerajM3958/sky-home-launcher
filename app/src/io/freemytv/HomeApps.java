@@ -153,6 +153,7 @@ final class HomeApps {
             }
             items.add(it);
         }
+        items.add(special(c, ALL_APPS, "all", Ui.tr("All Apps"), "apps"));      // always the last tile, after the apps
         return items;
     }
 
@@ -189,13 +190,13 @@ final class HomeApps {
 
     // MARK: - Top buttons (the round ones at the top right)
 
-    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings", TOP_SAVER = "screensaver";
+    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings", TOP_SAVER = "screensaver", TOP_HOME = "homesettings";
     /** Everything the top buttons can show. */
-    static final List<String> TOP_ALL = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SAVER, TOP_SETTINGS));
-    static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_SAVER, TOP_SETTINGS));
+    static final List<String> TOP_ALL = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SAVER, TOP_HOME, TOP_SETTINGS));
+    static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_SAVER, TOP_HOME, TOP_SETTINGS));
     static final int MAX_TOP = TOP_ALL.size();
 
-    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Screensaver, Settings). */
+    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Screensaver, Home Settings, Settings). */
     static List<String> topButtonKeys() {
         List<String> saved = Prefs.topButtons();
         if (saved == null) return TOP_DEFAULT;
@@ -216,6 +217,7 @@ final class HomeApps {
             case TOP_LIVE: return action(LIVE_TV, TOP_LIVE, Ui.tr("light|Live TV"), "live_tv");
             case TOP_INPUTS: return action(INPUTS, TOP_INPUTS, Ui.tr("HDMI Inputs"), "hdmi");
             case TOP_SAVER: return action(SCREENSAVER, TOP_SAVER, Ui.tr("Screensaver"), "bedtime");
+            case TOP_HOME: return action(SETTINGS, TOP_HOME, Ui.tr("Home Settings"), "sparkles");
             default: return action(ANDROID_SETTINGS, TOP_SETTINGS, Ui.tr("light|Settings"), "settings");   // the TV's own; Home Settings is in the drawer
         }
     }
@@ -257,11 +259,9 @@ final class HomeApps {
         return shortcut(SETTINGS, "settings", Ui.tr("Settings"), "settings");
     }
 
-    /** Shortcuts in the bottom drawer. */
-    static List<Item> drawerShortcuts() {
+    /** The drawer holds the inputs; on a TV with none it keeps this one button, so the drawer (weather, quotes, rows) still opens. */
+    static List<Item> drawerFallback() {
         List<Item> items = new ArrayList<>();
-        items.add(shortcut(ALL_APPS, "all", Ui.tr("All Apps"), "apps"));
-        items.add(shortcut(SETTINGS, "settings", Ui.tr("Home Settings"), "settings"));
         items.add(shortcut(ANDROID_SETTINGS, "tv-settings", Ui.tr("TV Settings"), "tv_settings"));
         return items;
     }
