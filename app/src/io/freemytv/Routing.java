@@ -51,10 +51,16 @@ final class Routing {
     static final class Offer {
         final String name;
         final int tier;
+        final String logo;      // TMDB's logo path ("/abc.jpg") for the card's icon, or ""
 
         Offer(String name, int tier) {
+            this(name, tier, "");
+        }
+
+        Offer(String name, int tier, String logo) {
             this.name = name;
             this.tier = tier;
+            this.logo = logo;
         }
     }
 

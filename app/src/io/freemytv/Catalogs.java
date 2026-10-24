@@ -53,6 +53,8 @@ final class Catalogs {
         long at;            // when it was last watched (Continue Watching's order), 0 when unknown
         android.content.Intent launch;      // Watch Next's: OK reopens that app where it was left (not saved)
         String appPkg;      // ... and the app that published it
+        String servicePkg;  // the app it opens in, for the card's icon: null not known yet, "" none (UI thread)
+        int serviceAsked;   // 1: looked in what is kept, 2: asked TMDB too (UI thread)
     }
 
     static final class Row {

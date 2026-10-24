@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * What happens when OK is pressed on a title: its own streaming app, that app's Play Store page when it isn't on the
@@ -185,18 +186,55 @@ final class Launcher {
 
     // MARK: - Where a title streams (TMDB, kept for a day)
 
-    private Info info(String kind, int id) throws Exception {
+    /**
+     * The TMDB logo path ("/abc.jpg") of the best service a title streams on, for the icon on its card, whether the TV has
+     * its app or not: "" when TMDB lists none. `fetch` false answers from what
+     * is already kept (never the network, and null when nothing is); true asks TMDB if needed. `done` runs on the main thread.
+     */
+    void service(String kind, int tmdbId, boolean fetch, Consumer<String> done) {
+        if (tmdbId <= 0) return;
+        net.execute(() -> {
+            Info info = null;
+            try {
+                info = fetch ? info(kind, tmdbId) : kept(kind, tmdbId);
+            } catch (Exception e) {
+                AppLog.w("where it streams: " + e.getMessage());
+            }
+            if (info == null) return;
+            // The best place it streams, whether the TV has its app or not: its own logo.
+            Routing.Offer best = null;
+            for (Routing.Offer o : info.offers) {
+                if (o.logo.isEmpty() || env.hidden(o.name)) continue;
+                if (best == null || o.tier < best.tier) best = o;
+            }
+            String logo = best == null ? "" : best.logo;
+            main.post(() -> done.accept(logo));
+        });
+    }
+
+    private File file(String kind, int id) {
+        return new File(new File(context.getCacheDir(), "launcher"), kind + id + "-" + Recs.region() + ".json");
+    }
+
+    /** What is kept for a title, however old, or null. */
+    private Info kept(String kind, int id) {
         String key = kind + id + "-" + Recs.region();
-        long now = System.currentTimeMillis();
         Info saved;
         synchronized (memory) {
             saved = memory.get(key);
         }
-        File f = new File(new File(context.getCacheDir(), "launcher"), key + ".json");
         if (saved == null) {
-            saved = read(f);
+            saved = read(file(kind, id));
             if (saved != null) synchronized (memory) { memory.put(key, saved); }
         }
+        return saved;
+    }
+
+    private Info info(String kind, int id) throws Exception {
+        String key = kind + id + "-" + Recs.region();
+        long now = System.currentTimeMillis();
+        Info saved = kept(kind, id);
+        File f = file(kind, id);
         if (saved != null && now >= saved.at && now - saved.at < FRESH_MS) return saved;
         try {
             Info fresh = fetch(kind, id);
@@ -228,7 +266,7 @@ final class Launcher {
                 String name = list.getJSONObject(i).optString("provider_name");
                 boolean seen = false;
                 for (Routing.Offer other : info.offers) seen |= other.name.equals(name);
-                if (!name.isEmpty() && !seen) info.offers.add(new Routing.Offer(name, tiers[t]));
+                if (!name.isEmpty() && !seen) info.offers.add(new Routing.Offer(name, tiers[t], list.getJSONObject(i).optString("logo_path")));
             }
         }
         return info;
@@ -241,13 +279,14 @@ final class Launcher {
             int at = 0, n;
             while (at < bytes.length && (n = in.read(bytes, at, bytes.length - at)) > 0) at += n;
             JSONObject o = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            if (o.optInt("v") < 2) return null;         // kept before the logos: ask again
             Info info = new Info();
             info.at = o.optLong("at");
             info.imdb = o.optString("imdb");
             JSONArray list = o.optJSONArray("o");
             for (int i = 0; list != null && i < list.length(); i++) {
                 JSONArray p = list.optJSONArray(i);
-                if (p != null) info.offers.add(new Routing.Offer(p.optString(0), p.optInt(1)));
+                if (p != null) info.offers.add(new Routing.Offer(p.optString(0), p.optInt(1), p.optString(2)));
             }
             return info;
         } catch (Exception e) {
@@ -258,8 +297,8 @@ final class Launcher {
     private static void write(File f, Info info) {
         try {
             JSONArray list = new JSONArray();
-            for (Routing.Offer o : info.offers) list.put(new JSONArray().put(o.name).put(o.tier));
-            String text = new JSONObject().put("at", info.at).put("imdb", info.imdb).put("o", list).toString();
+            for (Routing.Offer o : info.offers) list.put(new JSONArray().put(o.name).put(o.tier).put(o.logo));
+            String text = new JSONObject().put("v", 2).put("at", info.at).put("imdb", info.imdb).put("o", list).toString();
             //noinspection ResultOfMethodCallIgnored
             f.getParentFile().mkdirs();
             File part = new File(f.getPath() + ".part");
