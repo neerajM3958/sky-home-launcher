@@ -105,7 +105,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6;
     // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
     // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
-    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 400, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
+    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 440, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
 
     private final Activity activity;
     private final Scene scene = new Scene();
