@@ -49,7 +49,7 @@ final class Trakt {
     private static final long CHECK_EVERY = 30 * 60_000L;      // one small request tells whether anything changed
     private static final long RETRY_AFTER_FAILURE = 10 * 60_000L;
     // VERSION clears everything, the sign-in too; ROWS_VERSION only the saved rows (when a row is added or changes shape).
-    private static final int VERSION = 1, ROWS_VERSION = 3, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
+    private static final int VERSION = 1, ROWS_VERSION = 4, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
     private static final long YEAR = 365L * 24 * 3600_000L;
 
     private static Trakt instance;
@@ -342,7 +342,10 @@ final class Trakt {
         Row row = new Row();
         row.key = CONTINUE;
         row.title = Ui.tr("Continue Watching");
-        for (int i = 0; i < all.size() && row.items.size() < CONTINUE_MAX; i++) row.items.add(all.get(i).item);
+        for (int i = 0; i < all.size() && row.items.size() < CONTINUE_MAX; i++) {
+            all.get(i).item.at = time(all.get(i).time);
+            row.items.add(all.get(i).item);
+        }
         return row;
     }
 
@@ -422,6 +425,15 @@ final class Trakt {
     /** A string field, "" when it is missing or null (org.json would read a null as the text "null"). */
     private static String text(JSONObject o, String key) {
         return o.isNull(key) ? "" : o.optString(key);
+    }
+
+    /** An ISO time from Trakt as milliseconds, 0 when it can't be read. */
+    private static long time(String iso) {
+        try {
+            return java.time.Instant.parse(iso).toEpochMilli();
+        } catch (RuntimeException e) {
+            return 0;
+        }
     }
 
     private static String label(JSONObject episode) {
@@ -583,7 +595,7 @@ final class Trakt {
             for (Catalogs.Item it : row.items) {
                 items.put(obj("id", it.id, "kind", it.kind, "title", it.title, "poster", it.poster, "url", it.posterUrl,
                         "imdb", it.imdb == null ? "" : it.imdb, "sub", it.sub == null ? "" : it.sub, "progress", it.progress,
-                        "tid", it.traktId, "ep", it.episodes));
+                        "tid", it.traktId, "ep", it.episodes, "at", it.at));
             }
             a.put(obj("key", row.key, "items", items));
         }
@@ -614,6 +626,7 @@ final class Trakt {
                 it.progress = (float) p.optDouble("progress", 0);
                 it.traktId = p.optInt("tid");
                 it.episodes = p.optBoolean("ep");
+                it.at = p.optLong("at");
                 row.items.add(it);
             }
             if (!row.items.isEmpty()) out.add(row);

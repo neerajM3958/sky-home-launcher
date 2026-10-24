@@ -186,6 +186,14 @@ final class Prefs {
 
     static void setLanguages(List<String> codes) { put("languages", String.join(",", codes)); }
 
+    /** Continue Watching also lists what the TV's other apps published (Android's Watch Next); the config gives the first value. */
+    static boolean watchNext() { return app == null ? Config.WATCH_NEXT : sp().getBoolean("watchNext", Config.WATCH_NEXT); }
+    static void setWatchNext(boolean on) { put("watchNext", on); }
+
+    /** The TV has been asked once for the permission to read it (the home screen doesn't ask again). */
+    static boolean watchNextAsked() { return sp().getBoolean("watchNextAsked", false); }
+    static void setWatchNextAsked(boolean asked) { sp().edit().putBoolean("watchNextAsked", asked).apply(); }
+
     // MARK: - Stremio (Free My TV > Stremio)
 
     /** Missing apps and titles on no service we know open in Stremio, when it is installed. */

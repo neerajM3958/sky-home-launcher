@@ -4,8 +4,12 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.database.ContentObserver;
+import android.media.tv.TvContract;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -46,6 +50,9 @@ final class Catalogs {
         String posterUrl;   // Trakt's own poster (a whole address); null: `poster` is a TMDB path
         String sub;         // under the title instead of the stars ("S2 · E5"), or null
         float progress;     // 0 to 1: a bar on the poster, when it is part-way through
+        long at;            // when it was last watched (Continue Watching's order), 0 when unknown
+        android.content.Intent launch;      // Watch Next's: OK reopens that app where it was left (not saved)
+        String appPkg;      // ... and the app that published it
     }
 
     static final class Row {
@@ -72,6 +79,10 @@ final class Catalogs {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService lists = Executors.newSingleThreadExecutor(r -> daemon(r, "catalogs"));
     private final ExecutorService images = Executors.newFixedThreadPool(2, r -> daemon(r, "posters"));
+    private final ExecutorService watching = Executors.newSingleThreadExecutor(r -> daemon(r, "watch-next"));
+    private volatile List<Item> watchNext = new ArrayList<>();    // what the TV's apps say you were watching, newest first
+    private volatile boolean watchNextBusy, watchNextAgain;
+    private volatile long watchNextAt;
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Bitmap> posters = new LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
@@ -105,6 +116,15 @@ final class Catalogs {
         }
         Trakt.get(c).setListener(() -> { rebuild(); notifyListeners(); });
         rebuild();
+        try {       // an app changes its entries: read them again
+            c.getContentResolver().registerContentObserver(TvContract.WatchNextPrograms.CONTENT_URI, true, new ContentObserver(main) {
+                @Override public void onChange(boolean selfChange) {
+                    refreshWatchNext(true);
+                }
+            });
+        } catch (RuntimeException e) {
+            AppLog.w("watch next: " + e.getMessage());
+        }
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
@@ -117,12 +137,99 @@ final class Catalogs {
 
     /** A new list each time the rows change: the home screen compares it by reference. TMDB's follow the order the person set, and a row turned off goes at once. */
     private void rebuild() {
-        List<Row> all = new ArrayList<>(Trakt.get(context).rows());
+        List<Row> all = withWatchNext(new ArrayList<>(Trakt.get(context).rows()));
         if (Recs.hasKey(context)) {
             for (String k : keys()) for (Row r : rows) if (r.key.equals(k)) all.add(r);
         }
         shown = all;
         shownFor = wanted();
+    }
+
+    // MARK: - Continue Watching: Trakt's, and what the TV's apps say (Watch Next)
+
+    /**
+     * Trakt's Continue Watching with the Watch Next entries Trakt doesn't list, by most recent first; with no Trakt
+     * list, the entries alone. `trakt` is a copy the rows of which are not touched.
+     */
+    private List<Row> withWatchNext(List<Row> trakt) {
+        List<Item> mine = watchNext;
+        if (mine.isEmpty() || !Prefs.watchNext()) return trakt;
+        int at = -1;
+        for (int i = 0; i < trakt.size() && at < 0; i++) if (Trakt.CONTINUE.equals(trakt.get(i).key)) at = i;
+        List<Item> theirs = at < 0 ? new ArrayList<>() : trakt.get(at).items;
+        Row row = new Row();
+        row.key = Trakt.CONTINUE;
+        row.title = Ui.tr("Continue Watching");
+        row.items.addAll(theirs);
+        int added = 0;
+        for (Item it : mine) {
+            if (added >= WatchNext.MAX) break;
+            if (!listed(it, theirs)) {
+                row.items.add(it);
+                added++;
+            }
+        }
+        if (added == 0) return trakt;
+        java.util.Collections.sort(row.items, (a, b) -> Long.compare(b.at, a.at));     // stable: equal times keep Trakt's order
+        if (at < 0) trakt.add(0, row); else trakt.set(at, row);
+        return trakt;
+    }
+
+    /** Trakt's list already has the title: by TMDB id when both know it, else by name. */
+    private static boolean listed(Item it, List<Item> trakt) {
+        String name = WatchNext.normalize(it.title);
+        for (Item t : trakt) {
+            if (it.id > 0 && t.id == it.id && it.kind.equals(t.kind)) return true;
+            if (name.equals(WatchNext.normalize(t.title))) return true;
+        }
+        return false;
+    }
+
+    /** Reads Watch Next again (a local query, TMDB lookups kept): when the drawer opens, and when an app changes its entries. */
+    void refreshWatchNext(boolean changed) {
+        if (!Prefs.watchNext() || !WatchNext.permitted(context)) {
+            if (!watchNext.isEmpty()) {
+                watchNext = new ArrayList<>();
+                rebuild();
+                notifyListeners();
+            }
+            return;
+        }
+        if (watchNextBusy) {
+            watchNextAgain |= changed;
+            return;
+        }
+        if (SystemClock.elapsedRealtime() - watchNextAt < (changed ? 3_000L : 20_000L)) return;
+        watchNextBusy = true;
+        watching.execute(() -> {
+            try {
+                do {
+                    watchNextAgain = false;
+                    List<Item> next = WatchNext.items(context);
+                    if (!same(next, watchNext)) {
+                        AppLog.w("watch next: " + next.size() + " from the TV's apps");
+                        watchNext = next;
+                        rebuild();
+                        notifyListeners();
+                    }
+                } while (watchNextAgain);
+            } catch (RuntimeException e) {
+                AppLog.w("watch next: " + e.getMessage());
+            } finally {
+                watchNextAt = SystemClock.elapsedRealtime();
+                watchNextBusy = false;
+            }
+        });
+    }
+
+    private static boolean same(List<Item> a, List<Item> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            Item x = a.get(i), y = b.get(i);
+            if (!x.title.equals(y.title) || x.at != y.at || x.progress != y.progress || !java.util.Objects.equals(x.sub, y.sub)
+                    || !java.util.Objects.equals(x.poster, y.poster)) return false;
+        }
+        return true;
     }
 
     /** Every row TMDB can fill, in the order they are offered (Free My TV > TMDB > Poster rows). */
@@ -212,6 +319,7 @@ final class Catalogs {
 
     /** Fetches the rows when they are older than a few hours, in another language or not the ones asked for (the home screen calls this when the drawer opens). */
     void refreshIfStale() {
+        refreshWatchNext(false);
         if (!wanted().equals(shownFor)) {      // the rows or the animation choice changed in the settings
             failedAt = 0;       // a new try, even if the last one failed a minute ago
             rebuild();
@@ -366,16 +474,27 @@ final class Catalogs {
         images.execute(() -> {
             try {
                 File f = new File(new File(context.getCacheDir(), "catalogs"), it.poster.replace("/", ""));
-                if (!f.exists()) download(it.posterUrl != null ? it.posterUrl : IMAGES + it.poster, f);
+                boolean appArt = it.poster.startsWith("wn-");      // an app's own picture, often wide
+                if (!f.exists()) {
+                    if (it.posterUrl != null && !it.posterUrl.startsWith("http")) copy(it.posterUrl, f);      // content:, android.resource: (an app's own picture)
+                    else download(it.posterUrl != null ? it.posterUrl : IMAGES + it.poster, f);
+                }
                 // Trakt's posters are larger than TMDB's w342: decoded at half or a quarter of their size when that is still enough.
                 BitmapFactory.Options bounds = new BitmapFactory.Options();
                 bounds.inJustDecodeBounds = true;
                 BitmapFactory.decodeFile(f.getPath(), bounds);
                 BitmapFactory.Options decode = new BitmapFactory.Options();
                 int sample = 1;
-                while (sample < 8 && bounds.outWidth / (sample * 2) >= width * 5 / 4) sample *= 2;
+                // A wide picture is cut to the portrait card, so what counts is its height.
+                while (sample < 8 && (appArt ? bounds.outHeight / (sample * 2) >= width * 15 / 8 : bounds.outWidth / (sample * 2) >= width * 5 / 4)) sample *= 2;
                 decode.inSampleSize = sample;
                 Bitmap b = BitmapFactory.decodeFile(f.getPath(), decode);
+                if (appArt && b != null && b.getWidth() * 3 > b.getHeight() * 2 + 2) {
+                    int cut = b.getHeight() * 2 / 3;
+                    Bitmap tall = Bitmap.createBitmap(b, (b.getWidth() - cut) / 2, 0, cut, b.getHeight());
+                    if (tall != b) b.recycle();
+                    b = tall;
+                }
                 if (b != null && b.getWidth() > width * 5 / 4) {     // kept at the size it is drawn at: a quarter of the memory
                     Bitmap small = Bitmap.createScaledBitmap(b, width, Math.round(b.getHeight() * (float) width / b.getWidth()), true);
                     if (small != b) b.recycle();
@@ -395,6 +514,25 @@ final class Catalogs {
             }
         });
         return null;
+    }
+
+    /** An app's picture from its own address (Watch Next art: content: or android.resource:), saved like a download. */
+    private void copy(String uri, File f) throws IOException {
+        //noinspection ResultOfMethodCallIgnored
+        f.getParentFile().mkdirs();
+        File part = new File(f.getPath() + ".part");
+        try (InputStream in = context.getContentResolver().openInputStream(Uri.parse(uri));
+             FileOutputStream out = new FileOutputStream(part)) {
+            if (in == null) throw new IOException("no picture at " + uri);
+            byte[] buffer = new byte[16384];
+            int n;
+            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+        } catch (IOException | RuntimeException e) {
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            throw e instanceof IOException ? (IOException) e : new IOException(e.getMessage());
+        }
+        if (!part.renameTo(f)) throw new IOException("couldn't save the picture");
     }
 
     private static void download(String url, File f) throws IOException {

@@ -48,6 +48,22 @@ public class HomeActivity extends Activity {
             return;
         }
         if (home != null) home.resume();
+        askForWatchNext();
+    }
+
+    private boolean askedNow;
+
+    /** The first time, the TV's own dialog asks to let Free My TV read the other apps' Continue Watching (then it doesn't ask again). */
+    private void askForWatchNext() {
+        if (askedNow || home == null || !Prefs.watchNext() || WatchNext.permitted(this) || Prefs.watchNextAsked()) return;
+        askedNow = true;
+        Prefs.setWatchNextAsked(true);
+        requestPermissions(new String[] {WatchNext.PERMISSION}, WatchNext.ASK);
+    }
+
+    @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(code, permissions, results);
+        if (code == WatchNext.ASK) Catalogs.get(this).refreshWatchNext(true);
     }
 
     @Override protected void onPause() {
