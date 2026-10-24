@@ -426,21 +426,7 @@ final class Recs {
             fetchListOnly(p);
             return;
         }
-        // None of the services we know is on the TV (or hide_services hides them all): no region would change that.
-        boolean any = false;
-        for (String[] s : SERVICES) any |= installed(s[2]);
-        if (!any) throw new IOException(NO_KNOWN_APPS);
-        // The services the TV has, by their TMDB ids in your region.
-        Map<Integer, String[]> services = new HashMap<>();
-        JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
-        for (int i = 0; i < providers.length(); i++) {
-            JSONObject o = providers.getJSONObject(i);
-            String[] s = service(o.optString("provider_name"));
-            if (s != null && installed(s[2])) services.put(o.getInt("provider_id"), s);
-        }
-        if (services.isEmpty()) throw new IOException(NO_APPS);
-        StringBuilder ids = new StringBuilder();
-        for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
+        String ids = installedProviderIds();
         String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + "&include_adult=false"
                 + "&sort_by=popularity.desc" + "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
                 + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
@@ -490,9 +476,31 @@ final class Recs {
     }
 
     /** The discover filter on how a title streams: subscription (and free), plus rent or buy when asked, or no filter. */
-    private static String monetization() {
+    static String monetization() {
         if (!Prefs.flatrateOnly()) return "";
         return "&with_watch_monetization_types=" + (Prefs.includeRentBuy() ? "flatrate%7Crent%7Cbuy" : "flatrate");
+    }
+
+    /**
+     * The services the TV has, by their TMDB ids in the region ("8|119"), for a discover query; throws NO_KNOWN_APPS
+     * when none of the services we know is on the TV (or hide_services hides them all), NO_APPS when TMDB lists none of
+     * them in the region.
+     */
+    String installedProviderIds() throws Exception {
+        boolean any = false;
+        for (String[] s : SERVICES) any |= installed(s[2]);
+        if (!any) throw new IOException(NO_KNOWN_APPS);
+        Map<Integer, String[]> services = new HashMap<>();
+        JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
+        for (int i = 0; i < providers.length(); i++) {
+            JSONObject o = providers.getJSONObject(i);
+            String[] s = service(o.optString("provider_name"));
+            if (s != null && installed(s[2])) services.put(o.getInt("provider_id"), s);
+        }
+        if (services.isEmpty()) throw new IOException(NO_APPS);
+        StringBuilder ids = new StringBuilder();
+        for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
+        return ids.toString();
     }
 
     /** Language of titles and genres (TMDB's "fr-FR", "zh-CN"…); the services come from the region. */
@@ -514,7 +522,7 @@ final class Recs {
     }
 
     /** The date `offset` days from today, as "2026-10-19" (negative = in the past). */
-    private static String day(int offset) {
+    static String day(int offset) {
         Calendar cal = Calendar.getInstance();
         cal.add(Calendar.DAY_OF_YEAR, offset);
         return String.format(Locale.US, "%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH));

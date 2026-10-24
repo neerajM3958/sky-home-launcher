@@ -136,7 +136,9 @@ final class Catalogs {
     }
 
     private static String wanted() {
-        return String.join(",", keys()) + (Prefs.hideAnimation() ? "|noanimation" : "");
+        return String.join(",", keys()) + (Prefs.hideAnimation() ? "|noanimation" : "")
+                + "|" + (Prefs.recommendFromApps() ? "apps" : "any") + (Prefs.flatrateOnly() ? "S" : "") + (Prefs.flatrateOnly() && Prefs.includeRentBuy() ? "R" : "")
+                + Recs.region();
     }
 
     static String title(String key) {
@@ -152,23 +154,63 @@ final class Catalogs {
         }
     }
 
-    /** One TMDB list request per row. Popularity is worldwide; titles come in the TV's language. */
-    private static String path(String key, String lang) {
-        String q = "?language=" + lang + "&include_adult=false";
-        switch (key) {
-            case "trending": return "/trending/all/day" + q;
-            case "popular_movies": return "/discover/movie" + q + "&sort_by=popularity.desc&vote_count.gte=100";
-            case "popular_shows": return "/discover/tv" + q + "&sort_by=popularity.desc&vote_count.gte=50";
-            case "top_rated": return "/movie/top_rated" + q;
-            case "now_playing": return "/movie/now_playing" + q;
-            case "upcoming": return "/movie/upcoming" + q;
-            default: return "/discover/movie" + q + "&sort_by=popularity.desc&vote_count.gte=20&with_original_language=hi";
+    /**
+     * The discover filter of the TMDB section's recommendation settings (what streams in the region, on the TV's apps),
+     * or null when neither is on: then the rows are TMDB's plain lists.
+     */
+    private static String filter(Recs recs) throws Exception {
+        boolean apps = Prefs.recommendFromApps();
+        if (!apps && !Prefs.flatrateOnly()) return null;
+        return "&watch_region=" + Recs.region() + Recs.monetization()
+                + (apps ? "&with_watch_providers=" + java.net.URLEncoder.encode(recs.installedProviderIds(), "UTF-8") : "");
+    }
+
+    /**
+     * The TMDB requests of a row, each {kind of its titles ("movie", "tv", or "" when the answer says), path}. Popularity
+     * is worldwide; titles come in the TV's language. With a filter every row is a discover query, since TMDB's own
+     * trending, top rated, now playing and upcoming lists take none: trending is the popular movies and shows
+     * together, top rated the best rated ones, now playing the releases of the past six weeks, upcoming the next six
+     * months (which mostly stream nowhere yet, so with the filter on that row usually has nothing and goes).
+     */
+    private static List<String[]> requests(String key, String lang, String filter) {
+        String q = "?language=" + lang + "&include_adult=false" + (filter == null ? "" : filter);
+        String popular = "&sort_by=popularity.desc";
+        List<String[]> out = new ArrayList<>();
+        if (filter == null) {
+            switch (key) {
+                case "trending": out.add(new String[] {"", "/trending/all/day" + q}); break;
+                case "popular_movies": out.add(new String[] {"movie", "/discover/movie" + q + popular + "&vote_count.gte=100"}); break;
+                case "popular_shows": out.add(new String[] {"tv", "/discover/tv" + q + popular + "&vote_count.gte=50"}); break;
+                case "top_rated": out.add(new String[] {"movie", "/movie/top_rated" + q}); break;
+                case "now_playing": out.add(new String[] {"movie", "/movie/now_playing" + q}); break;
+                case "upcoming": out.add(new String[] {"movie", "/movie/upcoming" + q}); break;
+                default: out.add(new String[] {"movie", "/discover/movie" + q + popular + "&vote_count.gte=20&with_original_language=hi"});
+            }
+            return out;
         }
+        switch (key) {
+            case "trending":
+                out.add(new String[] {"movie", "/discover/movie" + q + popular + "&vote_count.gte=100"});
+                out.add(new String[] {"tv", "/discover/tv" + q + popular + "&vote_count.gte=50"});
+                break;
+            case "popular_movies": out.add(new String[] {"movie", "/discover/movie" + q + popular + "&vote_count.gte=100"}); break;
+            case "popular_shows": out.add(new String[] {"tv", "/discover/tv" + q + popular + "&vote_count.gte=50"}); break;
+            case "top_rated": out.add(new String[] {"movie", "/discover/movie" + q + "&sort_by=vote_average.desc&vote_count.gte=500"}); break;
+            case "now_playing":
+                out.add(new String[] {"movie", "/discover/movie" + q + popular + "&primary_release_date.gte=" + Recs.day(-45) + "&primary_release_date.lte=" + Recs.day(0)});
+                break;
+            case "upcoming":
+                out.add(new String[] {"movie", "/discover/movie" + q + popular + "&primary_release_date.gte=" + Recs.day(1) + "&primary_release_date.lte=" + Recs.day(180)});
+                break;
+            default: out.add(new String[] {"movie", "/discover/movie" + q + popular + "&vote_count.gte=20&with_original_language=hi"});
+        }
+        return out;
     }
 
     /** Fetches the rows when they are older than a few hours, in another language or not the ones asked for (the home screen calls this when the drawer opens). */
     void refreshIfStale() {
         if (!wanted().equals(shownFor)) {      // the rows or the animation choice changed in the settings
+            failedAt = 0;       // a new try, even if the last one failed a minute ago
             rebuild();
             notifyListeners();
         }
@@ -185,16 +227,30 @@ final class Catalogs {
         lists.execute(() -> {
             try {
                 String lang = Recs.lang();
-                String[] paths = new String[keys.size()];
-                for (int i = 0; i < paths.length; i++) paths[i] = path(keys.get(i), lang);
-                org.json.JSONObject[] answers = Recs.get(context).getAll(paths);
+                String filter = filter(Recs.get(context));
+                List<String> paths = new ArrayList<>();
+                List<List<String[]>> asked = new ArrayList<>();
+                for (String key : keys) {
+                    List<String[]> r = requests(key, lang, filter);
+                    asked.add(r);
+                    for (String[] one : r) paths.add(one[1]);
+                }
+                org.json.JSONObject[] answers = Recs.get(context).getAll(paths.toArray(new String[0]));
                 List<Row> next = new ArrayList<>();
-                for (int i = 0; i < answers.length; i++) {
+                int n = 0;
+                for (int i = 0; i < keys.size(); i++) {
                     Row row = new Row();
                     row.key = keys.get(i);
                     row.title = title(row.key);
-                    JSONArray results = answers[i].optJSONArray("results");
-                    for (int j = 0; results != null && j < results.length(); j++) add(row, results.optJSONObject(j), row.key);
+                    List<String[]> r = asked.get(i);
+                    // A row with two requests (trending, with a filter) takes their titles in turn.
+                    for (int j = 0; j < ROW_SIZE; j++) {
+                        for (int a = 0; a < r.size() && row.items.size() < ROW_SIZE; a++) {
+                            JSONArray results = answers[n + a].optJSONArray("results");
+                            if (results != null && j < results.length()) add(row, results.optJSONObject(j), r.get(a)[0]);
+                        }
+                    }
+                    n += r.size();
                     if (!row.items.isEmpty()) next.add(row);
                 }
                 if (next.isEmpty()) throw new IOException("TMDB returned no titles");
@@ -211,6 +267,10 @@ final class Catalogs {
             } catch (Exception e) {
                 failedAt = System.currentTimeMillis();
                 AppLog.w("catalogs: " + e.getMessage());
+                if (!wanted().equals(cache.getString("wanted", ""))) {      // the settings changed and nothing fits them
+                    rows = new ArrayList<>();
+                    rebuild();
+                }
             } finally {
                 fetching = false;
                 notifyListeners();
@@ -218,13 +278,17 @@ final class Catalogs {
         });
     }
 
-    private static void add(Row row, JSONObject o, String key) {
+    private static final int ROW_SIZE = 20;
+
+    /** `kind`: "movie" or "tv" when the request was for one, "" when each title says (media_type). */
+    private static void add(Row row, JSONObject o, String kind) {
         if (o == null) return;
         String poster = o.optString("poster_path", "");
         if (poster.isEmpty() || "null".equals(poster)) return;
         String type = o.optString("media_type", "");
-        String kind = type.equals("tv") || key.equals("popular_shows") ? "tv" : type.equals("person") ? null : "movie";
-        if (kind == null) return;
+        String own = kind.equals("tv") || type.equals("tv") ? "tv" : type.equals("person") ? null : "movie";
+        if (own == null) return;
+        kind = own;
         if (Prefs.hideAnimation()) {
             JSONArray genres = o.optJSONArray("genre_ids");
             for (int i = 0; genres != null && i < genres.length(); i++) if (genres.optInt(i) == ANIMATION) return;
@@ -250,7 +314,7 @@ final class Catalogs {
                 }
                 a.put(new JSONObject().put("key", row.key).put("items", items));
             }
-            cache.edit().putString("rows", a.toString()).putString("wanted", String.join(",", keys)).putLong("at", at)
+            cache.edit().putString("rows", a.toString()).putString("wanted", wanted()).putLong("at", at)
                     .putString("language", language).apply();
         } catch (Exception ignored) {
         }

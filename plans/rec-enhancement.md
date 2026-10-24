@@ -423,3 +423,12 @@ Mark your answer, or say "defaults". The *default* is what I would build.
 17. **The three recommendation settings:** decided: they live in the TMDB section (rows 2 to 4), so *Home Settings*
     doesn't grow and doesn't need to scroll.
 18. **Anything else** you want in this section?
+
+What applying the settings to the catalogs taught:
+- *Recommend from*, *Only titles I can stream* and *Include rent or buy* also shape the catalogs. With one of them on, every row is a
+  discover query (TMDB's own trending, top rated, now playing and upcoming lists take no filter): trending is the popular
+  movies and shows in turn, top rated the best rated ones, now playing the past six weeks, upcoming the next six months
+  (usually empty or nearly, so the row goes). With none on, they are TMDB's plain lists as before. The Trakt rows are the
+  person's own lists and are not filtered.
+- A failed refetch after a settings change clears the rows (it left the old ones), and the ten-minute wait after a failure no longer holds back a refetch
+  that a settings change asks for.
