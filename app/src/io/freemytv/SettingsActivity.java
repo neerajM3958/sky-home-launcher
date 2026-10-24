@@ -52,6 +52,10 @@ public class SettingsActivity extends Activity {
         super.onCreate(savedInstanceState);
         Watchdog.install(this);
         Ui.init(this);
+        // From ADB (the screenshot script): --es look glass|material3-expressive --es theme auto|light|dark set them first.
+        String look = getIntent().getStringExtra("look"), theme = getIntent().getStringExtra("theme");
+        if (look != null) Prefs.setLook(look);
+        if (theme != null && (theme.equals("auto") || theme.equals("light") || theme.equals("dark"))) Prefs.setTheme(theme);
         view = new SettingsView(this);
         setContentView(view);
     }
@@ -132,7 +136,7 @@ public class SettingsActivity extends Activity {
 
         private final SettingsActivity activity;
         private final Scene scene = new Scene();
-        private final MaterialExpressive material = new MaterialExpressive();
+        private final MaterialLook material = new MaterialLook();
         private final Handler handler = new Handler(Looper.getMainLooper());
         private final Spring[] pop = new Spring[12];
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
@@ -403,16 +407,16 @@ public class SettingsActivity extends Activity {
             currentNight = Prefs.theme().equals("light") ? 0 : Prefs.theme().equals("dark") ? 1
                     : (HomeData.get(getContext()).isNight(System.currentTimeMillis()) ? 1 : 0);
             if (Themes.expressive()) {
-                title.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
-                subtitle.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                version.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                header.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                cellLabel.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                cellValue.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
-                rowSub.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                notice.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                warn.setColor(material.color(MaterialExpressive.TERTIARY, currentNight));
-                white.setColor(material.color(MaterialExpressive.PRIMARY_CONTAINER, currentNight));
+                title.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
+                subtitle.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                version.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                header.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                cellLabel.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                cellValue.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
+                rowSub.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                notice.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                warn.setColor(material.palette(MaterialLook.TERTIARY, currentNight));
+                white.setColor(material.palette(MaterialLook.PRIMARY_CONTAINER, currentNight));
             } else {
                 title.setColor(0xFFFFFFFF);
                 subtitle.setColor(0x99FFFFFF);
@@ -572,10 +576,10 @@ public class SettingsActivity extends Activity {
         private float drawComparison(Canvas c, float y) {
             float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k;
             c.drawText(Ui.tr("COMPARISON"), x, y, header);
-            cellValue.setColor(Themes.expressive() ? Ui.alpha(material.color(MaterialExpressive.ON_VARIANT, currentNight), 0.45f) : 0x73FFFFFF);
+            cellValue.setColor(Themes.expressive() ? Ui.alpha(material.palette(MaterialLook.ON_VARIANT, currentNight), 0.45f) : 0x73FFFFFF);
             c.drawText(Ui.tr("Original"), colA, y, cellValue);
             c.drawText("Free My TV", colB, y, cellValue);
-            cellValue.setColor(Themes.expressive() ? material.color(MaterialExpressive.ON_SURFACE, currentNight) : 0xD9FFFFFF);
+            cellValue.setColor(Themes.expressive() ? material.palette(MaterialLook.ON_SURFACE, currentNight) : 0xD9FFFFFF);
             JSONObject metrics = state.optJSONObject("metrics");
             JSONObject a = metrics == null ? null : metrics.optJSONObject(HomeMode.ORIGINAL);
             JSONObject b = metrics == null ? null : metrics.optJSONObject(HomeMode.FREE);
@@ -632,9 +636,9 @@ public class SettingsActivity extends Activity {
 
         private int blend(int a, int b, float f) {
             if (Themes.expressive() && (a & 0x00FFFFFF) == 0x00FFFFFF && (b & 0x00FFFFFF) == (INK & 0x00FFFFFF)) {
-                int role = (a >>> 24) < 0xC0 ? MaterialExpressive.ON_VARIANT : MaterialExpressive.ON_SURFACE;
-                a = (a & 0xFF000000) | (material.color(role, currentNight) & 0x00FFFFFF);
-                b = (b & 0xFF000000) | (material.color(MaterialExpressive.ON_PRIMARY_CONTAINER, currentNight) & 0x00FFFFFF);
+                int role = (a >>> 24) < 0xC0 ? MaterialLook.ON_VARIANT : MaterialLook.ON_SURFACE;
+                a = (a & 0xFF000000) | (material.palette(role, currentNight) & 0x00FFFFFF);
+                b = (b & 0xFF000000) | (material.palette(MaterialLook.ON_PRIMARY_CONTAINER, currentNight) & 0x00FFFFFF);
             }
             int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
             int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
@@ -643,7 +647,7 @@ public class SettingsActivity extends Activity {
         }
 
         private int headingColor() {
-            return Themes.expressive() ? material.color(MaterialExpressive.ON_SURFACE, currentNight) : 0xFFFFFFFF;
+            return Themes.expressive() ? material.palette(MaterialLook.ON_SURFACE, currentNight) : 0xFFFFFFFF;
         }
 
         private static String metric(JSONObject m, String key) {

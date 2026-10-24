@@ -24,7 +24,7 @@ final class Themes {
                 {0xFF6E6E73, 0xFF8E8E93, 0xFF48484A}
             };
             public String id() { return GLASS; }
-            public String label() { return "Glass"; }
+            public String label() { return Ui.tr("Glass"); }
             public int color(int role, boolean dark) {
                 int i = Math.max(0, Math.min(colors.length - 1, role));
                 return colors[i][dark ? 1 : 0];
@@ -34,7 +34,7 @@ final class Themes {
         register(new Theme() {
             public String id() { return MATERIAL_EXPRESSIVE; }
             public String label() { return "Material 3 Expressive"; }
-            public int color(int role, boolean dark) { return MaterialExpressive.paletteColor(role, dark); }
+            public int color(int role, boolean dark) { return MaterialLook.paletteColor(role, dark); }
             public boolean expressive() { return true; }
         });
     }
@@ -50,5 +50,10 @@ final class Themes {
     static synchronized Theme get(String id) { return REGISTRY.get(has(id) ? id : GLASS); }
     static synchronized String[] ids() { return REGISTRY.keySet().toArray(new String[0]); }
     static Theme current() { return get(Prefs.look()); }
+
+    /** A new look for one screen (each screen has its own: a look keeps paints and shaders sized to it). */
+    static Look create(String id, Scene scene) {
+        return MATERIAL_EXPRESSIVE.equals(id) ? new MaterialLook() : new GlassLook(scene);
+    }
     static boolean expressive() { return current().expressive(); }
 }

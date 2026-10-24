@@ -99,7 +99,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     }
 
     private final Scene scene = new Scene(false);
-    private final MaterialExpressive material = new MaterialExpressive();
+    private final MaterialLook material = new MaterialLook();
     private final RectF materialBounds = new RectF();
     private final HomeData data;
     private final Recs recs;
@@ -510,12 +510,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             float right = RIGHT * k;
             float night = schemeNight();
             if (Themes.expressive()) {
-                cornerDate.setColor(material.color(MaterialExpressive.ON_VARIANT, night));
-                cornerClock.setColor(material.color(MaterialExpressive.ON_SURFACE, night));
-                cornerQuote.setColor(material.color(MaterialExpressive.ON_VARIANT, night));
-                cornerStale.setColor(material.color(MaterialExpressive.ON_VARIANT, night));
+                cornerDate.setColor(material.palette(MaterialLook.ON_VARIANT, night));
+                cornerClock.setColor(material.palette(MaterialLook.ON_SURFACE, night));
+                cornerQuote.setColor(material.palette(MaterialLook.ON_VARIANT, night));
+                cornerStale.setColor(material.palette(MaterialLook.ON_VARIANT, night));
                 Paint panel = new Paint(Paint.ANTI_ALIAS_FLAG);
-                panel.setColor(Ui.alpha(material.color(MaterialExpressive.SURFACE_HIGH, night), 0.90f));
+                panel.setColor(Ui.alpha(material.palette(MaterialLook.SURFACE_HIGH, night), 0.90f));
                 RectF card = new RectF((RIGHT - 520) * k, 26 * k, (RIGHT + 24) * k, 370 * k);
                 c.drawRoundRect(card, 36 * k, 36 * k, panel);
             }
@@ -529,7 +529,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                 String symbol = Symbols.weather(wx.code, wx.isDay);
                 float size = 30 * k, sw = Symbols.width(getContext(), symbol, size);
                 Symbols.draw(getContext(), c, symbol, x - sw / 2, DATE_BASE * k - Ui.halfCap(cornerDate), size,
-                        Themes.expressive() ? material.color(MaterialExpressive.PRIMARY, night) : 0xEBFFFFFF);
+                        Themes.expressive() ? material.palette(MaterialLook.PRIMARY, night) : 0xEBFFFFFF);
                 x -= sw + 26 * k;
             }
             c.drawText(date, x - cornerDate.measureText(date), DATE_BASE * k, cornerDate);
@@ -561,7 +561,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             float qx = right - total;
             for (int i = 0; i < n; i++) {
                 Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], qx + glyphs[i] / 2, base - cap / 2, cap,
-                        Themes.expressive() ? material.color(MaterialExpressive.ON_VARIANT, night) : 0xA6FFFFFF);
+                        Themes.expressive() ? material.palette(MaterialLook.ON_VARIANT, night) : 0xA6FFFFFF);
                 qx += glyphs[i] + gap;
                 c.drawText(values[i], qx, base, cornerQuote);
                 qx += cornerQuote.measureText(values[i]) + spacing;
@@ -771,14 +771,14 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         float night = schemeNight();
         if (Themes.expressive()) {
             Paint panel = new Paint(Paint.ANTI_ALIAS_FLAG);
-            panel.setColor(Ui.alpha(material.color(MaterialExpressive.SURFACE_HIGH, night), 0.90f));
+            panel.setColor(Ui.alpha(material.palette(MaterialLook.SURFACE_HIGH, night), 0.90f));
             RectF card = new RectF(cx - 540 * k, h * 0.5f - 330 * k, cx + 540 * k, h * 0.5f + 270 * k);
             c.drawRoundRect(card, 44 * k, 44 * k, panel);
-            datePaint.setColor(material.color(MaterialExpressive.ON_VARIANT, night));
-            clockPaint.setColor(material.color(MaterialExpressive.ON_SURFACE, night));
-            weatherPaint.setColor(material.color(MaterialExpressive.ON_SURFACE, night));
-            weatherDim.setColor(material.color(MaterialExpressive.ON_VARIANT, night));
-            quotePaint.setColor(material.color(MaterialExpressive.ON_VARIANT, night));
+            datePaint.setColor(material.palette(MaterialLook.ON_VARIANT, night));
+            clockPaint.setColor(material.palette(MaterialLook.ON_SURFACE, night));
+            weatherPaint.setColor(material.palette(MaterialLook.ON_SURFACE, night));
+            weatherDim.setColor(material.palette(MaterialLook.ON_VARIANT, night));
+            quotePaint.setColor(material.palette(MaterialLook.ON_VARIANT, night));
         }
         float clockCap = Ui.cap(clockPaint);
         float clockBase = h * 0.5f + clockCap / 2 - 10 * k;

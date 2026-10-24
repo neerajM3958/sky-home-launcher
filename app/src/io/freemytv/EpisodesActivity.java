@@ -82,7 +82,7 @@ public class EpisodesActivity extends Activity {
         private final EpisodesActivity activity;
         private final Trakt trakt;
         private final Catalogs catalogs;
-        private final MaterialExpressive material = new MaterialExpressive();
+        private final MaterialLook material = new MaterialLook();
         private final Scene scene = new Scene();
         private final Spoken spoken;
         private final int traktId;
@@ -667,9 +667,9 @@ public class EpisodesActivity extends Activity {
 
         private int blend(int a, int b, float f) {
             if (Themes.expressive() && (a & 0x00FFFFFF) == 0x00FFFFFF && (b & 0x00FFFFFF) == (INK & 0x00FFFFFF)) {
-                int role = (a >>> 24) < 0xC0 ? MaterialExpressive.ON_VARIANT : MaterialExpressive.ON_SURFACE;
-                a = (a & 0xFF000000) | (material.color(role, currentNight) & 0x00FFFFFF);
-                b = (b & 0xFF000000) | (material.color(MaterialExpressive.ON_PRIMARY_CONTAINER, currentNight) & 0x00FFFFFF);
+                int role = (a >>> 24) < 0xC0 ? MaterialLook.ON_VARIANT : MaterialLook.ON_SURFACE;
+                a = (a & 0xFF000000) | (material.palette(role, currentNight) & 0x00FFFFFF);
+                b = (b & 0xFF000000) | (material.palette(MaterialLook.ON_PRIMARY_CONTAINER, currentNight) & 0x00FFFFFF);
             }
             int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
             int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
@@ -720,18 +720,18 @@ public class EpisodesActivity extends Activity {
             currentNight = Prefs.theme().equals("light") ? 0 : Prefs.theme().equals("dark") ? 1
                     : (HomeData.get(getContext()).isNight(System.currentTimeMillis()) ? 1 : 0);
             if (Themes.expressive()) {
-                pTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
-                pLabel.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                pValue.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
-                pCount.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                pCountRight.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                pNum.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                pRowTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
-                pDate.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                pHint.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                pCenter.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
-                wrapPaint.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
-                white.setColor(material.color(MaterialExpressive.PRIMARY_CONTAINER, currentNight));
+                pTitle.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
+                pLabel.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                pValue.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
+                pCount.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                pCountRight.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                pNum.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                pRowTitle.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
+                pDate.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                pHint.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                pCenter.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
+                wrapPaint.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
+                white.setColor(material.palette(MaterialLook.PRIMARY_CONTAINER, currentNight));
             } else {
                 pTitle.setColor(0xFFFFFFFF);
                 pLabel.setColor(0x99FFFFFF);
