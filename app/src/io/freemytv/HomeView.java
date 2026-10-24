@@ -1949,6 +1949,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Poster rows (under the drawer's weather and quotes; Down from the drawer's buttons)
 
     private static final int CAT_VISIBLE = 8;
+    private static final float CAT_ROW_FOOT = 400, CAT_BOTTOM = 1040;      // a row ends 400 below its top; the screen 40 short of 1080
 
     /** The quotes card is the only card left in the drawer; without it the rows start where the cards would, and higher up. */
     private boolean cardsOn() {
@@ -1991,6 +1992,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
         catRowIndex = Math.min(catRowIndex, Math.max(0, rows.size() - 1));
         if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
+        else if (zone == Z_CATALOG) catRow.target = catScrollTarget();
+    }
+
+    /**
+     * How far the rows have scrolled (in rows) with the focus on row `catRowIndex`: the focused row rises with each press,
+     * but never past the point where the last row's foot reaches the bottom of the screen, so a few rows don't leave it empty.
+     */
+    private float catScrollTarget() {
+        float firstTop = catY0() - catLift();
+        float lastFoot = firstTop + (catRows.size() - 1) * CAT_PITCH + CAT_ROW_FOOT;
+        float most = Math.max(0, lastFoot - CAT_BOTTOM) / CAT_PITCH;
+        return Math.min(catRowIndex, most);
     }
 
     private boolean enterCatalog() {
@@ -2037,11 +2050,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return true;
             }
             catRowIndex--;
-            catRow.target = catRowIndex;
+            catRow.target = catScrollTarget();
         } else {
             if (r >= catRows.size() - 1) return enterBrowse();      // past the last row: TMDB's catalogs
             catRowIndex++;
-            catRow.target = catRowIndex;
+            catRow.target = catScrollTarget();
         }
         popCatalogFocus();
         return true;
