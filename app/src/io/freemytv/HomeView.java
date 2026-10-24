@@ -2525,27 +2525,30 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /**
-     * Opens the trailer in a YouTube app: the official YouTube TV app if the TV has it, else another YouTube client
-     * (SmartTube and the like: the apps that answer a "vnd.youtube:" link, which only YouTube clients do), always with a
-     * plain watch link (some clients don't read the "vnd.youtube:" form). With no YouTube app, whatever opens a link.
+     * Opens the trailer where the person prefers: the official YouTube TV app, else another YouTube client (SmartTube and
+     * the like: the apps that answer a "vnd.youtube:" link, which only YouTube clients do), else a browser (the first app
+     * that opens the link, not Android's placeholder). Always with a plain watch link (some clients don't read the
+     * "vnd.youtube:" form), and always for one chosen app, so no chooser comes up.
      */
     private void openYoutube(String id) {
         android.content.pm.PackageManager pm = getContext().getPackageManager();
         android.content.Intent watch = new android.content.Intent(android.content.Intent.ACTION_VIEW,
                 android.net.Uri.parse("https://www.youtube.com/watch?v=" + id));
-        String pick = null;
+        String official = null, client = null, browser = null;
         try {
-            android.content.Intent client = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id));
-            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(client, 0)) {
-                String pkg = r.activityInfo.packageName;
-                if (pick == null) pick = pkg;
+            android.content.Intent clients = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id));
+            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(clients, 0)) {
+                if (client == null) client = r.activityInfo.packageName;
             }
             for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(watch, 0)) {
-                if (r.activityInfo.packageName.equals("com.google.android.youtube.tv")) pick = r.activityInfo.packageName;
+                String pkg = r.activityInfo.packageName;
+                if (pkg.equals("com.google.android.youtube.tv")) official = pkg;
+                else if (browser == null && !pkg.equals(client) && !pkg.equals("android") && !pkg.endsWith("frameworkpackagestubs")) browser = pkg;
             }
         } catch (RuntimeException e) {
             AppLog.w("trailer apps: " + e.getMessage());
         }
+        String pick = official != null ? official : client != null ? client : browser;
         if (pick != null) watch.setPackage(pick);
         try {
             activity.startActivity(watch);
