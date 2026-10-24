@@ -298,6 +298,10 @@ final class Recs {
                 error = e.getMessage() == null ? e.toString() : e.getMessage();
                 failedAt = System.currentTimeMillis();
                 AppLog.w("recommendations: " + error);
+                if (newKey) {       // the settings changed and nothing fits them: the old titles don't either
+                    picks = new ArrayList<>();
+                    save();
+                }
             } finally {
                 fetching = false;
                 writeStatus();
