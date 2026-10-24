@@ -42,6 +42,7 @@ ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
 CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 FLATRATE=true; [ "$(prop flatrate_only true)" = "false" ] && FLATRATE=false
+RENTBUY=false; [ "$(prop include_rent_buy false)" = "true" ] && RENTBUY=true
 CATALOGS="$(prop catalogs "trending,popular_movies,popular_shows,hindi,top_rated")"
 # Whole numbers in a range; anything else is the default.
 whole() { local v; v="$(prop "$1" "$2")"; [[ "$v" =~ ^[0-9]+$ ]] || v="$2"; (( v < $3 )) && v=$3; (( v > $4 )) && v=$4; printf '%s' "$v"; }
@@ -67,11 +68,12 @@ final class Config {
     static final String CURRENCY = "$(prop currency USD)";
     static final String TEMPERATURE = "$(prop temperature auto)";
     static final String HIDE_SERVICES = "$(prop hide_services '')";
-    static final String SERVICE_MAP = "$(prop service_map '')";
+    static final String TMDB_LANGUAGES = "$(prop tmdb_languages '')";
     static final boolean DISABLE_ASSISTANT = $ASSIST;
     static final boolean SHOW_CRYPTO = $CRYPTO;
     static final boolean HIDE_ANIMATION = $ANIMATION;
     static final boolean FLATRATE_ONLY = $FLATRATE;
+    static final boolean INCLUDE_RENT_BUY = $RENTBUY;
     static final String CATALOGS = "$CATALOGS";
     static final int PICK_COUNT = $PICKS;
     static final int PICK_ROTATE_SECONDS = $ROTATE;

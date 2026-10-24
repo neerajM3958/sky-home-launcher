@@ -129,6 +129,81 @@ final class Prefs {
     static boolean coin(int i) { return sp().getBoolean("coin" + i, true); }
     static void setCoin(int i, boolean on) { put("coin" + i, on); }
 
+    // MARK: - TMDB (Free My TV > TMDB); config.properties gives the first values
+
+    /** "auto" (the TV's own country) or a country code ("IN", "BR"...). */
+    static String region() {
+        String v = (app == null ? Config.TMDB_REGION : sp().getString("region", Config.TMDB_REGION)).trim();
+        return v.isEmpty() || v.equalsIgnoreCase("auto") ? "auto" : v.toUpperCase(Locale.ROOT);
+    }
+
+    static void setRegion(String v) { put("region", v); }
+
+    /** Leave cartoons and anime out of the picks and the poster rows. */
+    static boolean hideAnimation() { return app == null ? Config.HIDE_ANIMATION : sp().getBoolean("hideAnimation", Config.HIDE_ANIMATION); }
+    static void setHideAnimation(boolean on) { put("hideAnimation", on); }
+
+    /** The poster rows that are on, in order (Catalogs' keys); the config's catalogs= until the person edits them. */
+    static List<String> catalogRows() {
+        String v = app == null ? null : sp().getString("catalogRows", null);
+        if (v == null) v = Config.CATALOGS;
+        List<String> out = new ArrayList<>();
+        for (String p : v.split(",")) {
+            p = p.trim().toLowerCase(Locale.ROOT);
+            if (!p.isEmpty() && !p.equals("none") && !out.contains(p)) out.add(p);
+        }
+        return out;
+    }
+
+    static void setCatalogRows(List<String> keys) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : keys) sb.append(sb.length() == 0 ? "" : ",").append(p);
+        put("catalogRows", sb.length() == 0 ? "none" : sb.toString());
+    }
+
+    /** Picks only from titles on the apps the TV has, rather than anything popular. */
+    static boolean recommendFromApps() { return app != null && sp().getBoolean("recommendApps", false); }
+    static void setRecommendFromApps(boolean on) { put("recommendApps", on); }
+
+    /** Only titles on a streaming service in the region (subscription, free or with ads); the config's flatrate_only first. */
+    static boolean flatrateOnly() { return app == null ? Config.FLATRATE_ONLY : sp().getBoolean("flatrateOnly", Config.FLATRATE_ONLY); }
+    static void setFlatrateOnly(boolean on) { put("flatrateOnly", on); }
+
+    /** With flatrateOnly: also the titles that can only be rented or bought. */
+    static boolean includeRentBuy() { return app == null ? Config.INCLUDE_RENT_BUY : sp().getBoolean("includeRentBuy", Config.INCLUDE_RENT_BUY); }
+    static void setIncludeRentBuy(boolean on) { put("includeRentBuy", on); }
+
+    /** Original languages (two-letter codes) the picks and catalogs are limited to; empty: any. */
+    static List<String> languages() {
+        String v = app == null ? Config.TMDB_LANGUAGES : sp().getString("languages", Config.TMDB_LANGUAGES);
+        List<String> out = new ArrayList<>();
+        for (String p : v.split(",")) {
+            p = p.trim().toLowerCase(Locale.ROOT);
+            if (!p.isEmpty() && !out.contains(p)) out.add(p);
+        }
+        return out;
+    }
+
+    static void setLanguages(List<String> codes) { put("languages", String.join(",", codes)); }
+
+    // MARK: - Stremio (Free My TV > Stremio)
+
+    /** Missing apps and titles on no service we know open in Stremio, when it is installed. */
+    static boolean stremioForMissing() { return sp().getBoolean("stremioMissing", false); }
+    static void setStremioForMissing(boolean on) { put("stremioMissing", on); }
+
+    /** This service (a Routing service key, or Routing.OTHER) opens in Stremio rather than in its own app. */
+    static boolean toStremio(String key) {
+        return ("," + sp().getString("stremioServices", "") + ",").contains("," + key + ",");
+    }
+
+    static void setToStremio(String key, boolean on) {
+        List<String> keys = new ArrayList<>();
+        for (String k : sp().getString("stremioServices", "").split(",")) if (!k.isEmpty() && !k.equals(key)) keys.add(k);
+        if (on) keys.add(key);
+        put("stremioServices", String.join(",", keys));
+    }
+
     // MARK: - Episodes screen
 
     /** How the episodes screen sorts (an EpisodeList sort), the same for every show. */

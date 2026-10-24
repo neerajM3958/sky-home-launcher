@@ -439,6 +439,19 @@ final class Ui {
         return Ui.datePattern("format|EEEE, MMMM d").format(now);
     }
 
+    /** Three dots that pulse one after another (waiting for an answer). Draws with `fill`'s colour, changing its alpha. */
+    static void dots(Canvas c, float cx, float cy, float r, float seconds, Paint fill) {
+        float gap = r * 3.2f;
+        for (int i = 0; i < 3; i++) {
+            float phase = (seconds * 1.4f - i * 0.2f) % 1f;
+            if (phase < 0) phase += 1f;
+            float pulse = phase < 0.5f ? phase * 2 : (1 - phase) * 2;      // 0, up to 1, and back
+            fill.setAlpha(Math.round(255 * (0.3f + 0.7f * pulse)));
+            c.drawCircle(cx + (i - 1) * gap, cy, r * (0.8f + 0.2f * pulse), fill);
+        }
+        fill.setAlpha(255);
+    }
+
     /** Spinning arc (work in progress). */
     static void spinner(Canvas c, float cx, float cy, float r, float seconds, Paint stroke) {
         OVAL.set(cx - r, cy - r, cx + r, cy + r);

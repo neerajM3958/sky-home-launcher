@@ -456,6 +456,18 @@ final class HomeApps {
         }
     }
 
+    /** The app's page in the Play Store (checked on a Google TV: the market address opens it). False if the TV has no Play Store. */
+    static boolean openStore(Activity a, String pkg) {
+        Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=" + pkg)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            a.startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException e) {
+            AppLog.w("couldn't open the Play Store page of " + pkg + ": " + e.getMessage());
+            return false;
+        }
+    }
+
     /**
      * Live TV: tune the antenna input directly. MediaTek TV Center otherwise restores the last source used, which can
      * be HDMI, so its explicit activity receives the tuner URI. Other TV apps keep the standard channel-list request.

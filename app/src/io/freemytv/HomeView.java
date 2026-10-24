@@ -727,6 +727,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
+        if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) catDirty = true;     // the waiting dots move
         if (catMoving || catDirty) catalogLayer.invalidate();
         if (drawerMoving || bgFading) sky.invalidate();
         if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
@@ -2002,6 +2003,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     fill.setColor(0xFFFFFFFF);
                     c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
                 }
+                if (it == openingItem && SystemClock.uptimeMillis() - openingAt >= OPEN_LOADER_MS) {
+                    // Waiting for where it streams: the poster dims a little and three dots pulse over it.
+                    fill.setShader(null);
+                    fill.setColor(0x80000000);
+                    c.drawRoundRect(cell, 14 * k, 14 * k, fill);
+                    fill.setColor(0xFFFFFFFF);
+                    Ui.dots(c, cell.centerX(), cell.centerY(), 7 * k, (SystemClock.uptimeMillis() - openingAt) / 1000f, fill);
+                }
                 fitPaint.set(lCatLabel);
                 c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
                         cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
@@ -2143,6 +2152,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 && code != KeyEvent.KEYCODE_NUMPAD_ENTER) {
             holdArmed = false;      // another key while OK is held: no move mode
             handler.removeCallbacks(holdStart);
+            if (code != KeyEvent.KEYCODE_BACK) cancelOpening();     // moving away: the title doesn't open
         }
         switch (code) {
             case KeyEvent.KEYCODE_DPAD_LEFT:
@@ -2183,6 +2193,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 }
                 return true;
             case KeyEvent.KEYCODE_BACK:
+                if (opening != null) {      // Back only cancels the open that is waiting for its answer
+                    if (!down) cancelOpening();
+                    backDown = false;
+                    return true;
+                }
                 if (down) {
                     if (e.getRepeatCount() == 0) backDown = true;
                 } else {
@@ -2341,10 +2356,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             dropReorder();
             return;
         }
+        if (opening != null) return;      // still looking up where a title streams
         HomeApps.Item it;
         RectF r;
-        Recs.Pick pick = null;      // a pick that may need its IMDb id first
-        Catalogs.Item listed = null;    // the poster it came from, which remembers the id
         if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
         if (sheetOpen) {
             if (others.isEmpty()) return;
@@ -2353,7 +2367,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
-            pick = p;
+            if (Recs.ROUTED.equals(p.pkg)) {
+                click.open();
+                openPick(p, heroButton);
+                return;
+            }
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = heroButton;
         } else if (zone == Z_STATUS) {
@@ -2374,29 +2392,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardAt(cardIndex);
             if (p == null || p.pkg == null) return;
-            pick = p;
+            if (Recs.ROUTED.equals(p.pkg)) {
+                click.open();
+                openPick(p, cardRects[cardIndex]);
+                return;
+            }
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = cardRects[cardIndex];
         } else if (zone == Z_CATALOG) {
-            String app = recs.catalogApp();
-            if (app == null || catRows.isEmpty()) return;
-            listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
+            if (catRows.isEmpty()) return;
+            Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
+            click.open();
             if (listed.episodes) {      // a show you watch: its episodes, not the app
-                click.open();
                 activity.startActivity(EpisodesActivity.intent(activity, listed));
-                return;
+            } else {
+                openTitle(listed);
             }
-            Recs.Pick p = new Recs.Pick();
-            p.id = listed.id;
-            p.kind = listed.kind;
-            p.title = listed.title;
-            p.pkg = app;
-            p.link = listed.link;
-            if (p.link == null && listed.imdb != null && Recs.STREMIO.equals(app)) p.link = Recs.stremioLink(listed.kind, listed.imdb);
-            pick = p;
-            it = HomeApps.app(app, listed.title, p.link);
-            r = new RectF();
-            posterRect(catRowIndex, catCol[catRowIndex], r);
+            return;
         } else {
             if (shelf.isEmpty()) return;
             it = shelf.get(shelfIndex);
@@ -2418,20 +2430,57 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             retarget(false);
             return;
         }
-        if (pick != null && recs.needsTitleLink(pick)) {
-            // The IMDb id is looked up now (one request); then the app opens on the title.
-            final Recs.Pick wanted = pick;
-            final HomeApps.Item item = it;
-            final Catalogs.Item poster = listed;
-            final RectF from = new RectF(r);
-            recs.resolveLink(pick, () -> {
-                if (poster != null) poster.link = wanted.link;
-                item.uri = wanted.link;     // null if TMDB has no IMDb id: the app's home
-                launch(item, from);
-            });
-            return;
-        }
         launch(it, r);
+    }
+
+    // MARK: - A title from the catalogs or the picks: where it streams decides where it opens (Launcher)
+
+    private static final long OPEN_LOADER_MS = 150;      // a cached answer opens at once; only a wait shows the dots
+    private Launcher.Handle opening;
+    private Catalogs.Item openingItem;
+    private long openingAt;
+
+    private void openTitle(Catalogs.Item item) {
+        final RectF from = new RectF();
+        posterRect(catRowIndex, catCol[catRowIndex], from);
+        openingItem = item;
+        openingAt = SystemClock.uptimeMillis();
+        catDirty = true;
+        opening = Launcher.get(activity).open(item.kind, item.id, item.imdb, target -> {
+            opening = null;
+            openingItem = null;
+            catDirty = true;
+            show(target, from);
+        });
+    }
+
+    /** A pick from anything popular: no dots on it, but the answer is usually already there (Recs looks it up ahead). */
+    private void openPick(Recs.Pick p, RectF r) {
+        final RectF from = new RectF(r);
+        opening = Launcher.get(activity).open(p.kind, p.id, null, target -> {
+            opening = null;
+            show(target, from);
+        });
+    }
+
+    /** Back or moving the focus while the answer is awaited: the title doesn't open. */
+    private void cancelOpening() {
+        if (opening == null) return;
+        opening.cancel();
+        opening = null;
+        openingItem = null;
+        catDirty = true;
+    }
+
+    private void show(Routing.Target target, RectF from) {
+        Launcher launcher = Launcher.get(activity);
+        if (target.kind == Routing.APP) {
+            launch(HomeApps.app(target.pkg, launcher.appName(target.pkg), target.uri), from);
+        } else if (target.kind == Routing.STORE) {
+            if (!HomeApps.openStore(activity, target.pkg)) showToast(Ui.tr("Couldn't open the Play Store."));
+        } else {
+            showToast(Launcher.message(target));
+        }
     }
 
     private void launch(HomeApps.Item it, RectF r) {
@@ -3023,8 +3072,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         int top = -1;
         for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
-        for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
-        if (top >= 0) drawLightCard(c, top);
+        if (!(cards.isEmpty() && recs.noPicks())) {      // no picks to show and none coming: no empty cards either
+            for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
+            if (top >= 0) drawLightCard(c, top);
+        }
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
 
