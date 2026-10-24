@@ -1,6 +1,6 @@
 # Recommendations and launching: make them flexible and configurable
 
-**Status: phases 1 and 2 are built (branch `rec-routing`, tried on a Skyworth Google TV Stick); phases 3 and 4 are not.** The
+**Status: phases 1 to 3 are built (branch `rec-routing`, tried on a Skyworth Google TV Stick); phase 4 is not.** The
 questions that need an answer are in *Open questions* at the end, each with the default I would take if you say nothing.
 
 What phase 1 taught, and where it differs from the plan:
@@ -21,6 +21,19 @@ What phase 2 taught:
   match `catalogs=`); the picks' on/off and counts stay under it as *Recommendations* until phase 4.
 - The Catalogs editor reuses the shelf editor: OK turns a row on or off, left and right move it.
 - Without a TMDB key the row is greyed and says "Needs a TMDB key", like Trakt without a Client ID.
+
+What phase 3 taught:
+- **`service_map` is gone** (build.sh, `Config`, `Recs`, the example config, the README). `Routing.Env` now asks three
+  things about Stremio: is it installed, does this service go to it (`Prefs.toStremio`), and does it take what is missing.
+  The decision table is tested on the JVM (18 cases, in the scratchpad, not in the repo).
+- **"Other services"** is a row of its own on the Stremio screen (key `other`): titles on services we have no app for
+  open in Stremio when it is on. *Use Stremio for what is missing* covers the app not being on the TV, no service in
+  the region and a lookup that failed. The order for titles on several services is not a setting yet (question 6).
+- **The picks had to move with it.** They relied on the `*` rule to be "anything popular", so that mode is now the
+  only one the picks use (`Recs.listOnly()` reads `Prefs.recommendFromApps()`, false), and a pick opens through
+  `Launcher` like every card (`Pick.pkg == Recs.ROUTED`). Phase 4 adds the setting that turns it back on. A pick's
+  service is looked up ahead of time (`Launcher.prefetch`), so there are no dots on a pick.
+- The main menu has ten rows and still fits the comparison and two notices.
 
 ## Goal
 

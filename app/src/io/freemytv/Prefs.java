@@ -161,6 +161,27 @@ final class Prefs {
         put("catalogRows", sb.length() == 0 ? "none" : sb.toString());
     }
 
+    /** Picks only from titles on the apps the TV has, rather than anything popular (the TMDB section's choice, in the next change). */
+    static boolean recommendFromApps() { return app != null && sp().getBoolean("recommendApps", false); }
+
+    // MARK: - Stremio (Free My TV > Stremio)
+
+    /** Missing apps and titles on no service we know open in Stremio, when it is installed. */
+    static boolean stremioForMissing() { return sp().getBoolean("stremioMissing", false); }
+    static void setStremioForMissing(boolean on) { put("stremioMissing", on); }
+
+    /** This service (a Routing service key, or Routing.OTHER) opens in Stremio rather than in its own app. */
+    static boolean toStremio(String key) {
+        return ("," + sp().getString("stremioServices", "") + ",").contains("," + key + ",");
+    }
+
+    static void setToStremio(String key, boolean on) {
+        List<String> keys = new ArrayList<>();
+        for (String k : sp().getString("stremioServices", "").split(",")) if (!k.isEmpty() && !k.equals(key)) keys.add(k);
+        if (on) keys.add(key);
+        put("stremioServices", String.join(",", keys));
+    }
+
     // MARK: - Episodes screen
 
     /** How the episodes screen sorts (an EpisodeList sort), the same for every show. */

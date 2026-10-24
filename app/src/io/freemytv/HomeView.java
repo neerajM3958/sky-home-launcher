@@ -2359,7 +2359,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (opening != null) return;      // still looking up where a title streams
         HomeApps.Item it;
         RectF r;
-        Recs.Pick pick = null;      // a pick that may need its IMDb id first
         if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
         if (sheetOpen) {
             if (others.isEmpty()) return;
@@ -2368,7 +2367,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
-            pick = p;
+            if (Recs.ROUTED.equals(p.pkg)) {
+                click.open();
+                openPick(p, heroButton);
+                return;
+            }
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = heroButton;
         } else if (zone == Z_STATUS) {
@@ -2389,7 +2392,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardAt(cardIndex);
             if (p == null || p.pkg == null) return;
-            pick = p;
+            if (Recs.ROUTED.equals(p.pkg)) {
+                click.open();
+                openPick(p, cardRects[cardIndex]);
+                return;
+            }
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = cardRects[cardIndex];
         } else if (zone == Z_CATALOG) {
@@ -2423,21 +2430,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             retarget(false);
             return;
         }
-        if (pick != null && recs.needsTitleLink(pick)) {
-            // The IMDb id is looked up now (one request); then the app opens on the title.
-            final Recs.Pick wanted = pick;
-            final HomeApps.Item item = it;
-            final RectF from = new RectF(r);
-            recs.resolveLink(pick, () -> {
-                item.uri = wanted.link;     // null if TMDB has no IMDb id: the app's home
-                launch(item, from);
-            });
-            return;
-        }
         launch(it, r);
     }
 
-    // MARK: - A title from the poster rows: where it streams decides where it opens (Launcher)
+    // MARK: - A title from the catalogs or the picks: where it streams decides where it opens (Launcher)
 
     private static final long OPEN_LOADER_MS = 150;      // a cached answer opens at once; only a wait shows the dots
     private Launcher.Handle opening;
@@ -2454,6 +2450,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             opening = null;
             openingItem = null;
             catDirty = true;
+            show(target, from);
+        });
+    }
+
+    /** A pick from anything popular: no dots on it, but the answer is usually already there (Recs looks it up ahead). */
+    private void openPick(Recs.Pick p, RectF r) {
+        final RectF from = new RectF(r);
+        opening = Launcher.get(activity).open(p.kind, p.id, null, target -> {
+            opening = null;
             show(target, from);
         });
     }

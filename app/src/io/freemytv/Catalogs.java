@@ -30,7 +30,7 @@ import java.util.concurrent.Executors;
 /**
  * The poster rows under the drawer's weather and quotes cards (config.properties "catalogs"): one TMDB list request per
  * row, saved for a few hours, with posters loaded only when a row is near the screen. A title opens through Launcher
- * (its own app, its Play Store page, or service_map's "*" app), like every other card.
+ * (its own app, its Play Store page, or Stremio), like every other card.
  */
 final class Catalogs {
     static final class Item {

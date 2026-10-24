@@ -119,12 +119,12 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7;
-        private static final int TRAKT_ROW = 6, TMDB_ROW = 7;   // the main menu's rows that open them
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8;
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
-        // The main menu: eight rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
+        // The main menu: ten rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
         // one 1080 px screen.
         private static final float MAIN_TOP = 122, ROW_H = 56, MAIN_GAP = 4;
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
@@ -148,7 +148,8 @@ public class SettingsActivity extends Activity {
         private String cityStatus = "";
         private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
         private JSONObject state = new JSONObject(), recs = new JSONObject();
-        private boolean hasKey;
+        private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
+        private final List<String[]> stremioRows = new ArrayList<>();     // the Stremio screen: {key, name}, "missing" first
         private int screen = MAIN, focus;
         private boolean running, okDown, backDown, wasBusy;
         private StaticLayout errorLayout;   // the last error, wrapped (rebuilt only when it changes)
@@ -165,6 +166,7 @@ public class SettingsActivity extends Activity {
                 if (!running) return;
                 state = HomeMode.state(getContext());
                 hasKey = Recs.hasKey(getContext());
+                stremioOn = Recs.get(getContext()).stremioInstalled();
                 recs = Recs.status(getContext());
                 boolean nowBusy = !busyText().isEmpty();
                 if (nowBusy) pendingAt = 0;
@@ -183,6 +185,7 @@ public class SettingsActivity extends Activity {
         SettingsView(SettingsActivity a) {
             super(a);
             activity = a;
+            stremioOn = Recs.get(a).stremioInstalled();
             for (int i = 0; i < pop.length; i++) pop[i] = new Spring(0.28f, 0.85f, 0);
             HomeData.Weather wx = HomeData.get(a).weather;
             Shaders.sky(scene.palette, System.currentTimeMillis(), wx.sunrise, wx.sunset);
@@ -211,7 +214,8 @@ public class SettingsActivity extends Activity {
 
         /** A main menu row that needs something it doesn't have (Trakt without a Client ID, TMDB without its key): greyed, and OK does nothing. */
         private boolean disabledRow(int row) {
-            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext())));
+            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext()))
+                    || (row == STREMIO_ROW && !stremioOn));
         }
 
         @Override public AccessibilityNodeProvider getAccessibilityNodeProvider() {
@@ -230,7 +234,8 @@ public class SettingsActivity extends Activity {
                     }
                     String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
                             Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"),
-                            Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TMDB") + ", " + tmdbStatus(), Ui.tr("TV Settings")};
+                            Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TMDB") + ", " + tmdbStatus(),
+                            Ui.tr("Stremio") + ", " + stremioStatus(), Ui.tr("TV Settings")};
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
                 case TRAKT:
@@ -238,6 +243,10 @@ public class SettingsActivity extends Activity {
                 case TMDB: {
                     String[] labels = tmdbLabels(), values = tmdbValues();
                     return row < labels.length ? labels[row] + ", " + values[row] : "";
+                }
+                case STREMIO: {
+                    int at = pickScroll + row;
+                    return at < stremioRows.size() ? stremioRows.get(at)[1] + ", " + stremioValue(at) : "";
                 }
                 case HOME_CHOICE: {
                     String name = row == 0 ? "Free My TV, " + Ui.tr("no ads, with the new screensaver")
@@ -366,9 +375,10 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 9;
+                case MAIN: return 10;
                 case TRAKT: return 1;
                 case TMDB: return tmdbLabels().length;
+                case STREMIO: return Math.min(PICK_VISIBLE, stremioRows.size());
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -401,7 +411,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -410,8 +420,8 @@ public class SettingsActivity extends Activity {
             String mode = freeActive() ? "Free My TV" : Ui.tr("Original");
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
-                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), ""};
+                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("TV Settings")};
+            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), stremioStatus(), ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -448,7 +458,7 @@ public class SettingsActivity extends Activity {
                 }
             }
 
-            float y = (MAIN_TOP + labels.length * (ROW_H + MAIN_GAP) + 20) * k;
+            float y = (MAIN_TOP + labels.length * (ROW_H + MAIN_GAP) + 30) * k;
             String error = state.optString("error");
             if (working && busyText.equals(Ui.tr("Accept “Allow USB debugging?” on the TV (tick “Always allow”)."))) {
                 c.drawText(Ui.tr("On the TV: tick “Always allow” and press OK."),
@@ -626,7 +636,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -667,6 +677,9 @@ public class SettingsActivity extends Activity {
                                 screen = TMDB;
                             } else if (screen == TMDB) {
                                 focus = TMDB_ROW;
+                                screen = MAIN;
+                            } else if (screen == STREMIO) {
+                                focus = STREMIO_ROW;
                                 screen = MAIN;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
@@ -867,6 +880,59 @@ public class SettingsActivity extends Activity {
             drawRecs(c, (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 70) * k);
         }
 
+        // MARK: - Stremio
+
+        /** The main menu's value: whether Stremio is there, and whether anything is sent to it. */
+        private String stremioStatus() {
+            if (!stremioOn) return Ui.tr("Not installed");
+            boolean any = Prefs.stremioForMissing();
+            for (String[] s : Recs.serviceNames()) any |= Prefs.toStremio(s[0]);
+            return onOff(any || Prefs.toStremio(Routing.OTHER));
+        }
+
+        /** The first row is "use Stremio for what is missing", then each service we know, then the ones we don't. */
+        private void openStremio() {
+            stremioRows.clear();
+            stremioRows.add(new String[] {"", Ui.tr("Use Stremio for what is missing")});
+            for (String[] s : Recs.serviceNames()) stremioRows.add(s);
+            stremioRows.add(new String[] {Routing.OTHER, Ui.tr("Other services")});
+            pickScroll = 0;
+            focus = 0;
+            screen = STREMIO;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private String stremioValue(int at) {
+            String key = stremioRows.get(at)[0];
+            return key.isEmpty() ? onOff(Prefs.stremioForMissing()) : Prefs.toStremio(key) ? Ui.tr("Stremio") : Ui.tr("Its app");
+        }
+
+        private void toggleStremio() {
+            String key = stremioRows.get(pickScroll + focus)[0];
+            if (key.isEmpty()) Prefs.setStremioForMissing(!Prefs.stremioForMissing());
+            else Prefs.setToStremio(key, !Prefs.toStremio(key));
+        }
+
+        private void drawStremio(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            c.drawText(Ui.tr("Stremio"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(TextUtils.ellipsize(stremioRows.get(pickScroll + i)[1], new TextPaint(rowLabel), 560 * k, TextUtils.TruncateAt.END).toString(),
+                        rowRect.left + 30 * k, base, rowLabel);
+                c.drawText(stremioValue(pickScroll + i), rowRect.right - 30 * k, base, rowValue);
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            c.drawText(Ui.tr("Each service opens in its own app or in Stremio. OK changes it."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
         // MARK: - Home Settings and Remote Buttons
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
@@ -970,6 +1036,10 @@ public class SettingsActivity extends Activity {
 
         /** Changes the focused row's value one step (OK and → go forward, ← goes back). */
         private void adjust(int dir) {
+            if (screen == STREMIO) {
+                toggleStremio();
+                return;
+            }
             if (screen == TMDB) {
                 if (focus == 1) Prefs.setHideAnimation(!Prefs.hideAnimation());
                 return;
@@ -1057,11 +1127,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1293,6 +1363,10 @@ public class SettingsActivity extends Activity {
                 } else {
                     openRowsEditor();
                 }
+            } else if (screen == STREMIO) {
+                toggleStremio();
+                invalidate();
+                return;
             } else if (screen == PICKER) {
                 int at = pickScroll + focus;
                 Prefs.setKeyApp(Prefs.KEYS[pickFor - 1], appPkgs.get(at));
@@ -1346,6 +1420,9 @@ public class SettingsActivity extends Activity {
                 Regions.refreshIfStale(c);
                 screen = TMDB;
                 focus = 0;
+            } else if (focus == STREMIO_ROW) {
+                if (disabledRow(STREMIO_ROW)) return;   // Stremio isn't on the TV: nothing to open
+                openStremio();
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }

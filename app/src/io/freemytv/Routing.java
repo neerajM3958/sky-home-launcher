@@ -4,21 +4,25 @@ import java.util.List;
 
 /**
  * Where a title opens, decided from where it streams. No Android in here, so it can be tested on its own;
- * Launcher gathers the facts and runs it.
+ * Launcher gathers the facts and runs it. Stremio only counts when it is on the TV.
  *
  * <pre>
- * 0. The lookup could not be done            -> the catch-all app, else "couldn't check"
- * 5. TMDB answered: on no service            -> the catch-all app, else "unavailable in your region"
- * 1. Pick one service among the ones we can open: ready ones first (its app is on the TV, or service_map sends it
- *    somewhere), then subscription before free before rent or buy, then TMDB's order.
- * 3. service_map sends it to an app              -> that app
- * 4. its app is on the TV                        -> that app
- *    missing: the catch-all app, else its Play Store page
- *    only services we can't open: the catch-all app, else "it streams on X, which Free My TV can't open"
+ * 0. The lookup could not be done            -> Stremio if it takes what is missing, else "couldn't check"
+ * 5. TMDB answered: on no service            -> Stremio if it takes what is missing, else "unavailable in your region"
+ * 1. Pick one service among the ones we can open: ready ones first (its app is on the TV, or it goes to Stremio),
+ *    then subscription before free before rent or buy, then TMDB's order.
+ * 3. the service goes to Stremio             -> Stremio
+ * 4. its app is on the TV                    -> that app
+ *    missing: Stremio if it takes what is missing, else its Play Store page
+ *    only services we can't open: Stremio if it takes them or what is missing, else "it streams on X, which Free My TV can't open"
  * </pre>
  */
 final class Routing {
     private Routing() {}
+
+    static final String STREMIO = "com.stremio.one";
+    /** The Stremio screen's name for every service we have no app for. */
+    static final String OTHER = "other";
 
     static final int APP = 0, STORE = 1, NONE = 2;
     /** Why nothing opens (kind NONE). */
@@ -58,39 +62,41 @@ final class Routing {
         /** {name part, key, package} of the app we know for a service's name, or null. */
         String[] service(String providerName);
         boolean installed(String pkg);
-        /** The app service_map sends this service to (when it is on the TV), or null. */
-        String override(String providerName);
-        /** The app for what can't be opened any other way (service_map's "*", when it is on the TV), or null. */
-        String catchAll();
+        /** Stremio is on the TV: without it every "Stremio" choice is off. */
+        boolean stremio();
+        /** The person sends this service (its key, or OTHER) to Stremio. */
+        boolean toStremio(String key);
+        /** "Use Stremio for what is missing" is on. */
+        boolean stremioForMissing();
         /** In hide_services: never opens. */
         boolean hidden(String providerName);
     }
 
     /** `offers` is null when the lookup could not be done. */
     static Target decide(List<Offer> offers, Env env) {
-        String catchAll = env.catchAll();
-        if (offers == null) return catchAll != null ? app(catchAll) : none(COULDNT_CHECK, null);
-        if (offers.isEmpty()) return catchAll != null ? app(catchAll) : none(UNAVAILABLE, null);
+        boolean stremio = env.stremio();
+        boolean missing = stremio && env.stremioForMissing();
+        if (offers == null) return missing ? app(STREMIO) : none(COULDNT_CHECK, null);
+        if (offers.isEmpty()) return missing ? app(STREMIO) : none(UNAVAILABLE, null);
         int bestRank = Integer.MAX_VALUE;
-        String bestApp = null, bestPkg = null;
+        String bestPkg = null;      // null with a best rank: Stremio
         for (int i = 0; i < offers.size(); i++) {
             Offer o = offers.get(i);
             if (env.hidden(o.name)) continue;
-            String over = env.override(o.name);
-            String[] row = over == null ? env.service(o.name) : null;
-            if (over == null && row == null) continue;      // a service we can't open
-            boolean ready = over != null || env.installed(row[2]);
+            String[] row = env.service(o.name);
+            boolean sent = stremio && env.toStremio(row == null ? OTHER : row[1]);
+            if (row == null && !sent) continue;      // a service we can't open
+            boolean ready = sent || env.installed(row[2]);
             int rank = (ready ? 0 : 1000) + o.tier * 100 + Math.min(i, 99);
             if (rank < bestRank) {
                 bestRank = rank;
-                bestApp = over;
-                bestPkg = row == null ? null : row[2];
+                bestPkg = sent ? null : row[2];
             }
         }
-        if (bestRank == Integer.MAX_VALUE) return catchAll != null ? app(catchAll) : none(UNKNOWN_SERVICE, offers.get(0).name);
-        if (bestApp != null) return app(bestApp);
+        if (bestRank == Integer.MAX_VALUE) return missing ? app(STREMIO) : none(UNKNOWN_SERVICE, offers.get(0).name);
+        if (bestPkg == null) return app(STREMIO);
         if (env.installed(bestPkg)) return app(bestPkg);
-        return catchAll != null ? app(catchAll) : new Target(STORE, 0, bestPkg, null, null);
+        return missing ? app(STREMIO) : new Target(STORE, 0, bestPkg, null, null);
     }
 
     static Target app(String pkg) {

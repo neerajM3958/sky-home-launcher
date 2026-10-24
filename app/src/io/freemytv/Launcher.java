@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * What happens when OK is pressed on a title: its own streaming app, that app's Play Store page when it isn't on the
- * TV, the catch-all app (service_map's "*", Stremio in practice) or a message. Where a title streams comes from TMDB
+ * TV, Stremio where the Stremio settings say so, or a message. Where a title streams comes from TMDB
  * (one request, kept for a day); the decision itself is Routing's. The answer comes back on the main thread, at once
  * if it was kept and otherwise after the request, or after 3 seconds as "couldn't check".
  */
@@ -90,8 +90,9 @@ final class Launcher {
             return null;
         }
         @Override public boolean installed(String pkg) { return recs.appInstalled(pkg); }
-        @Override public String override(String name) { return recs.serviceOverride(name); }
-        @Override public String catchAll() { return recs.catchAllApp(); }
+        @Override public boolean stremio() { return recs.stremioInstalled(); }
+        @Override public boolean toStremio(String key) { return Prefs.toStremio(key); }
+        @Override public boolean stremioForMissing() { return Prefs.stremioForMissing(); }
         @Override public boolean hidden(String name) { return recs.hiddenService(name); }
     };
 
@@ -138,14 +139,9 @@ final class Launcher {
             if (h.finish()) done.onTarget(target(null, kind, imdb));
         };
         main.postDelayed(h.giveUp, GIVE_UP_MS);
-        // Every service goes to the "*" app (service_map with nothing but "*"): nothing to look up, only Stremio's page
-        // needs the IMDb id.
-        String star = recs.catchAllApp();
-        boolean everythingThere = star != null && !recs.hasNamedRules();
-        boolean needsLookup = !everythingThere || (Recs.STREMIO.equals(star) && (imdb == null || imdb.isEmpty()));
         net.execute(() -> {
             Info info = null;
-            if (needsLookup && tmdbId > 0) {
+            if (tmdbId > 0) {
                 try {
                     info = info(kind, tmdbId);
                 } catch (Exception e) {
@@ -155,7 +151,7 @@ final class Launcher {
             final Info found = info;
             main.post(() -> {
                 if (!h.finish()) return;
-                done.onTarget(everythingThere ? withPage(Routing.app(star), kind, imdb, found) : target(found, kind, imdb));
+                done.onTarget(target(found, kind, imdb));
             });
         });
         return h;

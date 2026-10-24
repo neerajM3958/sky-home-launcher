@@ -114,7 +114,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `city` | The name on the weather card | `Weather` |
 | `hide_animation` | Leave cartoons and anime out of the picks | `false` |
 | `flatrate_only` | `false`: picks may be any popular title, not only ones on a subscription service in your region | `true` |
-| `catalogs` | Poster rows below the drawer's weather and quotes (`trending`, `popular_movies`, `popular_shows`, `top_rated`, `now_playing`, `upcoming`, `hindi`); `none` for no rows | `trending,popular_movies,popular_shows,hindi,top_rated` |
+| `catalogs` | Catalogs below the drawer's weather and quotes (`trending`, `popular_movies`, `popular_shows`, `top_rated`, `now_playing`, `upcoming`, `hindi`); `none` for no rows | `trending,popular_movies,popular_shows,hindi,top_rated` |
 | `language` | `auto` (follows the TV), or a language with a [translation](#translations) (`en`, `pt`, `es`, `de`, `ru`, `fr`, `ja`…) | `auto` |
 | `show_crypto` | Show Binance crypto prices on home and screensaver | `true` |
 | `currency` | Crypto prices in `USD`, `EUR`, `BRL`… | `USD` |
@@ -123,7 +123,6 @@ The first values come from `config.properties`, created by the first build (Goog
 | `hide_services` | Streaming services to leave out of the picks even when their app is on the TV (`netflix`, `prime`, `disney`…), comma separated; for apps the TV ships that you don't subscribe to. Google TV only | empty |
 | `pick_count` | How many picks the home screen rotates through, 3 to 12. At 3 it shows this hour's three; with more, left and right slide through them in a circle | 3 |
 | `pick_rotate_seconds` | If above 0, the picks move by themselves this often while focus is not on them | 0 |
-| `service_map` | Picks from every streaming service in your region, each opening an app you choose: `netflix,prime=app.one;youtube=app.two;*=app.three` (`*` is every other service). Titles open the app's home, not the title's page, and Watchmode links are off. Empty: picks only from the streaming apps installed on the TV; the poster rows and the Trakt rows follow [Opening a title](#opening-a-title) | empty |
 | `hide_apps` | Apps to leave out of the shelf, All Apps and the picks, by id or name (part of it), comma separated; for apps the TV ships that can't be uninstalled, like Samsung's built-in Netflix. LG and Samsung only | empty |
 
 Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
@@ -134,9 +133,9 @@ Free, and it takes two minutes: create an account at [themoviedb.org](https://ww
 
 ### Opening a title
 
-A card in the poster rows or the Trakt rows opens **the app of the service that streams the title in your region** (`tmdb_region`): a Netflix title in Netflix, and so on. When that app isn't on the TV it opens the app's **Play Store page** (on a TV where Free My TV turned the app off, the page has an *Enable* button); when the title is on no service there, it says "This title is unavailable in your region." A title on several services opens in one you have, then by price (subscription, then free, then rent or buy). While the answer comes (one TMDB request, kept for a day) the card shows three blinking dots, and Back or moving away cancels it; if it takes over 3 seconds it says it couldn't check.
+A card in the catalogs, the Trakt rows or the picks opens **the app of the service that streams the title in your region** (`tmdb_region`): a Netflix title in Netflix, and so on. When that app isn't on the TV it opens the app's **Play Store page** (on a TV where Free My TV turned the app off, the page has an *Enable* button); when the title is on no service there, it says "This title is unavailable in your region." A title on several services opens in one you have, then by price (subscription, then free, then rent or buy). While the answer comes (one TMDB request, kept for a day) the card shows three blinking dots, and Back or moving away cancels it; if it takes over 3 seconds it says it couldn't check.
 
-With a `service_map` rule everything goes where the rule says, as before: `*=com.stremio.one` opens every title in Stremio, on the title's page. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key.
+Free My TV → *Stremio* (when Stremio is installed) says which services open in Stremio on the title's page instead of in their own app, and *Use Stremio for what is missing* sends it the titles whose app isn't on the TV and the ones that stream nowhere we can check; it is greyed out when Stremio isn't installed. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key. `service_map` is gone: if you had it in `config.properties`, set the Stremio screen once on the TV instead.
 
 ### Opening the title's page in its app (optional)
 

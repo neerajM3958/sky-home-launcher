@@ -59,7 +59,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 11;
+    private static final int CACHE_VERSION = 12;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -226,7 +226,7 @@ final class Recs {
     static String serviceName(Pick p) {
         if (p == null || p.app == null) return "";
         String name = SERVICE_NAME.get(p.app);
-        return name != null ? name : p.app;   // with service_map, p.app is the service's name on TMDB
+        return name != null ? name : p.app;
     }
 
     /** The pick's ready backdrop (or null: builds it in the background and notifies when it's ready). */
@@ -288,6 +288,7 @@ final class Recs {
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
                     }
                     findLink(pick);
+                    if (ROUTED.equals(pick.pkg)) Launcher.get(context).prefetch(pick.kind, pick.id);   // so OK opens it at once
                 }
                 save();
                 if (tried > 0 && failures == tried) throw new IOException(last);
@@ -422,7 +423,7 @@ final class Recs {
             return;
         }
         // None of the services we know is on the TV (or hide_services hides them all): no region would change that.
-        boolean any = mapped();
+        boolean any = false;
         for (String[] s : SERVICES) any |= installed(s[2]);
         if (!any) throw new IOException(NO_KNOWN_APPS);
         // The services the TV has, by their TMDB ids in your region.
@@ -430,10 +431,6 @@ final class Recs {
         JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
         for (int i = 0; i < providers.length(); i++) {
             JSONObject o = providers.getJSONObject(i);
-            if (mapped()) {
-                if (target(o.optString("provider_name"), false) != null) services.put(o.getInt("provider_id"), new String[0]);
-                continue;
-            }
             String[] s = service(o.optString("provider_name"));
             if (s != null && installed(s[2])) services.put(o.getInt("provider_id"), s);
         }
@@ -441,7 +438,7 @@ final class Recs {
         StringBuilder ids = new StringBuilder();
         for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
         String common = "&language=" + lang() + "&watch_region=" + region() + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "") + "&include_adult=false"
-                + "&sort_by=popularity.desc" + (mapped() ? "" : "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8"))
+                + "&sort_by=popularity.desc" + "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
                 + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         // 1. The most popular right now (TMDB's popularity follows what people are watching and searching for), already
         //    filtered to the TV's services: one request each. The details (which service, runtime) come later, only for
@@ -526,17 +523,21 @@ final class Recs {
         return p;
     }
 
-    // MARK: - List-only picks (service_map with just "*": every title opens one app)
+    // MARK: - Picks from anything popular (no filter on the apps; a press asks Launcher where the title opens)
 
     /**
-     * Every title opens the same app, so nothing about the service is needed: a pick is built from the list answer alone
-     * (title, backdrop, genre, rating) and the only per-title request is the IMDb id, when one is clicked.
+     * A pick that opens through Launcher rather than through an app of its own, so Pick.pkg holds this instead of a
+     * package. Nothing about the service is needed to build one: it comes from the list answer alone (title, backdrop,
+     * genre, rating).
      */
+    static final String ROUTED = "routed";
+
+    /** Picks come from the apps on the TV (the older way) instead of from anything popular. */
     private static boolean listOnly() {
-        return MAP.size() == 1 && MAP.get(0)[0].equals("*");
+        return !Prefs.recommendFromApps();
     }
 
-    static final String STREMIO = "com.stremio.one";
+    static final String STREMIO = Routing.STREMIO;
 
     /** Stremio's page for a title, from its IMDb id; `kind` is TMDB's "movie" or "tv". */
     static String stremioLink(String kind, String imdb) {
@@ -594,8 +595,6 @@ final class Recs {
     }
 
     private void fetchListOnly(int p) throws Exception {
-        String pkg = target("", false);     // the "*" rule's app, when it is on the TV
-        if (pkg == null) throw new IOException(NO_KNOWN_APPS);
         String common = "&language=" + lang() + "&watch_region=" + region() + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "")
                 + "&include_adult=false&sort_by=popularity.desc" + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         boolean genres = !loadSavedGenres();
@@ -615,8 +614,8 @@ final class Recs {
             cache.edit().putString("genres:movie", r[4].toString()).putString("genres:tv", r[5].toString())
                     .putString("genresLang", lang()).putLong("genresAt", System.currentTimeMillis()).apply();
         }
-        List<Pick> hotMovies = listed(r[0], "movie", pkg), hotShows = listed(r[1], "tv", pkg);
-        List<Pick> newMovies = listed(r[2], "movie", pkg), newShows = listed(r[3], "tv", pkg);
+        List<Pick> hotMovies = listed(r[0], "movie"), hotShows = listed(r[1], "tv");
+        List<Pick> newMovies = listed(r[2], "movie"), newShows = listed(r[3], "tv");
         List<Pick> list = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         alternate(list, seen, hotMovies, hotShows, 12);
@@ -640,15 +639,14 @@ final class Recs {
         listLanguage = Ui.language;
     }
 
-    private List<Pick> listed(JSONObject answer, String kind, String pkg) {
+    private List<Pick> listed(JSONObject answer, String kind) {
         List<Pick> out = new ArrayList<>();
         JSONArray results = answer.optJSONArray("results");
         for (int i = 0; results != null && i < results.length(); i++) {
             JSONObject o = results.optJSONObject(i);
             Pick p = o == null ? null : add(out, o, kind);
             if (p == null) continue;
-            p.pkg = pkg;
-            p.app = appLabel(pkg);
+            p.pkg = ROUTED;
             // not detailed yet: the best backdrop is chosen when the card is about to show (fetchBackdrop)
             List<String> parts = new ArrayList<>();
             if (kind.equals("tv")) parts.add(Ui.tr("Series"));
@@ -657,7 +655,6 @@ final class Recs {
             if (genre != null) parts.add(genre(genre));
             double rating = o.optDouble("vote_average", 0);
             if (rating > 0 && o.optInt("vote_count") >= 10) parts.add(String.format(Ui.locale(), "★ %.1f", rating));
-            parts.add(serviceName(p));
             p.meta = String.join(" · ", parts);
         }
         return out;
@@ -674,20 +671,20 @@ final class Recs {
         return installed(pkg);
     }
 
-    /** The app service_map sends this service to (its own rule, else the "*" rule; only when it is on the TV), or null. */
-    String serviceOverride(String providerName) {
-        return target(providerName, false);
+    /** {key, name} of each streaming service we know, in the order the Stremio screen lists them. */
+    static List<String[]> serviceNames() {
+        List<String[]> out = new ArrayList<>();
+        for (String[] s : SERVICES) {
+            boolean seen = false;
+            for (String[] o : out) seen |= o[0].equals(s[1]);
+            if (!seen) out.add(new String[] {s[1], SERVICE_NAME.get(s[1])});
+        }
+        return out;
     }
 
-    /** service_map has a rule for named services, not only "*". */
-    boolean hasNamedRules() {
-        for (String[] rule : MAP) if (!rule[0].equals("*")) return true;
-        return false;
-    }
-
-    /** The app service_map's "*" rule names, for every service without a rule of its own and for what can't be found out (when it is on the TV), or null. */
-    String catchAllApp() {
-        return target("", false);
+    /** Stremio is on the TV (without it every "Stremio" choice is off). */
+    boolean stremioInstalled() {
+        return installed(STREMIO);
     }
 
     /** The service is in hide_services: it never opens, even when its app is on the TV. */
@@ -701,34 +698,13 @@ final class Recs {
         return appLabel(pkg);
     }
 
-    /** A pick that opens Stremio and doesn't know its IMDb id yet. */
-    boolean needsTitleLink(Pick p) {
-        return listOnly() && STREMIO.equals(p.pkg) && p.link == null;
-    }
-
-    /** Looks up the title's IMDb id (one request), sets its Stremio page as the pick's link and then runs `done` on the main thread. */
-    void resolveLink(Pick p, Runnable done) {
-        net.execute(() -> {
-            try {
-                String imdb = get("/" + p.kind + "/" + p.id + "/external_ids").optString("imdb_id");
-                if (imdb.startsWith("tt")) {
-                    p.link = "stremio:///detail/" + (p.kind.equals("movie") ? "movie" : "series") + "/" + imdb;
-                    save();
-                }
-            } catch (Exception e) {
-                AppLog.w("imdb id: " + e.getMessage());     // the app's home opens instead
-            }
-            main.post(done);
-        });
-    }
-
     private static boolean animated(JSONObject o) {
         JSONArray genres = o.optJSONArray("genre_ids");
         for (int i = 0; genres != null && i < genres.length(); i++) if (genres.optInt(i) == ANIMATION) return true;
         return false;
     }
 
-    /** List-only picks: the title's best backdrop (no text over it, closest to 1920 wide), one small request; TMDB's default stays if it has none. */
+    /** Picks from anything popular: the title's best backdrop (no text over it, closest to 1920 wide), one small request; TMDB's default stays if it has none. */
     private void fetchBackdrop(Pick p) throws Exception {
         String best = bestBackdrop(get("/" + p.kind + "/" + p.id + "/images?include_image_language=null"));
         if (best != null) p.backdrop = best;
@@ -766,40 +742,12 @@ final class Recs {
         JSONObject wp = o.optJSONObject("watch/providers");
         JSONObject br = wp == null ? null : wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(region());
         JSONArray flat = br == null ? null : br.optJSONArray("flatrate");
-        if (mapped()) {
-            // A service with its own rule first, then the first of the others (the "*" rule).
-            for (int pass = 0; pass < 2 && p.app == null; pass++) {
-                for (int i = 0; flat != null && i < flat.length() && p.app == null; i++) {
-                    String name = flat.getJSONObject(i).optString("provider_name");
-                    String pkg = target(name, pass == 0);
-                    if (pkg != null) {
-                        p.app = name;
-                        p.pkg = pkg;
-                    }
-                }
-            }
-        }
-        for (int i = 0; !mapped() && flat != null && i < flat.length() && p.app == null; i++) {
+        for (int i = 0; flat != null && i < flat.length() && p.app == null; i++) {
             String[] s = service(flat.getJSONObject(i).optString("provider_name"));
             if (s != null && installed(s[2])) {
                 p.app = s[1];
                 p.pkg = s[2];
             }
-        }
-        if (mapped() && p.app == null && !Config.FLATRATE_ONLY) {
-            // No service of its own in this region: the "*" rule's app, named after the app itself.
-            String pkg = target("", false);
-            if (pkg != null) {
-                p.pkg = pkg;
-                p.app = appLabel(pkg);
-            }
-        }
-        // Stremio opens the title's own page from its IMDb id (a movie has it in the details, a show in external_ids).
-        if (STREMIO.equals(p.pkg)) {
-            String imdb = o.optString("imdb_id");
-            JSONObject ids = o.optJSONObject("external_ids");
-            if (!imdb.startsWith("tt") && ids != null) imdb = ids.optString("imdb_id");
-            if (imdb.startsWith("tt")) p.link = "stremio:///detail/" + (p.kind.equals("movie") ? "movie" : "series") + "/" + imdb;
         }
         if (p.app != null) parts.add(serviceName(p));
         p.meta = String.join(" · ", parts);
@@ -882,28 +830,6 @@ final class Recs {
         }
     }
 
-    /**
-     * service_map (config.properties): "netflix,prime=app.one;youtube=app.two;*=app.three". Each rule is the part of a
-     * service's name on TMDB (lowercase) that it matches, and the app that opens for it; "*" is every other service.
-     */
-    private static final List<String[]> MAP = new ArrayList<>();   // {name, package}, "*" last
-    static {
-        String fallback = null;
-        for (String rule : Config.SERVICE_MAP.split(";")) {
-            int eq = rule.indexOf('=');
-            if (eq < 0) continue;
-            String pkg = rule.substring(eq + 1).trim();
-            if (pkg.isEmpty()) continue;
-            for (String name : rule.substring(0, eq).split(",")) {
-                name = name.trim().toLowerCase(Locale.ROOT);
-                if (name.equals("*")) fallback = pkg;
-                else if (!name.isEmpty()) MAP.add(new String[] {name, pkg});
-            }
-        }
-        if (fallback != null) MAP.add(new String[] {"*", fallback});
-    }
-
-
     /** The app's own name on the TV ("Stremio"), or its package. */
     private String appLabel(String pkg) {
         try {
@@ -913,31 +839,16 @@ final class Recs {
         }
     }
 
-    private static boolean mapped() {
-        return !MAP.isEmpty();
-    }
-
-    /** The app service_map opens for this service (its name on TMDB), when it's on the TV; the "*" rule only if !explicit. */
-    private String target(String service, boolean explicit) {
-        String n = service.toLowerCase(Locale.ROOT);
-        for (String key : HIDDEN) if (n.contains(key)) return null;
-        for (String[] rule : MAP) {
-            if (rule[0].equals("*") ? explicit : !n.contains(rule[0])) continue;
-            if (HomeApps.launchIntent(context.getPackageManager(), rule[1]) != null) return rule[1];
-        }
-        return null;
-    }
-
     /** The service's app is on the TV, and the service isn't hidden (an app the TV ships without a subscription, say). */
     private boolean installed(String pkg) {
+        if (ROUTED.equals(pkg)) return true;
         if (!HIDDEN.isEmpty()) for (String[] s : SERVICES) if (s[2].equals(pkg) && HIDDEN.contains(s[1])) return false;
         return HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
     }
 
     private long sourceStamp() {
         long stamp = (Config.TMDB_KEY.hashCode() * 31L + region().hashCode()) * 31L + (Prefs.hideAnimation() ? 1 : 0);
-        for (String[] rule : MAP) stamp = stamp * 31L + rule[0].hashCode() * 31L + rule[1].hashCode()
-                + (HomeApps.launchIntent(context.getPackageManager(), rule[1]) != null ? 1 : 0);
+        stamp = stamp * 31L + (listOnly() ? 1 : 0);
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
     }
@@ -956,7 +867,7 @@ final class Recs {
     /** A key is set and Watchmode hasn't refused it (a refused key isn't tried again until it changes). */
     private boolean linksOn() {
         String key = Config.WATCHMODE_KEY.trim();
-        return !mapped() && !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
+        return !listOnly() && !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
     }
 
     /** Sets p.link from what was looked up before, or looks it up (2 requests of the free plan's 2,500 a month). */
