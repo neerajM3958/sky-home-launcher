@@ -7,7 +7,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -52,6 +51,10 @@ public class SettingsActivity extends Activity {
         super.onCreate(savedInstanceState);
         Watchdog.install(this);
         Ui.init(this);
+        // From ADB (the screenshot script): --es look glass|material3-expressive --es theme auto|light|dark set them first.
+        String look = getIntent().getStringExtra("look"), theme = getIntent().getStringExtra("theme");
+        if (look != null) Prefs.setLook(look);
+        if (theme != null && (theme.equals("auto") || theme.equals("light") || theme.equals("dark"))) Prefs.setTheme(theme);
         view = new SettingsView(this);
         setContentView(view);
     }
@@ -132,6 +135,7 @@ public class SettingsActivity extends Activity {
 
         private final SettingsActivity activity;
         private final Scene scene = new Scene();
+        private final Look look = Themes.create(Prefs.look(), scene);
         private final Handler handler = new Handler(Looper.getMainLooper());
         private final Spring[] pop = new Spring[12];
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
@@ -162,7 +166,8 @@ public class SettingsActivity extends Activity {
         private long startedAt, lastNanos, pendingAt, lastSky;
         private int w, h;
         private float k = 1;
-        private Paint title, subtitle, version, rowLabel, rowValue, rowSub, header, cellLabel, cellValue, warn, spinner, white, shadow;
+        private float currentNight;
+        private Paint title, subtitle, version, rowLabel, rowValue, rowSub, header, cellLabel, cellValue, warn, spinner;
         private TextPaint notice;
 
         private final Runnable poll = new Runnable() {
@@ -346,6 +351,7 @@ public class SettingsActivity extends Activity {
             k = w / 1920f;
             wraps.clear();
             scene.setSize(w, h);
+            look.setSize(w, h, k);
             title = Ui.text(Ui.displaySemibold, 50 * k, 0xFFFFFFFF);
             title.setTextAlign(Paint.Align.CENTER);
             subtitle = Ui.text(Ui.regular, 26 * k, 0x99FFFFFF);
@@ -367,10 +373,6 @@ public class SettingsActivity extends Activity {
             spinner.setStyle(Paint.Style.STROKE);
             spinner.setStrokeCap(Paint.Cap.ROUND);
             spinner.setStrokeWidth(3.5f * k);
-            white = new Paint(Paint.ANTI_ALIAS_FLAG);
-            white.setColor(0xFFF5F5F7);
-            shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-            shadow.setMaskFilter(new BlurMaskFilter(22 * k, BlurMaskFilter.Blur.NORMAL));
         }
 
         private boolean busy() {
@@ -405,6 +407,17 @@ public class SettingsActivity extends Activity {
 
         @Override protected void onDraw(Canvas c) {
             if (w == 0) return;
+            currentNight = Prefs.theme().equals("light") ? 0 : Prefs.theme().equals("dark") ? 1
+                    : (HomeData.get(getContext()).isNight(System.currentTimeMillis()) ? 1 : 0);
+            title.setColor(look.ink(0xFFFFFFFF, currentNight));
+            subtitle.setColor(look.ink(0x99FFFFFF, currentNight));
+            version.setColor(look.ink(0x66FFFFFF, currentNight));
+            header.setColor(look.ink(0x73FFFFFF, currentNight));
+            cellLabel.setColor(look.ink(0xD9FFFFFF, currentNight));
+            cellValue.setColor(look.ink(0xD9FFFFFF, currentNight));
+            rowSub.setColor(look.ink(0x8CFFFFFF, currentNight));
+            notice.setColor(look.ink(0xB3FFFFFF, currentNight));
+            warn.setColor(look.warnInk(currentNight));
             long now = System.nanoTime();
             float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (now - lastNanos) / 1e9f);
             lastNanos = now;
@@ -418,11 +431,12 @@ public class SettingsActivity extends Activity {
                 lastSky = up;
                 scene.advance(seconds);
             }
-            scene.drawBackground(c);
+            tmp.set(0, 0, w, h);
+            if (!look.background(c, tmp, currentNight)) scene.drawBackground(c);
 
             // On the left: big symbol, title, description.
             float cx = 500 * k;
-            Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, 0xEBFFFFFF);
+            Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, look.ink(0xEBFFFFFF, currentNight));
             c.drawText("Free My TV", cx, 612 * k, title);
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
@@ -530,12 +544,7 @@ public class SettingsActivity extends Activity {
                 float cx = rowRect.centerX(), cy = rowRect.centerY();
                 tmp.set(cx - rowRect.width() * s / 2, cy - rowRect.height() * s / 2, cx + rowRect.width() * s / 2, cy + rowRect.height() * s / 2);
                 float r = 18 * k * s;
-                tmp.offset(0, 10 * k * f);
-                shadow.setColor(Ui.alpha(0xFF000000, 0.4f * f));
-                c.drawRoundRect(tmp, r, r, shadow);
-                tmp.offset(0, -10 * k * f);
-                white.setAlpha(Math.round(255 * f));
-                c.drawRoundRect(tmp, r, r, white);
+                look.rowFocus(c, tmp, r, f, currentNight);
                 rowRect.set(tmp);
             }
             return f;
@@ -544,10 +553,10 @@ public class SettingsActivity extends Activity {
         private float drawComparison(Canvas c, float y) {
             float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k;
             c.drawText(Ui.tr("COMPARISON"), x, y, header);
-            cellValue.setColor(0x73FFFFFF);
+            cellValue.setColor(look.inkAlpha(0x73FFFFFF, currentNight));
             c.drawText(Ui.tr("Original"), colA, y, cellValue);
             c.drawText("Free My TV", colB, y, cellValue);
-            cellValue.setColor(0xD9FFFFFF);
+            cellValue.setColor(look.ink(0xD9FFFFFF, currentNight));
             JSONObject metrics = state.optJSONObject("metrics");
             JSONObject a = metrics == null ? null : metrics.optJSONObject(HomeMode.ORIGINAL);
             JSONObject b = metrics == null ? null : metrics.optJSONObject(HomeMode.FREE);
@@ -579,7 +588,7 @@ public class SettingsActivity extends Activity {
 
         /** Home screen choice: Free My TV or the original, with a check on the one in use. */
         private void drawChoice(Canvas c) {
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(Ui.tr("Home Screen"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             String[][] options = {{"Free My TV", Ui.tr("No ads, with the new screensaver")},
                     {Ui.tr("Original"), Ui.tr("The TV's factory home screen")}};
@@ -602,11 +611,17 @@ public class SettingsActivity extends Activity {
                     (LIST_TOP + 20 + 2 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
         }
 
-        private static int blend(int a, int b, float f) {
+        private int blend(int a, int b, float f) {
+            a = look.inkAlpha(a, currentNight);
+            b = look.inkFocusedAlpha(b, currentNight);
             int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
             int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
             return (Math.round(aa + (ba - aa) * f) << 24) | (Math.round(ar + (br - ar) * f) << 16)
                     | (Math.round(ag + (bg - ag) * f) << 8) | Math.round(ab + (bb - ab) * f);
+        }
+
+        private int headingColor() {
+            return look.ink(0xFFFFFFFF, currentNight);
         }
 
         private static String metric(JSONObject m, String key) {
@@ -826,7 +841,7 @@ public class SettingsActivity extends Activity {
         private void drawTrakt(Canvas c) {
             Trakt t = Trakt.get(getContext());
             float x = LIST_X * k + 30 * k;
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(Ui.tr("Trakt"), x, (LIST_TOP - 24) * k, heading);
             float y0 = (LIST_TOP + 20) * k;
             rowRect.set(LIST_X * k, y0, LIST_R * k, y0 + LIST_ROW_H * k);
@@ -840,7 +855,7 @@ public class SettingsActivity extends Activity {
             int state = t.loginState();
             if (state == Trakt.WAITING) {
                 y = drawWrapped(c, Ui.trf("On your phone or computer, go to {url} and enter this code:", "url", t.loginUrl()), x, y, 30 * k);
-                Paint code = Ui.text(Ui.displaySemibold, 92 * k, 0xFFFFFFFF);
+                Paint code = Ui.text(Ui.displaySemibold, 92 * k, headingColor());
                 code.setLetterSpacing(0.14f);
                 c.drawText(t.loginCode(), x, y + 70 * k, code);
                 long left = t.loginSecondsLeft();
@@ -889,7 +904,7 @@ public class SettingsActivity extends Activity {
         }
 
         private void drawTmdb(Canvas c) {
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(Ui.tr("TMDB"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             String[] labels = tmdbLabels(), values = tmdbValues();
             for (int i = 0; i < labels.length; i++) {
@@ -968,7 +983,7 @@ public class SettingsActivity extends Activity {
         }
 
         private void drawLanguages(Canvas c) {
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(Ui.tr("Languages"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
@@ -1084,7 +1099,7 @@ public class SettingsActivity extends Activity {
         }
 
         private void drawStremio(Canvas c) {
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(Ui.tr("Stremio"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
@@ -1111,8 +1126,8 @@ public class SettingsActivity extends Activity {
         // MARK: - Home Settings and Remote Buttons
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
-        /** Home Settings: language, temperature, theme, sounds, weather, city, quotes, then one row per coin. */
-        private static final int CITY_ROW = 5, WATCH_NEXT_ROW = 6, COIN_ROWS = 8;
+        /** Home Settings: color scheme and visual theme are independent controls. */
+        private static final int LOOK_ROW = 3, CITY_ROW = 6, WATCH_NEXT_ROW = 7, COIN_ROWS = 9;
 
         private boolean dollar() {
             return "BRL".equalsIgnoreCase(Config.CURRENCY.trim());
@@ -1123,6 +1138,7 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("Language"));
             l.add(Ui.tr("Temperature"));
             l.add(Ui.tr("Theme"));
+            l.add(Ui.tr("Look"));
             l.add(Ui.tr("Navigation sounds"));
             l.add(Ui.tr("Weather widget"));
             l.add(Ui.tr("City"));
@@ -1144,13 +1160,14 @@ public class SettingsActivity extends Activity {
             v[1] = unit.equals("C") ? "°C" : unit.equals("F") ? "°F" : Ui.tr("unit|Automatic");
             String theme = Prefs.theme();
             v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
-            v[3] = onOff(Prefs.sounds());
-            v[4] = onOff(Prefs.weather());
+            v[LOOK_ROW] = Themes.current().label();
+            v[4] = onOff(Prefs.sounds());
+            v[5] = onOff(Prefs.weather());
             v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus
                     : Prefs.autoLocation() ? Ui.tr("Automatic") + (Prefs.city().isEmpty() ? "" : " · " + Prefs.city())
                     : Prefs.city().isEmpty() ? "—" : Prefs.city();
             v[WATCH_NEXT_ROW] = onOff(Prefs.watchNext() && WatchNext.permitted(getContext()));
-            v[7] = onOff(Prefs.quotes());
+            v[8] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
             return v;
@@ -1253,8 +1270,14 @@ public class SettingsActivity extends Activity {
                     Prefs.setTheme(THEMES[(at + dir + THEMES.length) % THEMES.length]);
                     break;
                 }
-                case 3: Prefs.setSounds(!Prefs.sounds()); break;
-                case 4: Prefs.setWeather(!Prefs.weather()); break;
+                case LOOK_ROW: {
+                    String[] themes = Themes.ids();
+                    int at = java.util.Arrays.asList(themes).indexOf(Prefs.look());
+                    Prefs.setLook(themes[(at + dir + themes.length) % themes.length]);
+                    break;
+                }
+                case 4: Prefs.setSounds(!Prefs.sounds()); break;
+                case 5: Prefs.setWeather(!Prefs.weather()); break;
                 case CITY_ROW: return;
                 case WATCH_NEXT_ROW:
                     Prefs.setWatchNext(!Prefs.watchNext());
@@ -1262,7 +1285,7 @@ public class SettingsActivity extends Activity {
                         activity.requestPermissions(new String[] {WatchNext.PERMISSION}, WatchNext.ASK);
                     }
                     break;
-                case 7: Prefs.setQuotes(!Prefs.quotes()); break;
+                case 8: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
                     Prefs.setCoin(focus - COIN_ROWS, !Prefs.coin(focus - COIN_ROWS));
@@ -1417,7 +1440,7 @@ public class SettingsActivity extends Activity {
         }
 
         private void drawShelfEditor(Canvas c) {
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(editingRows ? Ui.tr("Catalogs") : editingTop ? Ui.tr("Top Buttons") : Ui.tr("Shelf"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
@@ -1474,7 +1497,7 @@ public class SettingsActivity extends Activity {
 
         /** A long list (the apps): nine rows at a time, the one in use checked. */
         private void drawPicker(Canvas c) {
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             String title = pickFor == PICK_CITY ? Ui.tr("City") : pickFor == PICK_REGION ? Ui.tr("Region")
                     : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabels()[pickFor - 1];
             c.drawText(title, LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
@@ -1501,7 +1524,7 @@ public class SettingsActivity extends Activity {
             boolean keys = screen == REMOTE_KEYS;
             String[] labels = keys ? keyLabels() : settingLabels();
             String[] values = keys ? keyValues() : settingValues();
-            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(keys ? Ui.tr("Remote Buttons") : Ui.tr("Home Settings"),
                     LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             for (int i = 0; i < labels.length; i++) {

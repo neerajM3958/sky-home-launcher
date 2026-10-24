@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.BitmapShader;
-import android.graphics.BlurMaskFilter;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
@@ -83,6 +82,7 @@ public class EpisodesActivity extends Activity {
         private final Trakt trakt;
         private final Catalogs catalogs;
         private final Scene scene = new Scene();
+        private final Look look = Themes.create(Prefs.look(), scene);
         private final Spoken spoken;
         private final int traktId;
         private final String title, imdb;
@@ -115,12 +115,13 @@ public class EpisodesActivity extends Activity {
 
         private int w, h, visible = 8;
         private float k = 1;
+        private float currentNight;
         private long startedAt, lastNanos, lastSky;
         private boolean okDown, backDown;
 
         private final RectF tmp = new RectF(), box = new RectF();
         private final Rect bounds = new Rect();
-        private Paint pTitle, pLabel, pValue, pCount, pCountRight, pNum, pRowTitle, pDate, pBadge, pHint, pCenter, white, shadow, fill, spinner;
+        private Paint pTitle, pLabel, pValue, pCount, pCountRight, pNum, pRowTitle, pDate, pBadge, pHint, pCenter, fill, spinner;
         private TextPaint wrapPaint;
         private StaticLayout titleLayout;
         private final Map<String, StaticLayout> wraps = new HashMap<>();
@@ -627,6 +628,7 @@ public class EpisodesActivity extends Activity {
             k = w / 1920f;
             wraps.clear();
             scene.setSize(w, h);
+            look.setSize(w, h, k);
             visible = Math.max(3, (int) ((h / k - LIST_TOP - 24) / PITCH));
             pTitle = Ui.text(Ui.displaySemibold, 44 * k, 0xFFFFFFFF);
             pLabel = Ui.text(Ui.semibold, 18 * k, 0x99FFFFFF);
@@ -650,11 +652,7 @@ public class EpisodesActivity extends Activity {
             spinner.setStrokeCap(Paint.Cap.ROUND);
             spinner.setStrokeWidth(3.5f * k);
             spinner.setColor(0xCCFFFFFF);
-            white = new Paint(Paint.ANTI_ALIAS_FLAG);
-            white.setColor(0xFFF5F5F7);
             fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-            shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-            shadow.setMaskFilter(new BlurMaskFilter(22 * k, BlurMaskFilter.Blur.NORMAL));
             TextPaint titlePaint = new TextPaint(pTitle);
             titleLayout = StaticLayout.Builder.obtain(title, 0, title.length(), titlePaint, Math.round(470 * k)).setMaxLines(3)
                     .setEllipsize(TextUtils.TruncateAt.END).build();
@@ -662,7 +660,9 @@ public class EpisodesActivity extends Activity {
             ensureVisible();
         }
 
-        private static int blend(int a, int b, float f) {
+        private int blend(int a, int b, float f) {
+            a = look.inkAlpha(a, currentNight);
+            b = look.inkFocusedAlpha(b, currentNight);
             int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
             int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
             return (Math.round(aa + (ba - aa) * f) << 24) | (Math.round(ar + (br - ar) * f) << 16)
@@ -674,12 +674,7 @@ public class EpisodesActivity extends Activity {
             float s = 1 + 0.02f * f, cx = r.centerX(), cy = r.centerY();
             tmp.set(cx - r.width() * s / 2, cy - r.height() * s / 2, cx + r.width() * s / 2, cy + r.height() * s / 2);
             float radius = 18 * k * s;
-            tmp.offset(0, 10 * k * f);
-            shadow.setColor(Ui.alpha(0xFF000000, 0.4f * f));
-            c.drawRoundRect(tmp, radius, radius, shadow);
-            tmp.offset(0, -10 * k * f);
-            white.setAlpha(Math.round(255 * f));
-            c.drawRoundRect(tmp, radius, radius, white);
+            look.rowFocus(c, tmp, radius, f, currentNight);
         }
 
         private StaticLayout wrapped(String text, int width) {
@@ -704,6 +699,19 @@ public class EpisodesActivity extends Activity {
 
         @Override protected void onDraw(Canvas c) {
             if (w == 0) return;
+            currentNight = Prefs.theme().equals("light") ? 0 : Prefs.theme().equals("dark") ? 1
+                    : (HomeData.get(getContext()).isNight(System.currentTimeMillis()) ? 1 : 0);
+            pTitle.setColor(look.ink(0xFFFFFFFF, currentNight));
+            pLabel.setColor(look.ink(0x99FFFFFF, currentNight));
+            pValue.setColor(look.ink(0xF2FFFFFF, currentNight));
+            pCount.setColor(look.ink(0xB3FFFFFF, currentNight));
+            pCountRight.setColor(look.ink(0xB3FFFFFF, currentNight));
+            pNum.setColor(look.ink(0xF2FFFFFF, currentNight));
+            pRowTitle.setColor(look.ink(0xF2FFFFFF, currentNight));
+            pDate.setColor(look.ink(0xB3FFFFFF, currentNight));
+            pHint.setColor(look.ink(0x8CFFFFFF, currentNight));
+            pCenter.setColor(look.ink(0xCCFFFFFF, currentNight));
+            wrapPaint.setColor(look.ink(0x99FFFFFF, currentNight));
             long now = System.nanoTime();
             float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (now - lastNanos) / 1e9f);
             lastNanos = now;
@@ -714,7 +722,8 @@ public class EpisodesActivity extends Activity {
                 lastSky = up;
                 scene.advance((up - startedAt) / 1000f);
             }
-            scene.drawBackground(c);
+            tmp.set(0, 0, w, h);
+            if (!look.background(c, tmp, currentNight)) scene.drawBackground(c);
             drawLeft(c);
             drawBar(c);
             drawCount(c);

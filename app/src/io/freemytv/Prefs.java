@@ -97,11 +97,19 @@ final class Prefs {
 
     /** "auto" (dark from sunset to sunrise), "light" or "dark". */
     static String theme() {
-        String v = sp().getString("theme", "auto");
+        String v = sp().getString("theme", Config.THEME);
         return v.equals("light") || v.equals("dark") ? v : "auto";
     }
 
     static void setTheme(String v) { put("theme", v); }
+
+    /** The visual theme is independent of the light/dark color scheme. */
+    static String look() {
+        String v = sp().getString("look", Config.LOOK);
+        return Themes.has(v) ? v : Themes.GLASS;
+    }
+
+    static void setLook(String v) { put("look", Themes.has(v) ? v : Themes.GLASS); }
 
     // MARK: - City
 
