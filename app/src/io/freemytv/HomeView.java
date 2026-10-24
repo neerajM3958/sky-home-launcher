@@ -251,9 +251,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int browseTextGen = -1;
     private TextPaint lBrowseTitle, lBrowseText;
     private Paint lBrowseFacts;
-    private LinearGradient browseScrim;
-    private float browseScrimW;
-    private final RectF panel = new RectF(), browseCell = new RectF();
+    private final RectF stage = new RectF(), browseCell = new RectF();
     private final RectF cardRect = new RectF(), barRect = new RectF();
     private int drawerIndex;
 
@@ -2315,11 +2313,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.restore();
     }
 
-    /** The focused title in a card: its backdrop (cross-fading from the last one), then title, facts and description over a scrim. */
+    /** The video window on the left of the top card (16:9): the backdrop shows in it until the trailer plays. */
+    private void browseStage(RectF out) {
+        float left = MARGIN * k, height = 440 * k;
+        out.set(left, 90 * k, left + height * 16 / 9, 90 * k + height);
+    }
+
+    /** The focused title: its backdrop in the video window (cross-fading from the last one), the description beside it. */
     private void drawBrowseDetails(Canvas c) {
-        float left = MARGIN * k;
-        panel.set(left, 40 * k, w - left, 580 * k);
-        float r = 30 * k;
+        browseStage(stage);
+        float r = 12 * k;
         if (browseInfo != null) {
             Bitmap want = details.backdrop(browseInfo);
             if (want != null && want != browseBack) {
@@ -2332,30 +2335,30 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float swap = Ui.clamp(browseSwap.value);
         if (swap > 0.999f) browsePrev = null;
+        tmp.set(stage);
+        tmp.offset(0, 10 * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f)));
+        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
         if (browseBack == null && browsePrev == null) {
             fill.setShader(null);
             fill.setColor(look.color(Look.PLACEHOLDER, dark()));
-            c.drawRoundRect(panel, r, r, fill);
+            c.drawRoundRect(stage, r, r, fill);
         } else {
-            if (browsePrev != null) roundImage(c, browsePrev, panel, r);
+            if (browsePrev != null) roundImage(c, browsePrev, stage, r);
             if (browseBack != null) {
                 int alpha = browsePrev == null ? 255 : Math.round(255 * swap);
                 bitmapPaint.setAlpha(alpha);
                 imageFill.setAlpha(alpha);
-                roundImage(c, browseBack, panel, r);
+                roundImage(c, browseBack, stage, r);
                 bitmapPaint.setAlpha(255);
                 imageFill.setAlpha(255);
             }
         }
-        if (browseScrim == null || browseScrimW != panel.width()) {
-            browseScrim = new LinearGradient(panel.left, 0, panel.left + panel.width() * 0.8f, 0, 0xE6000000, 0x00000000, Shader.TileMode.CLAMP);
-            browseScrimW = panel.width();
-        }
-        fill.setShader(browseScrim);
-        c.drawRoundRect(panel, r, r, fill);
-        fill.setShader(null);
         if (browseTextGen != Ui.generation) buildBrowseText();
-        float x = panel.left + 56 * k, y = panel.top + 56 * k;
+        lBrowseTitle.setColor(look.color(Look.TITLE, dark()));
+        lBrowseFacts.setColor(look.color(Look.META, dark()));
+        lBrowseText.setColor(look.color(Look.META, dark()));
+        float x = stage.right + 56 * k, y = stage.top;
         if (browseTitleText != null) {
             c.save();
             c.translate(x, y);
@@ -2377,7 +2380,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (browseInfo != null && !browseInfo.logo.isEmpty()) {
             int px = Math.round(64 * k);
             Bitmap badge = ServiceBadge.get(getContext(), browseInfo.logo, px, badgesReady);
-            if (badge != null) c.drawBitmap(badge, panel.right - 28 * k - px, panel.top + 28 * k, null);
+            if (badge != null) c.drawBitmap(badge, w - MARGIN * k - px, stage.top, null);
         }
         drawTrailerHint(c);
     }
@@ -2389,7 +2392,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         browseFacts = "";
         Catalogs.Item it = browseShown;
         if (it == null) return;
-        int width = Math.max(1, Math.round(Math.min(panel.width() * 0.55f, 1000 * k)));
+        int width = Math.max(1, Math.round(w - MARGIN * k - (stage.right + 56 * k) - 90 * k));
         browseTitleText = StaticLayout.Builder.obtain(it.title, 0, it.title.length(), lBrowseTitle, width)
                 .setMaxLines(2)
                 .setEllipsize(TextUtils.TruncateAt.END)
@@ -2409,7 +2412,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         browseFacts = String.join("  ·  ", facts);
         if (!overview.isEmpty()) {
             browseOverviewText = StaticLayout.Builder.obtain(overview, 0, overview.length(), lBrowseText, width)
-                    .setMaxLines(4)
+                    .setMaxLines(6)
                     .setEllipsize(TextUtils.TruncateAt.END)
                     .setLineSpacing(0, 1.05f)
                     .setIncludePad(false)
@@ -2457,11 +2460,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         if (trailer == null) trailer = new TrailerPlayer(getContext(), trailerListener);
-        View v = trailer.play(trailerId, 30 * k);
-        if (v.getParent() != this) addView(v, indexOfChild(browseLayer) + 1);
-        float left = MARGIN * k;
-        v.measure(MeasureSpec.makeMeasureSpec(Math.round(w - 2 * left), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(Math.round(540 * k), MeasureSpec.EXACTLY));
-        v.layout(Math.round(left), Math.round(40 * k), Math.round(w - left), Math.round(580 * k));
+        browseStage(stage);
+        trailer.play(trailerId, Math.round(stage.left), Math.round(stage.top), Math.round(stage.width()), Math.round(stage.height()));
         trailerOn = true;
         browseDirty = true;
     }
@@ -2490,15 +2490,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         showToast(Ui.tr("Couldn't open YouTube."));
     }
 
-    /** The small "Hold OK for the trailer" pill at the card's foot, while there is a trailer and it isn't playing. */
+    /** The small "Hold OK for the trailer" pill at the video window's foot, while there is a trailer and it isn't playing. */
     private void drawTrailerHint(Canvas c) {
         if (zone != Z_BROWSE || trailerOn || browseInfo == null || browseInfo.trailer.isEmpty()) return;
         String text = Ui.tr("Hold OK for the trailer");
         float pad = 24 * k, arrow = 18 * k, gap = 14 * k, hh = 54 * k;
-        float x = panel.left + 56 * k, y = panel.bottom - 30 * k - hh;
+        float x = stage.left + 24 * k, y = stage.bottom - 24 * k - hh;
         pill.set(x, y, x + pad + arrow + gap + lBrowseFacts.measureText(text) + pad, y + hh);
         fill.setShader(null);
-        fill.setColor(0x80000000);
+        fill.setColor(0x99000000);
         c.drawRoundRect(pill, hh / 2, hh / 2, fill);
         playArrow.reset();
         playArrow.moveTo(pill.left + pad, y + hh / 2 - arrow / 2);
@@ -2507,6 +2507,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         playArrow.close();
         fill.setColor(0xFFFFFFFF);
         c.drawPath(playArrow, fill);
+        lBrowseFacts.setColor(0xFFFFFFFF);
         c.drawText(text, pill.left + pad + arrow + gap, y + hh / 2 + Ui.halfCap(lBrowseFacts), lBrowseFacts);
     }
 

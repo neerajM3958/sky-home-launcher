@@ -2,11 +2,12 @@ package io.freemytv;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.graphics.Outline;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Gravity;
 import android.view.View;
-import android.view.ViewOutlineProvider;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -29,6 +30,27 @@ final class TrailerPlayer {
     private static final String ORIGIN = "https://freemytv.io";
     private static final long START_MS = 12_000;
 
+    /**
+     * Runs inside YouTube's embed page: reports what the <video> does (1 playing, 2 paused, 0 ended, 3 waiting) and an error
+     * screen, hides YouTube's own title bar, and says AV1 isn't supported so the player picks VP9 or H.264: some TVs' AV1
+     * decoders show black while the sound plays.
+     */
+    private static final String PAGE_SCRIPT = "(function(){if(window.__fmt)return;window.__fmt=1;"
+            + "try{var m=window.MediaSource;if(m&&m.isTypeSupported){var o=m.isTypeSupported.bind(m);"
+            + "m.isTypeSupported=function(t){return /av01/i.test(t)?false:o(t);};}"
+            + "var mc=navigator.mediaCapabilities;if(mc&&mc.decodingInfo){var d=mc.decodingInfo.bind(mc);"
+            + "mc.decodingInfo=function(c){var v=(c&&c.video&&c.video.contentType)||'';"
+            + "if(/av01/i.test(v))return Promise.resolve({supported:false,smooth:false,powerEfficient:false});return d(c);};}}catch(e){}"
+            + "var st=document.createElement('style');st.textContent='.html5-video-player>*:not(.html5-video-container){display:none!important}body{background:#000!important}';"
+            + "try{(document.head||document.documentElement).appendChild(st);}catch(e){document.addEventListener('DOMContentLoaded',function(){document.head.appendChild(st);});}"
+            + "function hook(v){if(v.__h)return;v.__h=1;"
+            + "v.addEventListener('playing',function(){FMT.state(1)});v.addEventListener('pause',function(){FMT.state(2)});"
+            + "v.addEventListener('ended',function(){FMT.state(0)});v.addEventListener('waiting',function(){FMT.state(3)});}"
+            + "setInterval(function(){var v=document.querySelector('video');if(v){hook(v);"
+            + "if(!window.__on&&!v.paused&&v.currentTime>0.2){window.__on=1;FMT.state(1);}"
+            + "}"
+            + "if(document.querySelector('.ytp-error')&&!window.__err){window.__err=1;FMT.error(150);}},500);})();";
+
     /** A WebView is on the TV (some boxes ship without one). */
     static boolean available() {
         try {
@@ -42,8 +64,8 @@ final class TrailerPlayer {
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private WebView web;
+    private android.app.Dialog dialog;
     private boolean playing, paused, open;
-    private float radius;
     private final Runnable giveUp;
 
     TrailerPlayer(Context c, Listener l) {
@@ -57,19 +79,18 @@ final class TrailerPlayer {
         };
     }
 
-    View view() {
-        return web;
-    }
-
     /** True from play() until stop(): the player is loading, playing or paused. */
     boolean active() {
         return open;
     }
 
-    /** Starts the trailer. The view is made on first use and must be laid out over the card by the caller (`radius`: its corners). */
+    /**
+     * Starts the trailer in a window of its own over the card's video area (x, y, width, height in pixels): the TV decodes
+     * video onto a plane under the app's window, which the home screen's opaque layers would cover; a window of its own
+     * with nothing but the WebView in it leaves that plane showing. The window can't take focus: keys still reach the home screen.
+     */
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
-    View play(String youtubeId, float cornerRadius) {
-        radius = cornerRadius;
+    void play(String youtubeId, int x, int y, int width, int height) {
         stopPage();
         if (web == null) {
             web = new WebView(context);
@@ -81,37 +102,54 @@ final class TrailerPlayer {
             s.setJavaScriptEnabled(true);
             s.setDomStorageEnabled(true);
             s.setMediaPlaybackRequiresUserGesture(false);
-            web.setWebViewClient(new WebViewClient());
-            web.setWebChromeClient(new WebChromeClient());
-            web.addJavascriptInterface(new Bridge(), "FMT");
-            web.setOutlineProvider(new ViewOutlineProvider() {
-                @Override public void getOutline(View v, Outline outline) {
-                    outline.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radius);
+            web.setWebViewClient(new WebViewClient() {
+                @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                    if (url != null && url.startsWith("https://www.youtube.com/embed/")) view.evaluateJavascript(PAGE_SCRIPT, null);
+                }
+
+                @Override public void onPageFinished(WebView view, String url) {
+                    if (url != null && url.startsWith("https://www.youtube.com/embed/")) view.evaluateJavascript(PAGE_SCRIPT, null);
                 }
             });
-            web.setClipToOutline(true);
+            web.setWebChromeClient(new WebChromeClient());
+            web.addJavascriptInterface(new Bridge(), "FMT");
         }
+        if (dialog == null) {
+            dialog = new android.app.Dialog(context, android.R.style.Theme_Translucent_NoTitleBar);
+            dialog.setContentView(web, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            Window w = dialog.getWindow();
+            int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+            w.setFlags(flags, flags);
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+            w.setDimAmount(0);
+            w.setGravity(Gravity.TOP | Gravity.START);
+        }
+        WindowManager.LayoutParams lp = dialog.getWindow().getAttributes();
+        lp.x = x;
+        lp.y = y;
+        lp.width = width;
+        lp.height = height;
+        lp.alpha = 0;       // invisible until the video really plays
+        dialog.getWindow().setAttributes(lp);
+        if (!dialog.isShowing()) dialog.show();
         open = true;
         playing = paused = false;
-        web.setAlpha(0);
-        String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                + "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}</style></head><body><div id='p'></div><script>"
-                + "var player;var t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t);"
-                + "function onYouTubeIframeAPIReady(){player=new YT.Player('p',{width:'100%',height:'100%',videoId:'" + youtubeId + "',"
-                + "playerVars:{autoplay:1,controls:0,disablekb:1,fs:0,modestbranding:1,playsinline:1,rel:0,iv_load_policy:3,origin:'" + ORIGIN + "'},"
-                + "events:{onReady:function(e){e.target.playVideo();},onStateChange:function(e){FMT.state(e.data);},onError:function(e){FMT.error(e.data);}}});}"
-                + "</script></body></html>";
-        web.loadDataWithBaseURL(ORIGIN + "/", html, "text/html", "utf-8", null);
+        // YouTube's embed page itself (not inside a page of ours): the page's <video> can then be watched and controlled.
+        java.util.Map<String, String> headers = new java.util.HashMap<>();
+        headers.put("Referer", ORIGIN + "/");
+        web.loadUrl("https://www.youtube.com/embed/" + youtubeId
+                + "?autoplay=1&controls=0&disablekb=1&fs=0&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3"
+                + "&origin=" + ORIGIN + "&widget_referrer=" + ORIGIN, headers);
         main.removeCallbacks(giveUp);
         main.postDelayed(giveUp, START_MS);
-        return web;
     }
 
     /** OK or the remote's Play/Pause: pause, or play again. */
     void togglePause() {
         if (web == null || !open || !playing) return;
         paused = !paused;
-        web.evaluateJavascript(paused ? "player.pauseVideo()" : "player.playVideo()", null);
+        web.evaluateJavascript("var v=document.querySelector('video');if(v){v." + (paused ? "pause" : "play") + "();}", null);
     }
 
     void stop() {
@@ -122,17 +160,15 @@ final class TrailerPlayer {
 
     private void stopPage() {
         playing = paused = false;
-        if (web != null) {
-            web.setAlpha(0);
-            web.loadUrl("about:blank");
-        }
+        if (web != null) web.loadUrl("about:blank");
+        if (dialog != null && dialog.isShowing()) dialog.dismiss();
     }
 
     /** Gives the WebView's memory back (the home screen leaves the screen). */
     void release() {
         stop();
+        dialog = null;
         if (web != null) {
-            if (web.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) web.getParent()).removeView(web);
             web.destroy();
             web = null;
         }
@@ -148,7 +184,11 @@ final class TrailerPlayer {
                     if (!playing) {
                         playing = true;
                         main.removeCallbacks(giveUp);
-                        web.setAlpha(1);
+                        if (dialog != null) {
+                            WindowManager.LayoutParams lp = dialog.getWindow().getAttributes();
+                            lp.alpha = 1;
+                            dialog.getWindow().setAttributes(lp);
+                        }
                         listener.onPlaying();
                     }
                 } else if (s == 0) {           // ended
