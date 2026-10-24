@@ -32,12 +32,14 @@ final class GlassLook extends Look {
         {L_INK, 0xF2FFFFFF},        // ITEM_ON
         {0xFF8E8E93, 0x6BFFFFFF},   // ITEM_OFF
         {L_INK, 0xEBFFFFFF},        // BUTTON_ICON
+        {L_DIM, 0xFF98989D},        // WEATHER
     };
 
     private final Scene scene;
     private final Shadows shadows = new Shadows();
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint rowShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF tmp = new RectF();
     private float k = 1;
 
@@ -48,6 +50,7 @@ final class GlassLook extends Look {
     @Override void setSize(int width, int height, float k) {
         this.k = k;
         shadow.setMaskFilter(new BlurMaskFilter(SHADOW_BLUR * k, BlurMaskFilter.Blur.NORMAL));
+        rowShadow.setMaskFilter(new BlurMaskFilter(22 * k, BlurMaskFilter.Blur.NORMAL));
     }
 
     @Override int color(int role, float night) {
@@ -69,6 +72,29 @@ final class GlassLook extends Look {
         // White glass by day; smoked glass at night.
         scene.liquid(c, r, radius, blend(0xFFFFFFFF, SMOKE, night), mix(0.42f, 0.12f, night), mix(0.03f, 0.08f, night),
                 mix(30, 34, night) * k, mix(22, 28, night) * k, mix(0.65f, 0.95f, night), 1);
+    }
+
+    @Override int warnInk(float night) {
+        return 0xFFFFC266;
+    }
+
+    @Override int focusFill(float night) {
+        return WHITE;
+    }
+
+    @Override void rowFocus(Canvas c, RectF r, float radius, float f, float night) {
+        tmp.set(r);
+        tmp.offset(0, 10 * k * f);
+        rowShadow.setColor(Ui.alpha(0xFF000000, 0.4f * f));
+        c.drawRoundRect(tmp, radius, radius, rowShadow);
+        fill.setShader(null);
+        fill.setColor(WHITE);
+        fill.setAlpha(Math.round(255 * f));
+        c.drawRoundRect(r, radius, radius, fill);
+    }
+
+    @Override boolean glassClock() {
+        return true;
     }
 
     @Override int tabInk(float focus, float night) {

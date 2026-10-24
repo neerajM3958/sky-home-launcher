@@ -7,7 +7,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -136,7 +135,7 @@ public class SettingsActivity extends Activity {
 
         private final SettingsActivity activity;
         private final Scene scene = new Scene();
-        private final MaterialLook material = new MaterialLook();
+        private final Look look = Themes.create(Prefs.look(), scene);
         private final Handler handler = new Handler(Looper.getMainLooper());
         private final Spring[] pop = new Spring[12];
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
@@ -166,7 +165,7 @@ public class SettingsActivity extends Activity {
         private int w, h;
         private float k = 1;
         private float currentNight;
-        private Paint title, subtitle, version, rowLabel, rowValue, rowSub, header, cellLabel, cellValue, warn, spinner, white, shadow;
+        private Paint title, subtitle, version, rowLabel, rowValue, rowSub, header, cellLabel, cellValue, warn, spinner;
         private TextPaint notice;
 
         private final Runnable poll = new Runnable() {
@@ -345,7 +344,7 @@ public class SettingsActivity extends Activity {
             k = w / 1920f;
             wraps.clear();
             scene.setSize(w, h);
-            material.setSize(w, h);
+            look.setSize(w, h, k);
             title = Ui.text(Ui.displaySemibold, 50 * k, 0xFFFFFFFF);
             title.setTextAlign(Paint.Align.CENTER);
             subtitle = Ui.text(Ui.regular, 26 * k, 0x99FFFFFF);
@@ -367,10 +366,6 @@ public class SettingsActivity extends Activity {
             spinner.setStyle(Paint.Style.STROKE);
             spinner.setStrokeCap(Paint.Cap.ROUND);
             spinner.setStrokeWidth(3.5f * k);
-            white = new Paint(Paint.ANTI_ALIAS_FLAG);
-            white.setColor(0xFFF5F5F7);
-            shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-            shadow.setMaskFilter(new BlurMaskFilter(22 * k, BlurMaskFilter.Blur.NORMAL));
         }
 
         private boolean busy() {
@@ -406,29 +401,15 @@ public class SettingsActivity extends Activity {
             if (w == 0) return;
             currentNight = Prefs.theme().equals("light") ? 0 : Prefs.theme().equals("dark") ? 1
                     : (HomeData.get(getContext()).isNight(System.currentTimeMillis()) ? 1 : 0);
-            if (Themes.expressive()) {
-                title.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
-                subtitle.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
-                version.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
-                header.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
-                cellLabel.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
-                cellValue.setColor(material.palette(MaterialLook.ON_SURFACE, currentNight));
-                rowSub.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
-                notice.setColor(material.palette(MaterialLook.ON_VARIANT, currentNight));
-                warn.setColor(material.palette(MaterialLook.TERTIARY, currentNight));
-                white.setColor(material.palette(MaterialLook.PRIMARY_CONTAINER, currentNight));
-            } else {
-                title.setColor(0xFFFFFFFF);
-                subtitle.setColor(0x99FFFFFF);
-                version.setColor(0x66FFFFFF);
-                header.setColor(0x73FFFFFF);
-                cellLabel.setColor(0xD9FFFFFF);
-                cellValue.setColor(0xD9FFFFFF);
-                rowSub.setColor(0x8CFFFFFF);
-                notice.setColor(0xB3FFFFFF);
-                warn.setColor(AMBER);
-                white.setColor(0xFFF5F5F7);
-            }
+            title.setColor(look.ink(0xFFFFFFFF, currentNight));
+            subtitle.setColor(look.ink(0x99FFFFFF, currentNight));
+            version.setColor(look.ink(0x66FFFFFF, currentNight));
+            header.setColor(look.ink(0x73FFFFFF, currentNight));
+            cellLabel.setColor(look.ink(0xD9FFFFFF, currentNight));
+            cellValue.setColor(look.ink(0xD9FFFFFF, currentNight));
+            rowSub.setColor(look.ink(0x8CFFFFFF, currentNight));
+            notice.setColor(look.ink(0xB3FFFFFF, currentNight));
+            warn.setColor(look.warnInk(currentNight));
             long now = System.nanoTime();
             float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (now - lastNanos) / 1e9f);
             lastNanos = now;
@@ -442,14 +423,12 @@ public class SettingsActivity extends Activity {
                 lastSky = up;
                 scene.advance(seconds);
             }
-            if (Themes.expressive()) {
-                tmp.set(0, 0, w, h);
-                material.background(c, tmp, currentNight);
-            } else scene.drawBackground(c);
+            tmp.set(0, 0, w, h);
+            if (!look.background(c, tmp, currentNight)) scene.drawBackground(c);
 
             // On the left: big symbol, title, description.
             float cx = 500 * k;
-            Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, 0xEBFFFFFF);
+            Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, look.ink(0xEBFFFFFF, currentNight));
             c.drawText("Free My TV", cx, 612 * k, title);
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
@@ -557,17 +536,7 @@ public class SettingsActivity extends Activity {
                 float cx = rowRect.centerX(), cy = rowRect.centerY();
                 tmp.set(cx - rowRect.width() * s / 2, cy - rowRect.height() * s / 2, cx + rowRect.width() * s / 2, cy + rowRect.height() * s / 2);
                 float r = 18 * k * s;
-                if (Themes.expressive()) {
-                    material.panel(c, tmp, r, currentNight, true);
-                    material.focused(c, tmp, r, f, currentNight);
-                } else {
-                    tmp.offset(0, 10 * k * f);
-                    shadow.setColor(Ui.alpha(0xFF000000, 0.4f * f));
-                    c.drawRoundRect(tmp, r, r, shadow);
-                    tmp.offset(0, -10 * k * f);
-                    white.setAlpha(Math.round(255 * f));
-                    c.drawRoundRect(tmp, r, r, white);
-                }
+                look.rowFocus(c, tmp, r, f, currentNight);
                 rowRect.set(tmp);
             }
             return f;
@@ -576,10 +545,10 @@ public class SettingsActivity extends Activity {
         private float drawComparison(Canvas c, float y) {
             float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k;
             c.drawText(Ui.tr("COMPARISON"), x, y, header);
-            cellValue.setColor(Themes.expressive() ? Ui.alpha(material.palette(MaterialLook.ON_VARIANT, currentNight), 0.45f) : 0x73FFFFFF);
+            cellValue.setColor(look.inkAlpha(0x73FFFFFF, currentNight));
             c.drawText(Ui.tr("Original"), colA, y, cellValue);
             c.drawText("Free My TV", colB, y, cellValue);
-            cellValue.setColor(Themes.expressive() ? material.palette(MaterialLook.ON_SURFACE, currentNight) : 0xD9FFFFFF);
+            cellValue.setColor(look.ink(0xD9FFFFFF, currentNight));
             JSONObject metrics = state.optJSONObject("metrics");
             JSONObject a = metrics == null ? null : metrics.optJSONObject(HomeMode.ORIGINAL);
             JSONObject b = metrics == null ? null : metrics.optJSONObject(HomeMode.FREE);
@@ -635,11 +604,8 @@ public class SettingsActivity extends Activity {
         }
 
         private int blend(int a, int b, float f) {
-            if (Themes.expressive() && (a & 0x00FFFFFF) == 0x00FFFFFF && (b & 0x00FFFFFF) == (INK & 0x00FFFFFF)) {
-                int role = (a >>> 24) < 0xC0 ? MaterialLook.ON_VARIANT : MaterialLook.ON_SURFACE;
-                a = (a & 0xFF000000) | (material.palette(role, currentNight) & 0x00FFFFFF);
-                b = (b & 0xFF000000) | (material.palette(MaterialLook.ON_PRIMARY_CONTAINER, currentNight) & 0x00FFFFFF);
-            }
+            a = look.inkAlpha(a, currentNight);
+            b = look.inkFocusedAlpha(b, currentNight);
             int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
             int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
             return (Math.round(aa + (ba - aa) * f) << 24) | (Math.round(ar + (br - ar) * f) << 16)
@@ -647,7 +613,7 @@ public class SettingsActivity extends Activity {
         }
 
         private int headingColor() {
-            return Themes.expressive() ? material.palette(MaterialLook.ON_SURFACE, currentNight) : 0xFFFFFFFF;
+            return look.ink(0xFFFFFFFF, currentNight);
         }
 
         private static String metric(JSONObject m, String key) {

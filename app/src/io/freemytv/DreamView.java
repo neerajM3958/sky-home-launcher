@@ -99,7 +99,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     }
 
     private final Scene scene = new Scene(false);
-    private final MaterialLook material = new MaterialLook();
+    private final Look look = Themes.create(Prefs.look(), scene);
     private final RectF materialBounds = new RectF();
     private final HomeData data;
     private final Recs recs;
@@ -226,7 +226,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         h = height;
         k = w / 1920f;
         scene.setSize(w, h);
-        material.setSize(w, h);
+        look.setSize(w, h, k);
         content.setPosition(0, 0, w, h);
         chrome.setPosition(0, 0, w, h);
         // Without photos (the clock over the aurora).
@@ -300,12 +300,13 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         decoding = true;
         final int gen = generation;
         final Recs.Pick chosen = pick;
+        final boolean centered = look.centeredClock();
         worker.execute(() -> {
             Bitmap[] images = null;
             float[] light = new float[2];
             try {
                 images = Backdrop.photo(file, PW, PH, light);
-                images[0] = Backdrop.gpu(withScrims(images[0], light[0], light[1]));
+                images[0] = Backdrop.gpu(withScrims(images[0], light[0], light[1], centered));
             } catch (Exception | OutOfMemoryError e) {
                 AppLog.w("screensaver: photo for “" + chosen.title + "”: " + e.getMessage());
             }
@@ -435,7 +436,10 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             else canvas.drawRect(0, 0, w, h, black);
         }
         if (current == null) return;
-        if (fallback && first >= 1) fallback = false;
+        if (fallback && first >= 1) {
+            fallback = false;
+            dirty = true;       // the middle clock is drawn without its card over a photo
+        }
 
         place(current, up, placeA);
         float e = incoming == null ? 0 : fadeIn(up - incoming.startedAt, FADE_MS);
@@ -445,11 +449,33 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             drawPhoto(canvas, incoming, placeB, e);
         }
 
-        if (chromeDirty) recordChrome();
-        chrome.setAlpha(first);
-        chrome.draw(canvas);
-        drawGlass(canvas, first, e);
+        if (look.centeredClock() && !fallback) {
+            drawCentered(canvas, up, first);
+        } else {
+            if (chromeDirty) recordChrome();
+            chrome.setAlpha(first);
+            chrome.draw(canvas);
+            drawGlass(canvas, first, e);
+        }
         drawCaptions(canvas, up);
+    }
+
+    /** The clock, date, weather and prices in the middle of the photo, drifting a little (as over the aurora). */
+    private void drawCentered(Canvas canvas, long up, float alpha) {
+        if (dirty) {
+            Canvas rc = content.beginRecording(w, h);
+            try {
+                drawContent(rc, true);
+            } finally {
+                content.endRecording();
+            }
+            dirty = false;
+        }
+        double phase = 2 * Math.PI * ((up - startedAt) / 1000f) / DRIFT_PERIOD_S;
+        content.setTranslationX((float) (40 * k * Math.sin(phase)));
+        content.setTranslationY((float) (26 * k * Math.sin(2 * phase + 0.7)));
+        content.setAlpha(alpha);
+        content.draw(canvas);
     }
 
     private static float fadeIn(long elapsed, long duration) {
@@ -462,7 +488,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
      * background): each frame draws only the photo (the TV's GPU feels every full-screen layer). With the slow zoom,
      * they move a little along with the photo, which makes no difference to the text.
      */
-    private static Bitmap withScrims(Bitmap photo, float lightCaption, float lightClock) {
+    private static Bitmap withScrims(Bitmap photo, float lightCaption, float lightClock, boolean centered) {
         int w = photo.getWidth(), h = photo.getHeight();
         Canvas c = new Canvas(photo);
         Paint p = new Paint(Paint.DITHER_FLAG);
@@ -482,6 +508,22 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         p.setShader(new LinearGradient(0, 0, 0, h * 0.3f, new int[] {black(0.3f), black(0.075f), 0},
                 new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h * 0.3f, p);
+        if (centered) {
+            // The clock in the middle: a soft dark patch behind it, and the corners darker all around.
+            float mx = w / 2f, my = h / 2f;
+            RadialGradient middle = new RadialGradient(mx, my, w * 0.34f,
+                    new int[] {black(0.36f), black(0.2f), black(0.06f), 0},
+                    new float[] {0, 0.45f, 0.78f, 1}, Shader.TileMode.CLAMP);
+            Matrix mm = new Matrix();
+            mm.setScale(1, 0.6f, mx, my);
+            middle.setLocalMatrix(mm);
+            p.setShader(middle);
+            c.drawRect(mx - w * 0.34f, my - w * 0.34f * 0.6f, mx + w * 0.34f, my + w * 0.34f * 0.6f, p);
+            p.setShader(new RadialGradient(mx, my, (float) Math.hypot(w, h) / 2,
+                    new int[] {0, 0, black(0.62f)}, new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP));
+            c.drawRect(0, 0, w, h, p);
+            return photo;
+        }
         float cx = w * 0.86f, cy = h * 0.15f;
         RadialGradient clockSide = new RadialGradient(cx, cy, w * 0.36f,
                 new int[] {black(corner), black(0.6f * corner), black(0.15f * corner), 0},
@@ -509,16 +551,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         try {
             float right = RIGHT * k;
             float night = schemeNight();
-            if (Themes.expressive()) {
-                cornerDate.setColor(material.palette(MaterialLook.ON_VARIANT, night));
-                cornerClock.setColor(material.palette(MaterialLook.ON_SURFACE, night));
-                cornerQuote.setColor(material.palette(MaterialLook.ON_VARIANT, night));
-                cornerStale.setColor(material.palette(MaterialLook.ON_VARIANT, night));
-                Paint panel = new Paint(Paint.ANTI_ALIAS_FLAG);
-                panel.setColor(Ui.alpha(material.palette(MaterialLook.SURFACE_HIGH, night), 0.90f));
-                RectF card = new RectF((RIGHT - 520) * k, 26 * k, (RIGHT + 24) * k, 370 * k);
-                c.drawRoundRect(card, 36 * k, 36 * k, panel);
-            }
+            cornerDate.setColor(look.ink(0xEBFFFFFF, night));
+            cornerClock.setColor(look.ink(0xF2FFFFFF, night));
+            cornerQuote.setColor(look.ink(0xC7FFFFFF, night));
+            cornerStale.setColor(look.ink(0x99FFFFFF, night));
+            materialBounds.set((RIGHT - 520) * k, 26 * k, (RIGHT + 24) * k, 370 * k);
+            look.saverCard(c, materialBounds, 36 * k, night);
             float x = right;
             HomeData.Weather wx = data.weather;
             if (!Double.isNaN(wx.temp) && Prefs.weather()) {
@@ -529,13 +567,13 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                 String symbol = Symbols.weather(wx.code, wx.isDay);
                 float size = 30 * k, sw = Symbols.width(getContext(), symbol, size);
                 Symbols.draw(getContext(), c, symbol, x - sw / 2, DATE_BASE * k - Ui.halfCap(cornerDate), size,
-                        Themes.expressive() ? material.palette(MaterialLook.PRIMARY, night) : 0xEBFFFFFF);
+                        look.accent(0xEBFFFFFF, night));
                 x -= sw + 26 * k;
             }
             c.drawText(date, x - cornerDate.measureText(date), DATE_BASE * k, cornerDate);
 
             Glass g = glass;
-            if (!Themes.expressive() && g != null && glassShader != null) {
+            if (look.glassClock() && g != null && glassShader != null) {
                 // The shadow under the glass: sets the digits apart from a bright photo.
                 shadowPaint.setAlpha(140);
                 c.drawBitmap(g.shadow, g.x, g.y + 6 * k, shadowPaint);
@@ -561,7 +599,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             float qx = right - total;
             for (int i = 0; i < n; i++) {
                 Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], qx + glyphs[i] / 2, base - cap / 2, cap,
-                        Themes.expressive() ? material.palette(MaterialLook.ON_VARIANT, night) : 0xA6FFFFFF);
+                        look.ink(0xA6FFFFFF, night));
                 qx += glyphs[i] + gap;
                 c.drawText(values[i], qx, base, cornerQuote);
                 qx += cornerQuote.measureText(values[i]) + spacing;
@@ -575,7 +613,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     }
 
     private void drawGlass(Canvas c, float alpha, float e) {
-        if (Themes.expressive()) return;
+        if (!look.glassClock()) return;
         Glass g = glass;
         if (g == null || glassShader == null || alpha <= 0.004f) return;
         // The glass samples the frosted version (1/6 of the photo): same position, with the scale 6 times larger.
@@ -746,14 +784,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             lastSky = up;
             scene.advance(timeOffset + t);
         }
-        if (Themes.expressive()) {
-            materialBounds.set(0, 0, w, h);
-            material.background(canvas, materialBounds, schemeNight());
-        } else scene.drawBackground(canvas);
+        materialBounds.set(0, 0, w, h);
+        if (!look.background(canvas, materialBounds, schemeNight())) scene.drawBackground(canvas);
         if (dirty) {
             Canvas rc = content.beginRecording(w, h);
             try {
-                drawContent(rc);
+                drawContent(rc, false);
             } finally {
                 content.endRecording();
             }
@@ -766,20 +802,19 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         content.draw(canvas);
     }
 
-    private void drawContent(Canvas c) {
+    /** `overPhoto`: no card (the photo is darkened behind the text), the text stays white. */
+    private void drawContent(Canvas c, boolean overPhoto) {
         float cx = w / 2f;
         float night = schemeNight();
-        if (Themes.expressive()) {
-            Paint panel = new Paint(Paint.ANTI_ALIAS_FLAG);
-            panel.setColor(Ui.alpha(material.palette(MaterialLook.SURFACE_HIGH, night), 0.90f));
-            RectF card = new RectF(cx - 540 * k, h * 0.5f - 330 * k, cx + 540 * k, h * 0.5f + 270 * k);
-            c.drawRoundRect(card, 44 * k, 44 * k, panel);
-            datePaint.setColor(material.palette(MaterialLook.ON_VARIANT, night));
-            clockPaint.setColor(material.palette(MaterialLook.ON_SURFACE, night));
-            weatherPaint.setColor(material.palette(MaterialLook.ON_SURFACE, night));
-            weatherDim.setColor(material.palette(MaterialLook.ON_VARIANT, night));
-            quotePaint.setColor(material.palette(MaterialLook.ON_VARIANT, night));
+        if (!overPhoto) {
+            materialBounds.set(cx - 540 * k, h * 0.5f - 330 * k, cx + 540 * k, h * 0.5f + 270 * k);
+            look.saverCard(c, materialBounds, 44 * k, night);
         }
+        datePaint.setColor(overPhoto ? 0xD9FFFFFF : look.ink(0xD9FFFFFF, night));
+        clockPaint.setColor(overPhoto ? 0xF2FFFFFF : look.ink(0xF2FFFFFF, night));
+        weatherPaint.setColor(overPhoto ? 0xC7FFFFFF : look.ink(0xC7FFFFFF, night));
+        weatherDim.setColor(overPhoto ? 0x80FFFFFF : look.ink(0x80FFFFFF, night));
+        quotePaint.setColor(overPhoto ? 0x99FFFFFF : look.ink(0x99FFFFFF, night));
         float clockCap = Ui.cap(clockPaint);
         float clockBase = h * 0.5f + clockCap / 2 - 10 * k;
         c.drawText(date, cx, clockBase - clockCap - 34 * k, datePaint);
