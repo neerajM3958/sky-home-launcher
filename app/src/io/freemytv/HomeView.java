@@ -2437,12 +2437,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private TrailerPlayer trailer;
     private boolean trailerOn;
+    /** The running trailer started by itself (after the wait on a title): if it can't play, nothing opens. */
+    private boolean trailerAuto;
     private static final long AUTO_TRAILER_MS = 3000;
     /** This title's trailer has played or been stopped: no new automatic start until the focus moves to another title. */
     private boolean trailerSpent, autoPending;
     private final Runnable autoTrailer = () -> {
         autoPending = false;
-        if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer();
+        if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer(true);
     };
     private String trailerId = "";
     private final RectF pill = new RectF();
@@ -2463,8 +2465,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
 
         @Override public void onFailed() {
+            boolean auto = trailerAuto;
             stopTrailer();
-            openYoutube(trailerId);       // the embedded player won't play it: the YouTube app will
+            if (!auto) openYoutube(trailerId);       // asked for with a long press, and the embedded player won't play it: the YouTube app will
         }
     };
 
@@ -2487,20 +2490,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Long press on OK or the remote's Play/Pause: starts the trailer, or pauses or resumes the one playing. */
     private void trailerKey() {
         if (trailerOn) trailer.togglePause();
-        else startTrailer();
+        else startTrailer(false);
     }
 
-    private void startTrailer() {
+    /** `auto`: started by the wait on a title, so it only ever plays in the card (YouTube opens only on a long press). */
+    private void startTrailer(boolean auto) {
         if (zone != Z_BROWSE) return;
         cancelAutoTrailer();
         trailerSpent = true;
+        trailerAuto = auto;
         trailerId = browseInfo == null ? "" : browseInfo.trailer;
         if (trailerId.isEmpty()) {
-            showToast(Ui.tr("This title has no trailer."));
+            if (!auto) showToast(Ui.tr("This title has no trailer."));
             return;
         }
         if (!Prefs.trailers() || !TrailerPlayer.available()) {
-            openYoutube(trailerId);
+            if (!auto) openYoutube(trailerId);
             return;
         }
         if (trailer == null) trailer = new TrailerPlayer(getContext(), trailerListener);
@@ -2519,20 +2524,35 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         wake();
     }
 
+    /**
+     * Opens the trailer in a YouTube app: the official YouTube TV app if the TV has it, else another YouTube client
+     * (SmartTube and the like: the apps that answer a "vnd.youtube:" link, which only YouTube clients do), always with a
+     * plain watch link (some clients don't read the "vnd.youtube:" form). With no YouTube app, whatever opens a link.
+     */
     private void openYoutube(String id) {
-        String watch = "https://www.youtube.com/watch?v=" + id;
-        String[][] tries = {{"vnd.youtube:" + id, null}, {watch, "com.google.android.youtube.tv"}, {watch, null}};
-        for (String[] t : tries) {
-            try {
-                android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(t[0]));
-                if (t[1] != null) i.setPackage(t[1]);
-                activity.startActivity(i);
-                return;
-            } catch (RuntimeException e) {
-                AppLog.w("trailer " + t[0] + ": " + e.getMessage());
+        android.content.pm.PackageManager pm = getContext().getPackageManager();
+        android.content.Intent watch = new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://www.youtube.com/watch?v=" + id));
+        String pick = null;
+        try {
+            android.content.Intent client = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id));
+            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(client, 0)) {
+                String pkg = r.activityInfo.packageName;
+                if (pick == null) pick = pkg;
             }
+            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(watch, 0)) {
+                if (r.activityInfo.packageName.equals("com.google.android.youtube.tv")) pick = r.activityInfo.packageName;
+            }
+        } catch (RuntimeException e) {
+            AppLog.w("trailer apps: " + e.getMessage());
         }
-        showToast(Ui.tr("Couldn't open YouTube."));
+        if (pick != null) watch.setPackage(pick);
+        try {
+            activity.startActivity(watch);
+        } catch (RuntimeException e) {
+            AppLog.w("trailer " + pick + ": " + e.getMessage());
+            showToast(Ui.tr("Couldn't open YouTube."));
+        }
     }
 
     /** The small "Hold OK for the trailer" pill at the video window's foot, while there is a trailer and it isn't playing. */
@@ -3072,7 +3092,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             handler.removeCallbacks(holdStart);
             holdArmed = false;
             okHeld = true;
-            if (!trailerOn) startTrailer();
+            if (!trailerOn) startTrailer(false);
             return;
         }
         if (sheetOpen) toggleShelf(); else startReorder();
