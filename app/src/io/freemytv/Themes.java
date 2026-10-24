@@ -24,7 +24,7 @@ final class Themes {
                 {0xFF6E6E73, 0xFF8E8E93, 0xFF48484A}
             };
             public String id() { return GLASS; }
-            public String label() { return Ui.tr("Glass"); }
+            public String label() { return Ui.tr("Liquid Glass"); }
             public int color(int role, boolean dark) {
                 int i = Math.max(0, Math.min(colors.length - 1, role));
                 return colors[i][dark ? 1 : 0];

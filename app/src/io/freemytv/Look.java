@@ -33,6 +33,8 @@ abstract class Look {
         float shelfPad = 40, shelfGap = 48;             // the shelf bar's side padding; the gap between app tiles
         float shelfGrow = 0.2f;                         // a focused shelf tile grows by this much
         boolean focusGlow = false;                      // the background glows under the focused item (redrawn while focus moves)
+        float homeSharp = 0;                            // how much of the lightly blurred picture shows over the heavily blurred one (0 to 1)
+        boolean homeBackdrop = false;                   // the home screen has its own background: the first pick's picture, softly blurred
         boolean animatedBackground = false;             // the background moves by itself (the screen redraws it a few times a second)
         boolean shelfFill = false;                      // tiles span the content width from the margin, instead of centered
     }
@@ -131,6 +133,12 @@ abstract class Look {
     abstract void sheetBackground(Canvas c, RectF screen, float night);
 
     abstract int sheetTitleInk(float night);
+
+    /** The colour laid over the blurred picture of the home background (ARGB), so the text and cards stay clear of it. */
+    int homeScrim(float night) { return 0; }
+
+    /** What is drawn over every background, picture or not (a glow under the focus). */
+    void overlay(Canvas c, RectF screen, float night) {}
 
     /** The whole screen's background. Returns false when the look has none of its own (the glass draws the photo and sky). */
     boolean background(Canvas c, RectF screen, float night) { return false; }

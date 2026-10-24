@@ -57,18 +57,27 @@ final class MaterialLook extends Look {
     private final TextPaint fit = new TextPaint();
     private static final int DEFAULT_TINT = 0xFF6875E8;
     private final Paint glowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint wavePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Paint shapePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint vignettePaint = new Paint();
     private static final int STAR = 0xFFFFC21A;
+    // The background's big faint shapes (Material 3 Expressive's: circle, squircle, cookie, clover, arch). Each row:
+    // kind, centre x (of the width), centre y (of the height), size (of the height), strength, angle, degrees a second,
+    // drift x (of the width), drift y (of the height), seconds a drift takes.
+    private static final float[][] SHAPES = {
+        {0, 0.90f, 0.10f, 0.36f, 0.20f, 0, 0, 0.03f, 0.03f, 47},
+        {1, 0.06f, 0.84f, 0.32f, 0.16f, 14, 1.2f, 0.025f, 0.03f, 59},
+        {2, 0.80f, 0.82f, 0.24f, 0.15f, 0, 2.4f, 0.03f, 0.025f, 53},
+        {3, 0.46f, 0.22f, 0.15f, 0.12f, 0, -3f, 0.04f, 0.03f, 41},
+        {4, 0.30f, 1.02f, 0.30f, 0.12f, 0, 0, 0.03f, 0.02f, 67},
+    };
+    private final Path[] shapes = buildShapes();
     private static final Typeface REGULAR = Typeface.create("sans-serif", Typeface.NORMAL),
             MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL), BOLD = Typeface.create("sans-serif", Typeface.BOLD);
     private final Path reel = new Path();
     private final Shader scrimLight = new LinearGradient(0, 0, 0, 1, 0x00F7F8FF, 0xF2F7F8FF, Shader.TileMode.CLAMP);
-    private final RectF waveRect = new RectF();
     private final Paint focusGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private float focusX, focusY, focusStrength;
     private final float[] hsv = new float[3];
-    private Bitmap waves;
     private int tintFrom = DEFAULT_TINT, tintTo = DEFAULT_TINT, filterColor;
     private long tintAt;
     private ColorFilter filter;
@@ -104,6 +113,8 @@ final class MaterialLook extends Look {
         m.shelfGrow = 0.08f;
         m.animatedBackground = !Ui.LEGACY;
         m.focusGlow = !Ui.LEGACY;
+        m.homeBackdrop = !Ui.LEGACY;
+        m.homeSharp = 0.55f;
     }
 
     void setSize(int width, int height) {
@@ -119,41 +130,8 @@ final class MaterialLook extends Look {
                 (float) Math.hypot(this.width, this.height) * 0.55f,
                 new int[] {0x00000000, 0x00000000, 0xFF000000}, new float[] {0, 0.55f, 1}, Shader.TileMode.CLAMP));
         focusGlowPaint.setShader(new RadialGradient(0, 0, 640 * k, new int[] {0xFFFFFFFF, 0x00FFFFFF}, null, Shader.TileMode.CLAMP));
-        buildWaves();
     }
 
-    /** The flowing shapes of the background, once, as a white mask on a small bitmap (tinted and scaled up when drawn). */
-    private void buildWaves() {
-        int bw = Math.max(64, width / 3), bh = Math.max(36, height / 3);
-        if (waves != null) waves.recycle();
-        waves = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
-        Canvas cv = new Canvas(waves);
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setMaskFilter(new BlurMaskFilter(bw * 0.01f, BlurMaskFilter.Blur.NORMAL));
-        Path path = new Path();
-        path.moveTo(0.50f * bw, -0.1f * bh);
-        path.cubicTo(0.18f * bw, 0.30f * bh, 0.78f * bw, 0.52f * bh, 0.52f * bw, 1.1f * bh);
-        path.lineTo(1.1f * bw, 1.1f * bh);
-        path.lineTo(1.1f * bw, -0.1f * bh);
-        path.close();
-        p.setColor(0x30FFFFFF);
-        cv.drawPath(path, p);
-        path.reset();
-        path.moveTo(0.78f * bw, -0.1f * bh);
-        path.cubicTo(0.55f * bw, 0.25f * bh, 0.98f * bw, 0.55f * bh, 0.80f * bw, 1.1f * bh);
-        path.lineTo(1.1f * bw, 1.1f * bh);
-        path.lineTo(1.1f * bw, -0.1f * bh);
-        path.close();
-        p.setColor(0x26FFFFFF);
-        cv.drawPath(path, p);
-        path.reset();
-        path.moveTo(-0.1f * bw, 0.62f * bh);
-        path.cubicTo(0.25f * bw, 0.45f * bh, 0.35f * bw, 0.85f * bh, 0.70f * bw, 1.1f * bh);
-        path.lineTo(-0.1f * bw, 1.1f * bh);
-        path.close();
-        p.setColor(0x1CFFFFFF);
-        cv.drawPath(path, p);
-    }
 
     int palette(int role, float night) {
         int i = Math.max(0, Math.min(LIGHT[0].length - 1, role));
@@ -169,6 +147,27 @@ final class MaterialLook extends Look {
         focusX = x;
         focusY = y;
         focusStrength = strength;
+    }
+
+    private static Path[] buildShapes() {
+        Path circle = new Path(), squircle = new Path(), cookie = new Path(), clover = new Path(), arch = new Path();
+        circle.addCircle(0, 0, 1, Path.Direction.CW);
+        squircle.addRoundRect(new RectF(-1, -1, 1, 1), 0.45f, 0.45f, Path.Direction.CW);
+        for (int i = 0; i <= 96; i++) {
+            double a = i * 2 * Math.PI / 96;
+            float r = (float) (1 + 0.09 * Math.cos(8 * a));
+            float x = (float) Math.cos(a) * r, y = (float) Math.sin(a) * r;
+            if (i == 0) cookie.moveTo(x, y);
+            else cookie.lineTo(x, y);
+        }
+        cookie.close();
+        clover.addCircle(0.5f, 0, 0.55f, Path.Direction.CW);
+        clover.addCircle(-0.5f, 0, 0.55f, Path.Direction.CW);
+        clover.addCircle(0, 0.5f, 0.55f, Path.Direction.CW);
+        clover.addCircle(0, -0.5f, 0.55f, Path.Direction.CW);
+        arch.addArc(new RectF(-1, -1, 1, 1), 180, 180);
+        arch.close();
+        return new Path[] {circle, squircle, cookie, clover, arch};
     }
 
     /** The first pick's artwork colour, eased in over a moment (0: back to the palette's indigo). */
@@ -212,29 +211,18 @@ final class MaterialLook extends Look {
         glowPaint.setShader(glowB.getShader());
         glowPaint.setAlpha(Math.round(255 * 0.17f * (1 - 0.5f * day) * (1 - 0.3f * night)));
         c.drawRect(bounds, glowPaint);
-        if (focusStrength > 0.01f) {
-            // A soft light behind whatever has the focus.
-            focusGlowPaint.setColorFilter(filter);
-            focusGlowPaint.setAlpha(Math.round(255 * 0.42f * (1 - 0.1f * day) * focusStrength));
+        // Big faint shapes drifting and turning slowly (standing still on older TVs).
+        float t = Ui.LEGACY ? 0 : now / 1000f;
+        shapePaint.setColorFilter(filter);
+        for (int i = 0; i < SHAPES.length; i++) {
+            float[] sh = SHAPES[i];
+            float phase = t * 2 * (float) Math.PI / sh[9] + i * 1.7f;
+            shapePaint.setColor(Ui.alpha(0xFFFFFFFF, sh[4] * (0.9f + 0.1f * night)));
             c.save();
-            c.translate(focusX, focusY);
-            c.drawCircle(0, 0, 640 * k, focusGlowPaint);
-            c.restore();
-        }
-        if (waves != null) {
-            // Two copies drifting against each other (still on older TVs).
-            float t = Ui.LEGACY ? 0 : now / 1000f;
-            float dx = (float) Math.sin(t * 2 * Math.PI / 36) * 0.06f * width;
-            float dy = (float) Math.cos(t * 2 * Math.PI / 52) * 0.045f * height;
-            wavePaint.setColorFilter(filter);
-            wavePaint.setAlpha(Math.round(255 * (0.34f + 0.56f * night)));
-            waveRect.set(-0.06f * width + dx, -0.06f * height + dy, 1.06f * width + dx, 1.06f * height + dy);
-            c.drawBitmap(waves, null, waveRect, wavePaint);
-            c.save();
-            c.scale(-1, 1, width / 2f, height / 2f);
-            waveRect.set(-0.06f * width - dx, -0.06f * height - dy, 1.06f * width - dx, 1.06f * height - dy);
-            wavePaint.setAlpha(Math.round(255 * 0.3f * (1 - 0.1f * day)));
-            c.drawBitmap(waves, null, waveRect, wavePaint);
+            c.translate(sh[1] * width + (float) Math.sin(phase) * sh[7] * width, sh[2] * height + (float) Math.cos(phase * 1.3f) * sh[8] * height);
+            c.rotate(sh[5] + t * sh[6]);
+            c.scale(sh[3] * height, sh[3] * height);
+            c.drawPath(shapes[(int) sh[0]], shapePaint);
             c.restore();
         }
         if (!Ui.LEGACY) {
@@ -396,6 +384,22 @@ final class MaterialLook extends Look {
         t.setColor(ink);
         c.drawText(TextUtils.ellipsize(title, fitted(t), width, TextUtils.TruncateAt.END).toString(), cell.left + pad, base, t);
         return true;
+    }
+
+    /** Navy by night, near-white by day, over the picture: it stays soft and the palette stays in charge. */
+    @Override int homeScrim(float night) {
+        return fade(palette(SURFACE, night), 0.58f);
+    }
+
+    /** A soft light behind whatever has the focus (over the home background's picture too). */
+    @Override void overlay(Canvas c, RectF screen, float night) {
+        if (focusStrength <= 0.01f || filter == null) return;
+        focusGlowPaint.setColorFilter(filter);
+        focusGlowPaint.setAlpha(Math.round(255 * 0.42f * (1 - 0.1f * (1 - night)) * focusStrength));
+        c.save();
+        c.translate(focusX, focusY);
+        c.drawCircle(0, 0, 640 * k, focusGlowPaint);
+        c.restore();
     }
 
     @Override boolean centeredClock() {

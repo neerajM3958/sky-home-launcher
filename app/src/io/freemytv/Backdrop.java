@@ -46,6 +46,8 @@ final class Backdrop {
     final Bitmap lightImage;            // by day: the background (the lightened frosted version, scaled up on screen)
     final int[] nightFrost, nightGlass; // at night: frosted (the bottom drawer's frosted glass) and glass, darkened
     final Bitmap nightImage;            // at night: the background (the darkened frosted version)
+    private Bitmap glassBitmap;
+    final Bitmap frostImage;            // the frosted version as it is: the home background of a look that shows the picture
 
     private Backdrop(Bitmap image, int[] frost, int[] glass, Bitmap wide, Bitmap tall, int[] light, int[] lightGlass,
                      int[] night, int[] nightGlass) {
@@ -60,6 +62,13 @@ final class Backdrop {
         this.nightGlass = nightGlass;
         lightImage = light == null ? null : Bitmap.createBitmap(light, FW, FH, Bitmap.Config.ARGB_8888);
         nightImage = night == null ? null : Bitmap.createBitmap(night, FW, FH, Bitmap.Config.ARGB_8888);
+        frostImage = frost == null ? null : Bitmap.createBitmap(frost, FW, FH, Bitmap.Config.ARGB_8888);
+    }
+
+    /** The lightly blurred version as a bitmap (made when a look first asks for it, UI thread). */
+    Bitmap glassImage() {
+        if (glassBitmap == null && glass != null) glassBitmap = Bitmap.createBitmap(glass, GW, GH, Bitmap.Config.ARGB_8888);
+        return glassBitmap;
     }
 
     static Backdrop make(Bitmap src, boolean forLight) {

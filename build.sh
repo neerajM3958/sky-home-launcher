@@ -44,6 +44,9 @@ ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 FLATRATE=true; [ "$(prop flatrate_only true)" = "false" ] && FLATRATE=false
 WATCHNEXT=true; [ "$(prop watch_next true)" = "false" ] && WATCHNEXT=false
 RENTBUY=false; [ "$(prop include_rent_buy false)" = "true" ] && RENTBUY=true
+# The look and the color scheme the TV starts with (what the person changes on the TV wins over these).
+LOOK="$(prop look material3-expressive)"; case "$LOOK" in glass|material3-expressive) ;; *) LOOK=material3-expressive ;; esac
+THEME="$(prop theme auto)"; case "$THEME" in auto|light|dark) ;; *) THEME=auto ;; esac
 CATALOGS="$(prop catalogs "trending,popular_movies,popular_shows,hindi,top_rated")"
 # Whole numbers in a range; anything else is the default.
 whole() { local v; v="$(prop "$1" "$2")"; [[ "$v" =~ ^[0-9]+$ ]] || v="$2"; (( v < $3 )) && v=$3; (( v > $4 )) && v=$4; printf '%s' "$v"; }
@@ -68,6 +71,8 @@ final class Config {
     static final String LANGUAGE = "$(prop language auto)";
     static final String CURRENCY = "$(prop currency USD)";
     static final String TEMPERATURE = "$(prop temperature auto)";
+    static final String LOOK = "$LOOK";
+    static final String THEME = "$THEME";
     static final String HIDE_SERVICES = "$(prop hide_services '')";
     static final String TMDB_LANGUAGES = "$(prop tmdb_languages '')";
     static final boolean DISABLE_ASSISTANT = $ASSIST;

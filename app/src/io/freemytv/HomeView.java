@@ -755,7 +755,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (gridMoving || gridDirty) sheetLayer.invalidate();
         if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) catDirty = true;     // the waiting dots move
         if (catMoving || catDirty) catalogLayer.invalidate();
-        if (drawerMoving || bgFading || (look.m.focusGlow && (tilesMoving || topMoving || cardsMoving || catMoving))) sky.invalidate();
+        if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving))) sky.invalidate();
         if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
         drawerWasMoving = drawerMoving;
         if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
@@ -3198,7 +3198,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawLightSky(Canvas c) {
         if (look.m.focusGlow) updateFocusGlow();
-        if (look.background(c, screen, dark())) return;
+        if (look.background(c, screen, dark())) {
+            if (look.m.homeBackdrop) drawHomeBackdrop(c);
+            look.overlay(c, screen, dark());
+            return;
+        }
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
@@ -3226,6 +3230,33 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
+    }
+
+    /**
+     * The home screen's own background, over the look's: the first pick's picture, softly blurred and toned by the
+     * look's scrim. It fades away as the catalogs come in, so they (and every other screen) keep the look's background.
+     */
+    private void drawHomeBackdrop(Canvas c) {
+        float amount = 1 - Ui.clamp(catIn.value * 1.4f);
+        if (amount < 0.01f || (bgTo == null && bgFrom == null)) return;
+        long up = SystemClock.uptimeMillis();
+        boolean fading = bgFadeAt != 0;
+        float e = fading ? fadeEase(bgFadeAt, up) : 1;
+        imagePaint.setColorFilter(null);
+        if (fading && bgFrom != null) drawHomePicture(c, bgFrom, amount * (bgTo == null ? 1 - e : 1));
+        if (bgTo != null) drawHomePicture(c, bgTo, amount * (fading ? e : 1));
+        int scrim = look.homeScrim(dark());
+        if (scrim != 0) {
+            fill.setShader(null);
+            fill.setColor(Ui.alpha(scrim, amount));
+            c.drawRect(screen, fill);
+        }
+    }
+
+    /** The picture of the home background: heavily blurred, with some of the lightly blurred one over it (the look's `homeSharp`). */
+    private void drawHomePicture(Canvas c, Backdrop b, float alpha) {
+        drawImage(c, b.frostImage, alpha);
+        if (look.m.homeSharp > 0) drawImage(c, b.glassImage(), alpha * look.m.homeSharp);
     }
 
     /** Tells the look where the focus is: the centre of the focused item, blended by how focused each one is. */

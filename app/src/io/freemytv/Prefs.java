@@ -97,7 +97,7 @@ final class Prefs {
 
     /** "auto" (dark from sunset to sunrise), "light" or "dark". */
     static String theme() {
-        String v = sp().getString("theme", "auto");
+        String v = sp().getString("theme", Config.THEME);
         return v.equals("light") || v.equals("dark") ? v : "auto";
     }
 
@@ -105,7 +105,7 @@ final class Prefs {
 
     /** The visual theme is independent of the light/dark color scheme. */
     static String look() {
-        String v = sp().getString("look", "glass");
+        String v = sp().getString("look", Config.LOOK);
         return Themes.has(v) ? v : Themes.GLASS;
     }
 
