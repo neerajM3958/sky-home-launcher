@@ -49,6 +49,8 @@ final class Recs {
         long shownAt;           // when its picture was first drawn (UI thread): the picture fades in from then
         String link;            // opens the title in its app (looked up with Watchmode), or null: the app's home
         boolean detailed;
+        String servicePkg;      // routed picks: the app it opens in, for the card's icon (null not known yet, "" none; UI thread)
+        boolean serviceAsked;
     }
 
     interface Listener { void onRecs(); }

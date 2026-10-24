@@ -2025,6 +2025,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
                 }
                 drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
+                if (poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
                 if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
                     barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
                     fill.setShader(null);
@@ -2049,6 +2050,45 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
             }
         }
+    }
+
+    /**
+     * The app a poster opens in: the one that published it (Watch Next), else what is kept about where it streams,
+     * and for the focused poster what TMDB says. Null until known.
+     */
+    private String catalogService(Catalogs.Item it, boolean focused) {
+        if (it.appPkg != null) return it.appPkg;
+        if (it.id <= 0) return null;
+        if (it.serviceAsked < 1 || (focused && it.serviceAsked < 2 && it.servicePkg == null)) {
+            boolean fetch = focused && it.serviceAsked < 2;
+            it.serviceAsked = fetch ? 2 : 1;
+            Launcher.get(activity).service(it.kind, it.id, fetch, pkg -> {
+                it.servicePkg = pkg;
+                invalidateAll();
+            });
+        }
+        return it.servicePkg;
+    }
+
+    /** The app a pick opens in: its own, or (picks from anything popular) what Launcher finds, asked once per pick. */
+    private String pickService(Recs.Pick p) {
+        if (!Recs.ROUTED.equals(p.pkg)) return p.pkg;
+        if (!p.serviceAsked) {
+            p.serviceAsked = true;
+            Launcher.get(activity).service(p.kind, p.id, true, pkg -> {
+                p.servicePkg = pkg;
+                invalidateAll();
+            });
+        }
+        return p.servicePkg;
+    }
+
+    /** The service's round icon in the corner of a card or poster (`r`, as drawn now). */
+    private void drawBadge(Canvas c, RectF r, String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        int px = Math.round(34 * k);
+        Bitmap b = ServiceBadge.get(getContext(), pkg, px, () -> post(this::invalidateAll));
+        if (b != null) c.drawBitmap(b, r.left + 10 * k, r.top + 10 * k, null);
     }
 
     // MARK: - Toasts
@@ -3134,6 +3174,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 roundImage(c, hi, cell, r, shift);
                 bitmapPaint.setAlpha(255);
             }
+            drawBadge(c, cell, pickService(p));
         } else {
             fill.setShader(null);
             fill.setColor(look.color(Look.PLACEHOLDER, dark()));
@@ -3445,6 +3486,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             roundImage(c, img, cell, r);
             bitmapPaint.setAlpha(255);
             imageFill.setAlpha(255);
+            if (shown >= 1) drawBadge(c, cell, pickService(p));
         }
         if (!look.focusRing(c, cell, r, f, dark()) && f > 0.01f) {
             if (lightSheens.length != cardRects.length) {
