@@ -42,6 +42,7 @@ ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
 CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 FLATRATE=true; [ "$(prop flatrate_only true)" = "false" ] && FLATRATE=false
+CATALOGS="$(prop catalogs "trending,popular_movies,popular_shows,hindi,top_rated")"
 # Whole numbers in a range; anything else is the default.
 whole() { local v; v="$(prop "$1" "$2")"; [[ "$v" =~ ^[0-9]+$ ]] || v="$2"; (( v < $3 )) && v=$3; (( v > $4 )) && v=$4; printf '%s' "$v"; }
 PICKS="$(whole pick_count 3 3 12)"
@@ -70,6 +71,7 @@ final class Config {
     static final boolean SHOW_CRYPTO = $CRYPTO;
     static final boolean HIDE_ANIMATION = $ANIMATION;
     static final boolean FLATRATE_ONLY = $FLATRATE;
+    static final String CATALOGS = "$CATALOGS";
     static final int PICK_COUNT = $PICKS;
     static final int PICK_ROTATE_SECONDS = $ROTATE;
 }

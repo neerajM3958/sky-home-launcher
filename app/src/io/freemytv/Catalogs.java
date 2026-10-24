@@ -1,0 +1,326 @@
+package io.freemytv;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.Handler;
+import android.os.Looper;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * The poster rows under the drawer's weather and quotes cards (config.properties "catalogs"): one TMDB list request per
+ * row, saved for a few hours, with posters loaded only when a row is near the screen. A title opens in the app that
+ * service_map's "*" rule names (Stremio on its page), so there are no rows without that rule.
+ */
+final class Catalogs {
+    static final class Item {
+        int id;
+        String kind;        // "movie" or "tv"
+        String title, poster;
+        double rating;
+        String link;        // the title's page in its app, once found
+        String stars;       // "★ 7.8", or null
+    }
+
+    static final class Row {
+        String key, title;
+        final List<Item> items = new ArrayList<>();
+    }
+
+    interface Listener { void onCatalogs(); }
+
+    private static final long EVERY = 6 * 3600_000L;
+    private static final int VERSION = 1, MAX_POSTERS = 40;
+    private static final String IMAGES = "https://image.tmdb.org/t/p/w342";
+    private static final int ANIMATION = 16;
+
+    private static Catalogs instance;
+
+    static synchronized Catalogs get(Context c) {
+        if (instance == null) instance = new Catalogs(c.getApplicationContext());
+        return instance;
+    }
+
+    private final Context context;
+    private final SharedPreferences cache;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService lists = Executors.newSingleThreadExecutor(r -> daemon(r, "catalogs"));
+    private final ExecutorService images = Executors.newFixedThreadPool(2, r -> daemon(r, "posters"));
+    private final List<Listener> listeners = new ArrayList<>();
+    private final Map<String, Bitmap> posters = new LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
+            return size() > MAX_POSTERS;
+        }
+    };
+    private final Set<String> pending = new HashSet<>();
+    private volatile List<Row> rows = new ArrayList<>();
+    private volatile boolean fetching;
+    private volatile long at, failedAt;
+    private volatile String language = "";
+
+    private static Thread daemon(Runnable r, String name) {
+        Thread t = new Thread(r, name);
+        t.setDaemon(true);
+        return t;
+    }
+
+    private Catalogs(Context c) {
+        context = c;
+        cache = c.getSharedPreferences("catalogs", Context.MODE_PRIVATE);
+        if (cache.getInt("version", 0) != VERSION) cache.edit().clear().putInt("version", VERSION).apply();
+        try {
+            String saved = cache.getString("rows", null);
+            if (saved != null && wanted().equals(cache.getString("wanted", ""))) rows = parse(new JSONArray(saved));
+            at = cache.getLong("at", 0);
+            language = cache.getString("language", "");
+        } catch (Exception ignored) {
+        }
+    }
+
+    void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
+    void removeListener(Listener l) { listeners.remove(l); }
+
+    /** The rows to show; empty without a TMDB key, without the app that opens them, or with "catalogs=" empty. */
+    List<Row> rows() {
+        return Recs.hasKey(context) && Recs.get(context).catalogApp() != null ? rows : new ArrayList<Row>();
+    }
+
+    private static List<String> keys() {
+        List<String> out = new ArrayList<>();
+        for (String k : Config.CATALOGS.split(",")) {
+            k = k.trim().toLowerCase(Locale.ROOT);
+            if (!k.isEmpty() && title(k) != null && !out.contains(k)) out.add(k);
+        }
+        return out;
+    }
+
+    private static String wanted() {
+        return String.join(",", keys());
+    }
+
+    private static String title(String key) {
+        switch (key) {
+            case "trending": return Ui.tr("Trending today");
+            case "popular_movies": return Ui.tr("Popular movies");
+            case "popular_shows": return Ui.tr("Popular shows");
+            case "top_rated": return Ui.tr("Top rated");
+            case "now_playing": return Ui.tr("Now playing");
+            case "upcoming": return Ui.tr("Upcoming");
+            case "hindi": return Ui.tr("Hindi picks");
+            default: return null;
+        }
+    }
+
+    /** One TMDB list request per row. Popularity is worldwide; titles come in the TV's language. */
+    private static String path(String key, String lang) {
+        String q = "?language=" + lang + "&include_adult=false";
+        switch (key) {
+            case "trending": return "/trending/all/day" + q;
+            case "popular_movies": return "/discover/movie" + q + "&sort_by=popularity.desc&vote_count.gte=100";
+            case "popular_shows": return "/discover/tv" + q + "&sort_by=popularity.desc&vote_count.gte=50";
+            case "top_rated": return "/movie/top_rated" + q;
+            case "now_playing": return "/movie/now_playing" + q;
+            case "upcoming": return "/movie/upcoming" + q;
+            default: return "/discover/movie" + q + "&sort_by=popularity.desc&vote_count.gte=20&with_original_language=hi";
+        }
+    }
+
+    /** Fetches the rows when they are older than a few hours, in another language or not the ones asked for (the home screen calls this when the drawer opens). */
+    void refreshIfStale() {
+        if (fetching || !Recs.hasKey(context) || Recs.get(context).catalogApp() == null) return;
+        List<String> keys = keys();
+        if (keys.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (failedAt != 0 && now - failedAt >= 0 && now - failedAt < 10 * 60_000L) return;
+        boolean fresh = now >= at && now - at < EVERY && language.equals(Ui.language) && wanted().equals(cache.getString("wanted", ""))
+                && !rows.isEmpty();
+        if (fresh) return;
+        fetching = true;
+        lists.execute(() -> {
+            try {
+                String lang = Recs.lang();
+                String[] paths = new String[keys.size()];
+                for (int i = 0; i < paths.length; i++) paths[i] = path(keys.get(i), lang);
+                org.json.JSONObject[] answers = Recs.get(context).getAll(paths);
+                List<Row> next = new ArrayList<>();
+                for (int i = 0; i < answers.length; i++) {
+                    Row row = new Row();
+                    row.key = keys.get(i);
+                    row.title = title(row.key);
+                    JSONArray results = answers[i].optJSONArray("results");
+                    for (int j = 0; results != null && j < results.length(); j++) add(row, results.optJSONObject(j), row.key);
+                    if (!row.items.isEmpty()) next.add(row);
+                }
+                if (next.isEmpty()) throw new IOException("TMDB returned no titles");
+                // A title found before keeps its link.
+                for (Row row : next) for (Item it : row.items) {
+                    for (Row old : rows) for (Item o : old.items) if (o.link != null && o.id == it.id && o.kind.equals(it.kind)) it.link = o.link;
+                }
+                rows = next;
+                at = System.currentTimeMillis();
+                language = Ui.language;
+                failedAt = 0;
+                save(keys);
+            } catch (Exception e) {
+                failedAt = System.currentTimeMillis();
+                AppLog.w("catalogs: " + e.getMessage());
+            } finally {
+                fetching = false;
+                notifyListeners();
+            }
+        });
+    }
+
+    private static void add(Row row, JSONObject o, String key) {
+        if (o == null) return;
+        String poster = o.optString("poster_path", "");
+        if (poster.isEmpty() || "null".equals(poster)) return;
+        String type = o.optString("media_type", "");
+        String kind = type.equals("tv") || key.equals("popular_shows") ? "tv" : type.equals("person") ? null : "movie";
+        if (kind == null) return;
+        if (Config.HIDE_ANIMATION) {
+            JSONArray genres = o.optJSONArray("genre_ids");
+            for (int i = 0; genres != null && i < genres.length(); i++) if (genres.optInt(i) == ANIMATION) return;
+        }
+        Item it = new Item();
+        it.id = o.optInt("id");
+        it.kind = kind;
+        it.title = o.optString(kind.equals("movie") ? "title" : "name");
+        it.poster = poster;
+        it.rating = o.optInt("vote_count") >= 10 ? o.optDouble("vote_average", 0) : 0;
+        it.stars = it.rating > 0 ? String.format(Ui.locale(), "★ %.1f", it.rating) : null;
+        row.items.add(it);
+    }
+
+    private void save(List<String> keys) {
+        try {
+            JSONArray a = new JSONArray();
+            for (Row row : rows) {
+                JSONArray items = new JSONArray();
+                for (Item it : row.items) {
+                    items.put(new JSONObject().put("id", it.id).put("kind", it.kind).put("title", it.title).put("poster", it.poster)
+                            .put("rating", it.rating).put("link", it.link == null ? "" : it.link));
+                }
+                a.put(new JSONObject().put("key", row.key).put("items", items));
+            }
+            cache.edit().putString("rows", a.toString()).putString("wanted", String.join(",", keys)).putLong("at", at)
+                    .putString("language", language).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static List<Row> parse(JSONArray a) {
+        List<Row> out = new ArrayList<>();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o == null) continue;
+            Row row = new Row();
+            row.key = o.optString("key");
+            row.title = title(row.key);
+            JSONArray items = o.optJSONArray("items");
+            for (int j = 0; row.title != null && items != null && j < items.length(); j++) {
+                JSONObject p = items.optJSONObject(j);
+                if (p == null) continue;
+                Item it = new Item();
+                it.id = p.optInt("id");
+                it.kind = p.optString("kind");
+                it.title = p.optString("title");
+                it.poster = p.optString("poster");
+                it.rating = p.optDouble("rating", 0);
+                it.link = p.optString("link").isEmpty() ? null : p.optString("link");
+                it.stars = it.rating > 0 ? String.format(Ui.locale(), "★ %.1f", it.rating) : null;
+                row.items.add(it);
+            }
+            if (!row.items.isEmpty()) out.add(row);
+        }
+        return out;
+    }
+
+    private void notifyListeners() {
+        main.post(() -> { for (Listener l : new ArrayList<>(listeners)) l.onCatalogs(); });
+    }
+
+    // MARK: - Posters (w342 on disk; the ones near the screen stay decoded in memory)
+
+    /** The decoded poster at about `width` pixels, or null: it is loaded in the background and the listeners are told when it is ready. */
+    Bitmap poster(Item it, int width) {
+        synchronized (posters) {
+            Bitmap b = posters.get(it.poster);
+            if (b != null) return b;
+            if (!pending.add(it.poster)) return null;
+        }
+        images.execute(() -> {
+            try {
+                File f = new File(new File(context.getCacheDir(), "catalogs"), it.poster.replace("/", ""));
+                if (!f.exists()) download(it.poster, f);
+                Bitmap b = BitmapFactory.decodeFile(f.getPath());
+                if (b != null && b.getWidth() > width * 5 / 4) {     // kept at the size it is drawn at: a quarter of the memory
+                    Bitmap small = Bitmap.createScaledBitmap(b, width, Math.round(b.getHeight() * (float) width / b.getWidth()), true);
+                    if (small != b) b.recycle();
+                    b = small;
+                }
+                if (b == null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                    throw new IOException("unreadable poster");
+                }
+                synchronized (posters) { posters.put(it.poster, b); }
+                notifyListeners();
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                AppLog.w("poster: " + e.getMessage());
+            } finally {
+                synchronized (posters) { pending.remove(it.poster); }
+            }
+        });
+        return null;
+    }
+
+    private static void download(String path, File f) throws IOException {
+        //noinspection ResultOfMethodCallIgnored
+        f.getParentFile().mkdirs();
+        File part = new File(f.getPath() + ".part");
+        HttpURLConnection c = (HttpURLConnection) new URL(IMAGES + path).openConnection();
+        c.setConnectTimeout(8000);
+        c.setReadTimeout(20000);
+        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+            byte[] buffer = new byte[16384];
+            int n;
+            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+        } catch (IOException e) {
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            throw e;
+        } finally {
+            c.disconnect();
+        }
+        if (!part.renameTo(f)) throw new IOException("couldn't save the poster");
+        File[] all = f.getParentFile().listFiles();     // the newest 300 stay
+        if (all != null && all.length > 300) {
+            Arrays.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+            for (int i = 0; i < all.length - 300; i++) {
+                //noinspection ResultOfMethodCallIgnored
+                all[i].delete();
+            }
+        }
+    }
+}
