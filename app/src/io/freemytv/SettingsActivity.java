@@ -204,7 +204,13 @@ public class SettingsActivity extends Activity {
                     invalidate();
                 }
                 @Override public void click(int id) { activate(); }
+                @Override public boolean clickable(int id) { return !disabledRow(id - 1); }
             });
+        }
+
+        /** A main menu row that needs something it doesn't have (Trakt without a Client ID): greyed, and OK does nothing. */
+        private boolean disabledRow(int row) {
+            return screen == MAIN && row == TRAKT_ROW && !Trakt.configured();
         }
 
         @Override public AccessibilityNodeProvider getAccessibilityNodeProvider() {
@@ -401,12 +407,17 @@ public class SettingsActivity extends Activity {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
                 float f = drawRowBackground(c, i);
-                int ink = blend(0xF2FFFFFF, INK, f);
+                boolean off = disabledRow(i);
+                int ink = blend(off ? 0x73FFFFFF : 0xF2FFFFFF, off ? 0x731C1C1E : INK, f);
                 rowLabel.setColor(ink);
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
                 float right = rowRect.right - 30 * k;
-                if (i >= 2) {
+                if (off) {
+                    // Nothing to open: no chevron, and the reason where the value goes.
+                    rowValue.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
+                    c.drawText(values[i], right, base, rowValue);
+                } else if (i >= 2) {
                     float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
                     Symbols.draw(getContext(), c, "chevron_right", right - cw / 2, rowRect.centerY(), 22 * k, blend(0x66FFFFFF, 0x991C1C1E, f));
                     if (!values[i].isEmpty()) {
@@ -659,7 +670,7 @@ public class SettingsActivity extends Activity {
         /** The main menu's value: whether Trakt is connected. */
         private String traktStatus() {
             Trakt t = Trakt.get(getContext());
-            if (!Trakt.configured()) return Ui.tr("Not set up");
+            if (!Trakt.configured()) return Ui.tr("Needs a Client ID");
             if (t.connected()) return Ui.tr("Connected");
             return t.needsReconnect() ? Ui.tr("Reconnect") : Ui.tr("Not connected");
         }
@@ -674,7 +685,6 @@ public class SettingsActivity extends Activity {
 
         private void traktPressed() {
             Trakt t = Trakt.get(getContext());
-            if (!Trakt.configured()) return;
             if (t.loginState() != Trakt.IDLE) t.cancelLogin();
             else if (t.connected()) t.disconnect();
             else t.startLogin();
@@ -756,17 +766,14 @@ public class SettingsActivity extends Activity {
             float y0 = (LIST_TOP + 20) * k;
             rowRect.set(LIST_X * k, y0, LIST_R * k, y0 + LIST_ROW_H * k);
             float f = drawRowBackground(c, 0);
-            boolean usable = Trakt.configured();
-            rowLabel.setColor(blend(usable ? 0xF2FFFFFF : 0x73FFFFFF, usable ? INK : 0x731C1C1E, f));
+            rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
             c.drawText(traktAction(), rowRect.left + 30 * k, rowRect.centerY() + Ui.halfCap(rowLabel), rowLabel);
             rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
             c.drawText(traktStatus(), rowRect.right - 30 * k, rowRect.centerY() + Ui.halfCap(rowLabel), rowValue);
 
             float y = (LIST_TOP + 20 + LIST_ROW_H + 64) * k;
             int state = t.loginState();
-            if (!usable) {
-                drawWrapped(c, Ui.tr("No Trakt Client ID: see the README (config.properties)."), x, y, 0);
-            } else if (state == Trakt.WAITING) {
+            if (state == Trakt.WAITING) {
                 y = drawWrapped(c, Ui.trf("On your phone or computer, go to {url} and enter this code:", "url", t.loginUrl()), x, y, 30 * k);
                 Paint code = Ui.text(Ui.displaySemibold, 92 * k, 0xFFFFFFFF);
                 code.setLetterSpacing(0.14f);
@@ -1216,6 +1223,7 @@ public class SettingsActivity extends Activity {
                 screen = REMOTE_KEYS;
                 focus = 0;
             } else if (focus == TRAKT_ROW) {
+                if (disabledRow(TRAKT_ROW)) return;     // no Client ID: nothing to open
                 screen = TRAKT;
                 focus = 0;
             } else {
