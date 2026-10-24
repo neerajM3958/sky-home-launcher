@@ -1604,14 +1604,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void openDrawer() {
         catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
         syncRows();
+        syncBrowse();
         if (drawerItems.isEmpty()) {
-            // No inputs (a streamer): the drawer opens on the poster rows; with none either, one button keeps it open.
-            if (catRows.isEmpty()) setDrawerItems(HomeApps.drawerFallback());
+            // No inputs (a streamer): the drawer opens on the poster rows (Trakt's, else TMDB's catalogs); with none either,
+            // one button keeps it open.
+            if (catRows.isEmpty() && browseRows.isEmpty()) setDrawerItems(HomeApps.drawerFallback());
             else {
                 drawerOpen = true;
                 drawer.target = 1;
                 drawerDirty = true;
-                enterCatalog();
+                if (!enterCatalog()) enterBrowse();
                 return;
             }
         }
