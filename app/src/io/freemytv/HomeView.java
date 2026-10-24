@@ -223,7 +223,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int catRowIndex;
     private boolean catDirty, catWasMoving;
     private Paint lCatTitle, lCatLabel;
-    private final RectF cardRect = new RectF();
+    private final RectF cardRect = new RectF(), barRect = new RectF();
     private int drawerIndex;
 
     // "All Apps" sheet
@@ -2044,10 +2044,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
                 }
                 drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
+                if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
+                    barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
+                    fill.setShader(null);
+                    fill.setColor(0x73FFFFFF);
+                    c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
+                    barRect.right = barRect.left + barRect.width() * Math.min(1f, it.progress);
+                    fill.setColor(0xFFFFFFFF);
+                    c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
+                }
                 fitPaint.set(lCatLabel);
                 c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
                         cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
-                if (it.stars != null) c.drawText(it.stars, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
+                String meta = it.sub != null ? it.sub : it.stars;
+                if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
             }
         }
     }
@@ -2422,12 +2432,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             String app = recs.catalogApp();
             if (app == null || catRows.isEmpty()) return;
             listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
+            if (listed.episodes) {      // a show you watch: its episodes, not the app
+                click.open();
+                activity.startActivity(EpisodesActivity.intent(activity, listed));
+                return;
+            }
             Recs.Pick p = new Recs.Pick();
             p.id = listed.id;
             p.kind = listed.kind;
             p.title = listed.title;
             p.pkg = app;
             p.link = listed.link;
+            if (p.link == null && listed.imdb != null && Recs.STREMIO.equals(app)) p.link = Recs.stremioLink(listed.kind, listed.imdb);
             pick = p;
             it = HomeApps.app(app, listed.title, p.link);
             r = new RectF();

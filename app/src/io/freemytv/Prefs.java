@@ -129,6 +129,16 @@ final class Prefs {
     static boolean coin(int i) { return sp().getBoolean("coin" + i, true); }
     static void setCoin(int i, boolean on) { put("coin" + i, on); }
 
+    // MARK: - Episodes screen
+
+    /** How the episodes screen sorts (an EpisodeList sort), the same for every show. */
+    static int episodeSort() {
+        int v = sp().getInt("episodeSort", EpisodeList.NUMBER_DESC);
+        return v >= EpisodeList.NUMBER_DESC && v <= EpisodeList.DATE_ASC ? v : EpisodeList.NUMBER_DESC;
+    }
+
+    static void setEpisodeSort(int v) { sp().edit().putInt("episodeSort", v).apply(); }
+
     // MARK: - Shelf
 
     /** Packages on the home shelf, in order; null until the user edits it (then the built-in list applies). */

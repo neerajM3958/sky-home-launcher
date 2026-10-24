@@ -528,7 +528,18 @@ final class Recs {
         return MAP.size() == 1 && MAP.get(0)[0].equals("*");
     }
 
-    private static final String STREMIO = "com.stremio.one";
+    static final String STREMIO = "com.stremio.one";
+
+    /** Stremio's page for a title, from its IMDb id; `kind` is TMDB's "movie" or "tv". */
+    static String stremioLink(String kind, String imdb) {
+        return "stremio:///detail/" + (kind.equals("movie") ? "movie" : "series") + "/" + imdb;
+    }
+
+    /** Stremio's page for one episode of a show (checked on a TV: it opens the episode's streams). */
+    static String stremioEpisode(String imdb, int season, int number) {
+        return "stremio:///detail/series/" + imdb + "/" + imdb + ":" + season + ":" + number;
+    }
+
     private static final long GENRES_EVERY = 7 * 24 * 3600_000L;
     private final Map<String, String> genreNames = new HashMap<>();   // "movie28" → "Action"
     private final ExecutorService net = Executors.newFixedThreadPool(4, r -> {

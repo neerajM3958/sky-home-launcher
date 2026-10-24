@@ -39,7 +39,13 @@ final class Catalogs {
         String title, poster;
         double rating;
         String link;        // the title's page in its app, once found
+        String imdb;        // Trakt's rows know it already: Stremio's page needs no TMDB request
+        int traktId;        // Trakt's own id, for its episode list
+        boolean episodes;   // OK opens the show's episodes (the "Shows you watch" row) instead of the title's page
         String stars;       // "★ 7.8", or null
+        String posterUrl;   // Trakt's own poster (a whole address); null: `poster` is a TMDB path
+        String sub;         // under the title instead of the stars ("S2 · E5"), or null
+        float progress;     // 0 to 1: a bar on the poster, when it is part-way through
     }
 
     static final class Row {
@@ -73,7 +79,8 @@ final class Catalogs {
         }
     };
     private final Set<String> pending = new HashSet<>();
-    private volatile List<Row> rows = new ArrayList<>();
+    private volatile List<Row> rows = new ArrayList<>();      // TMDB's
+    private volatile List<Row> shown = new ArrayList<>();     // Trakt's rows (when connected), then TMDB's
     private volatile boolean fetching;
     private volatile long at, failedAt;
     private volatile String language = "";
@@ -95,14 +102,23 @@ final class Catalogs {
             language = cache.getString("language", "");
         } catch (Exception ignored) {
         }
+        Trakt.get(c).setListener(() -> { rebuild(); notifyListeners(); });
+        rebuild();
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
     void removeListener(Listener l) { listeners.remove(l); }
 
-    /** The rows to show; empty without a TMDB key, without the app that opens them, or with "catalogs=" empty. */
+    /** The rows to show; empty without the app that opens them. TMDB's rows also need its key and "catalogs=" not empty. */
     List<Row> rows() {
-        return Recs.hasKey(context) && Recs.get(context).catalogApp() != null ? rows : new ArrayList<Row>();
+        return Recs.get(context).catalogApp() != null ? shown : new ArrayList<Row>();
+    }
+
+    /** A new list each time the rows change: the home screen compares it by reference. */
+    private void rebuild() {
+        List<Row> all = new ArrayList<>(Trakt.get(context).rows());
+        if (Recs.hasKey(context)) all.addAll(rows);
+        shown = all;
     }
 
     private static List<String> keys() {
@@ -147,7 +163,9 @@ final class Catalogs {
 
     /** Fetches the rows when they are older than a few hours, in another language or not the ones asked for (the home screen calls this when the drawer opens). */
     void refreshIfStale() {
-        if (fetching || !Recs.hasKey(context) || Recs.get(context).catalogApp() == null) return;
+        if (Recs.get(context).catalogApp() == null) return;
+        Trakt.get(context).refreshIfStale();
+        if (fetching || !Recs.hasKey(context)) return;
         List<String> keys = keys();
         if (keys.isEmpty()) return;
         long now = System.currentTimeMillis();
@@ -177,6 +195,7 @@ final class Catalogs {
                     for (Row old : rows) for (Item o : old.items) if (o.link != null && o.id == it.id && o.kind.equals(it.kind)) it.link = o.link;
                 }
                 rows = next;
+                rebuild();
                 at = System.currentTimeMillis();
                 language = Ui.language;
                 failedAt = 0;
@@ -272,8 +291,16 @@ final class Catalogs {
         images.execute(() -> {
             try {
                 File f = new File(new File(context.getCacheDir(), "catalogs"), it.poster.replace("/", ""));
-                if (!f.exists()) download(it.poster, f);
-                Bitmap b = BitmapFactory.decodeFile(f.getPath());
+                if (!f.exists()) download(it.posterUrl != null ? it.posterUrl : IMAGES + it.poster, f);
+                // Trakt's posters are larger than TMDB's w342: decoded at half or a quarter of their size when that is still enough.
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(f.getPath(), bounds);
+                BitmapFactory.Options decode = new BitmapFactory.Options();
+                int sample = 1;
+                while (sample < 8 && bounds.outWidth / (sample * 2) >= width * 5 / 4) sample *= 2;
+                decode.inSampleSize = sample;
+                Bitmap b = BitmapFactory.decodeFile(f.getPath(), decode);
                 if (b != null && b.getWidth() > width * 5 / 4) {     // kept at the size it is drawn at: a quarter of the memory
                     Bitmap small = Bitmap.createScaledBitmap(b, width, Math.round(b.getHeight() * (float) width / b.getWidth()), true);
                     if (small != b) b.recycle();
@@ -295,11 +322,12 @@ final class Catalogs {
         return null;
     }
 
-    private static void download(String path, File f) throws IOException {
+    private static void download(String url, File f) throws IOException {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File part = new File(f.getPath() + ".part");
-        HttpURLConnection c = (HttpURLConnection) new URL(IMAGES + path).openConnection();
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestProperty("User-Agent", "FreeMyTV");
         c.setConnectTimeout(8000);
         c.setReadTimeout(20000);
         try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
