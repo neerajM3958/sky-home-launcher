@@ -82,6 +82,7 @@ public class EpisodesActivity extends Activity {
         private final EpisodesActivity activity;
         private final Trakt trakt;
         private final Catalogs catalogs;
+        private final MaterialExpressive material = new MaterialExpressive();
         private final Scene scene = new Scene();
         private final Spoken spoken;
         private final int traktId;
@@ -115,6 +116,7 @@ public class EpisodesActivity extends Activity {
 
         private int w, h, visible = 8;
         private float k = 1;
+        private float currentNight;
         private long startedAt, lastNanos, lastSky;
         private boolean okDown, backDown;
 
@@ -627,6 +629,7 @@ public class EpisodesActivity extends Activity {
             k = w / 1920f;
             wraps.clear();
             scene.setSize(w, h);
+            material.setSize(w, h);
             visible = Math.max(3, (int) ((h / k - LIST_TOP - 24) / PITCH));
             pTitle = Ui.text(Ui.displaySemibold, 44 * k, 0xFFFFFFFF);
             pLabel = Ui.text(Ui.semibold, 18 * k, 0x99FFFFFF);
@@ -662,7 +665,12 @@ public class EpisodesActivity extends Activity {
             ensureVisible();
         }
 
-        private static int blend(int a, int b, float f) {
+        private int blend(int a, int b, float f) {
+            if (Themes.expressive() && (a & 0x00FFFFFF) == 0x00FFFFFF && (b & 0x00FFFFFF) == (INK & 0x00FFFFFF)) {
+                int role = (a >>> 24) < 0xC0 ? MaterialExpressive.ON_VARIANT : MaterialExpressive.ON_SURFACE;
+                a = (a & 0xFF000000) | (material.color(role, currentNight) & 0x00FFFFFF);
+                b = (b & 0xFF000000) | (material.color(MaterialExpressive.ON_PRIMARY_CONTAINER, currentNight) & 0x00FFFFFF);
+            }
             int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
             int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
             return (Math.round(aa + (ba - aa) * f) << 24) | (Math.round(ar + (br - ar) * f) << 16)
@@ -674,6 +682,11 @@ public class EpisodesActivity extends Activity {
             float s = 1 + 0.02f * f, cx = r.centerX(), cy = r.centerY();
             tmp.set(cx - r.width() * s / 2, cy - r.height() * s / 2, cx + r.width() * s / 2, cy + r.height() * s / 2);
             float radius = 18 * k * s;
+            if (Themes.expressive()) {
+                material.panel(c, tmp, radius, currentNight, true);
+                material.focused(c, tmp, radius, f, currentNight);
+                return;
+            }
             tmp.offset(0, 10 * k * f);
             shadow.setColor(Ui.alpha(0xFF000000, 0.4f * f));
             c.drawRoundRect(tmp, radius, radius, shadow);
@@ -704,6 +717,35 @@ public class EpisodesActivity extends Activity {
 
         @Override protected void onDraw(Canvas c) {
             if (w == 0) return;
+            currentNight = Prefs.theme().equals("light") ? 0 : Prefs.theme().equals("dark") ? 1
+                    : (HomeData.get(getContext()).isNight(System.currentTimeMillis()) ? 1 : 0);
+            if (Themes.expressive()) {
+                pTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
+                pLabel.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                pValue.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
+                pCount.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                pCountRight.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                pNum.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                pRowTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
+                pDate.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                pHint.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                pCenter.setColor(material.color(MaterialExpressive.ON_SURFACE, currentNight));
+                wrapPaint.setColor(material.color(MaterialExpressive.ON_VARIANT, currentNight));
+                white.setColor(material.color(MaterialExpressive.PRIMARY_CONTAINER, currentNight));
+            } else {
+                pTitle.setColor(0xFFFFFFFF);
+                pLabel.setColor(0x99FFFFFF);
+                pValue.setColor(0xF2FFFFFF);
+                pCount.setColor(0xB3FFFFFF);
+                pCountRight.setColor(0xB3FFFFFF);
+                pNum.setColor(0xF2FFFFFF);
+                pRowTitle.setColor(0xF2FFFFFF);
+                pDate.setColor(0xB3FFFFFF);
+                pHint.setColor(0x8CFFFFFF);
+                pCenter.setColor(0xCCFFFFFF);
+                wrapPaint.setColor(0x99FFFFFF);
+                white.setColor(0xFFF5F5F7);
+            }
             long now = System.nanoTime();
             float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (now - lastNanos) / 1e9f);
             lastNanos = now;
@@ -714,7 +756,10 @@ public class EpisodesActivity extends Activity {
                 lastSky = up;
                 scene.advance((up - startedAt) / 1000f);
             }
-            scene.drawBackground(c);
+            if (Themes.expressive()) {
+                tmp.set(0, 0, w, h);
+                material.background(c, tmp, currentNight);
+            } else scene.drawBackground(c);
             drawLeft(c);
             drawBar(c);
             drawCount(c);

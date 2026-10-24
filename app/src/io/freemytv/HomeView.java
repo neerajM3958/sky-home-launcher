@@ -109,6 +109,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private final Activity activity;
     private final Scene scene = new Scene();
+    private final MaterialExpressive material = new MaterialExpressive();
     private final HomeData data;
     private final Recs recs;
     private final Click click;
@@ -609,6 +610,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         k = w / 1920f;
         screen.set(0, 0, w, h);
         scene.setSize(w, h);
+        material.setSize(w, h);
         makePaints();
         gridLabels = null;
         clockMinute = -1;
@@ -1000,6 +1002,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The day color or the night color, depending on the night value (blended during the transition). */
     private int tone(int onLight, int onDark) {
+        if (Themes.expressive()) return material.color((onLight == L_INK || onLight == 0xFF1D1D1F)
+                ? MaterialExpressive.ON_SURFACE : MaterialExpressive.ON_VARIANT, dark());
         return blend(onLight, onDark, dark());
     }
 
@@ -1021,6 +1025,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lWeather.setColor(tone(L_DIM, 0xFF98989D));
         lClockQuote.setColor(tone(L_DIM, 0xFF98989D));
         staleQuote.setColor(tone(L_FAINT, 0x99FFFFFF));
+        if (Themes.expressive()) {
+            lTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, dark()));
+            lTab.setColor(material.color(MaterialExpressive.ON_VARIANT, dark()));
+            lTabOn.setColor(material.color(MaterialExpressive.PRIMARY, dark()));
+            lCardTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, dark()));
+            lCardMeta.setColor(material.color(MaterialExpressive.ON_VARIANT, dark()));
+            lTip.setColor(material.color(MaterialExpressive.ON_PRIMARY_CONTAINER, dark()));
+        }
     }
 
     private boolean tickBackgroundFade(long up) {
@@ -1219,6 +1231,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawPlatter(Canvas c) {
         if (shelf.isEmpty()) return;
         float radius = (TILE_RADIUS + SHELF_PAD) * k;
+        if (Themes.expressive()) {
+            material.panel(c, platterRect, radius, dark(), false);
+            return;
+        }
         tmp.set(platterRect);
         tmp.offset(0, 18 * k);
         shadow.setColor(tone(0x1F000000, 0x52000000));
@@ -1396,6 +1412,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else {
             if (it.tile != null) roundImage(c, it.tile, cell, r);
         }
+        if (Themes.expressive() && fc > 0.01f) material.ring(c, cell, r, fc, dark());
     }
 
     /**
@@ -1564,6 +1581,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Glass for a drawer card or button: white by day, smoked at night (both during the transition). */
     private void drawerGlass(Canvas c, RectF r, float radius, float lightTint, int shadowColor, float drop) {
+        if (Themes.expressive()) {
+            material.panel(c, r, radius, dark(), true);
+            return;
+        }
         float dk = dark();
         if (dk < 0.999f) {
             tmp.set(r);
@@ -1802,7 +1823,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawSheet(Canvas c) {
-        c.drawColor(0xA8000000);
+        if (Themes.expressive()) {
+            tmp.set(0, 0, w, h);
+            material.background(c, tmp, dark());
+            sheetTitle.setColor(material.color(MaterialExpressive.ON_SURFACE, dark()));
+        } else {
+            c.drawColor(0xA8000000);
+            sheetTitle.setColor(0xFFFFFFFF);
+        }
         float shift = scroll.value * GRID_ROW * k;
         c.drawText(Ui.tr("All Apps"), w / 2f, 124 * k - shift, sheetTitle);
         int n = others.size();
@@ -1824,7 +1852,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float f = gridFocus[i].value;
             drawCard(c, others.get(i).tile, gridCell, GRID_RADIUS * k, f, 0.08f);
             if (sheetOpen && i == gridIndex) focusedCell.set(cell);
-            gridLabel.setColor(blend(0x99FFFFFF, 0xFFFFFFFF, Ui.clamp(f)));
+            gridLabel.setColor(Themes.expressive()
+                    ? material.color(f > 0.5f ? MaterialExpressive.ON_SURFACE : MaterialExpressive.ON_VARIANT, dark())
+                    : blend(0x99FFFFFF, 0xFFFFFFFF, Ui.clamp(f)));
             c.drawText(gridLabels[i], gridCell.centerX(), gridCell.bottom + (40 + 6 * f) * k, gridLabel);
         }
     }
@@ -1863,14 +1893,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             veil.setColor(Ui.alpha(0xFF000000, 0.08f * (1 - fc)));
             c.drawRoundRect(cell, r, r, veil);
         }
-        border.setColor(0x14FFFFFF);
-        c.drawRoundRect(cell, r, r, border);
-        if (f > 0.01f) {
-            rim.setShader(null);
-            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.4f * fc));
-            rim.setStrokeWidth(1.5f * k);
-            c.drawRoundRect(cell, r, r, rim);
-            rim.setStrokeWidth(2.5f * k);
+        if (Themes.expressive()) {
+            if (fc > 0.01f) material.ring(c, cell, r, fc, dark());
+        } else {
+            border.setColor(0x14FFFFFF);
+            c.drawRoundRect(cell, r, r, border);
+            if (f > 0.01f) {
+                rim.setShader(null);
+                rim.setColor(Ui.alpha(0xFFFFFFFF, 0.4f * fc));
+                rim.setStrokeWidth(1.5f * k);
+                c.drawRoundRect(cell, r, r, rim);
+                rim.setStrokeWidth(2.5f * k);
+            }
         }
     }
 
@@ -3018,6 +3052,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * same photo almost black (or a dark gradient), drawn on top during the transition.
      */
     private void drawLightSky(Canvas c) {
+        if (Themes.expressive()) {
+            material.background(c, screen, dark());
+            return;
+        }
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
@@ -3065,7 +3103,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float focus = Ui.clamp(topFocus[tab].value);
         for (int i = 0; i < 3; i++) {
             RectF r = topRects[i];
-            if (i == tab && focus > 0.01f) {
+            if (Themes.expressive()) {
+                cell.set(r);
+                float rr = cell.height() * 0.42f;
+                fill.setShader(null);
+                fill.setColor(material.color(i == tab ? MaterialExpressive.PRIMARY_CONTAINER : MaterialExpressive.SURFACE_CONTAINER, dark()));
+                c.drawRoundRect(cell, rr, rr, fill);
+                if (i == tab) material.focused(c, cell, rr, focus, dark());
+            } else if (i == tab && focus > 0.01f) {
                 float s = 1 + 0.05f * focus;
                 cell.set(r.centerX() - r.width() * s / 2, r.centerY() - r.height() * s / 2,
                         r.centerX() + r.width() * s / 2, r.centerY() + r.height() * s / 2);
@@ -3081,7 +3126,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 c.drawRoundRect(cell, rr, rr, fill);
             }
             Paint p = i == tab ? lTabOn : lTab;
-            if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
+            if (i == tab) lTabOn.setColor(Themes.expressive()
+                    ? material.color(MaterialExpressive.ON_PRIMARY_CONTAINER, dark())
+                    : blend(tone(L_INK, WHITE), L_INK, focus));
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
         int top = -1;
@@ -3154,7 +3201,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         RectF base = cardRects[i];
         Recs.Pick p = cardAt(i);
         float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.05f * v;
-        float bw = base.width(), bh = base.height(), r0 = 18 * k;
+        float bw = base.width(), bh = base.height(), r0 = (Themes.expressive() ? (i == 0 ? 40 : i == 1 ? 28 : 48) : 18) * k;
         float cx = base.centerX(), cy = base.centerY() - 6 * k * v;
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
         float r = r0 * s;
@@ -3175,7 +3222,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
             c.drawRoundRect(cell, r, r, fill);
         }
-        if (f > 0.01f) {
+        if (f > 0.01f && !Themes.expressive()) {
             if (lightSheens.length != cardRects.length) {
                 lightSheens = new LinearGradient[cardRects.length];
                 lightRims = new LinearGradient[cardRects.length];
@@ -3203,6 +3250,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             rim.setAlpha(255);
             c.restore();
         }
+        if (Themes.expressive() && f > 0.01f) material.ring(c, cell, r, f, dark());
         if (p == null) return;
         fitPaint.set(lCardTitle);
         c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 46 * k, lCardTitle);
@@ -3227,15 +3275,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             tmp.offset(0, (6 + 8 * f) * k);
             shadow.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
             shadows.draw(c, tmp, rad, SHADOW_BLUR * k, shadow);
-            scene.liquid(c, cell, rad, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
-                    tone(0.6f, 0.45f), 1 - f);
-            if (f > 0.01f) {
+            if (Themes.expressive()) {
+                material.panel(c, cell, rad * (1 - 0.48f * f), dark(), true);
+                material.focused(c, cell, rad * (1 - 0.48f * f), f, dark());
+            } else {
+                scene.liquid(c, cell, rad, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
+                        tone(0.6f, 0.45f), 1 - f);
+            }
+            if (f > 0.01f && !Themes.expressive()) {
                 fill.setShader(null);
                 fill.setColor(Ui.alpha(0xFFFFFFFF, f));
                 c.drawCircle(cell.centerX(), cell.centerY(), rad, fill);
             }
             Symbols.draw(getContext(), c, it.symbol, cell.centerX(), cell.centerY(), 27 * k * s,
-                    blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
+                    Themes.expressive() ? material.color(f > 0.5f ? MaterialExpressive.ON_PRIMARY_CONTAINER : MaterialExpressive.ON_SURFACE, dark())
+                            : blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
             if (f > 0.01f) {
                 String label = it.label;
                 float half = lTip.measureText(label) / 2;

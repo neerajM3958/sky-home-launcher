@@ -21,15 +21,15 @@ photo slides (a look can restyle its caption later).
 
 Today (Glass, dark, on the Skyworth stick):
 
-![Glass, today](theming/current_glass_home.jpg)
+![Glass, today](plans/theming/current_glass_home.jpg)
 
 Material 3 Expressive, dark:
 
-![Material 3 Expressive, dark](theming/mockup_material3_dark.jpg)
+![Material 3 Expressive, dark](plans/theming/mockup_material3_dark.jpg)
 
 Material 3 Expressive, light:
 
-![Material 3 Expressive, light](theming/mockup_material3_light.jpg)
+![Material 3 Expressive, light](plans/theming/mockup_material3_light.jpg)
 
 The mockups are drawn by a script, not by the app; the posters and app icons are cropped from the real screenshot above. Icons
 are plain shapes I drew, not Google's. They show the intent, not final pixels or motion.

@@ -103,6 +103,14 @@ final class Prefs {
 
     static void setTheme(String v) { put("theme", v); }
 
+    /** The visual theme is independent of the light/dark color scheme. */
+    static String look() {
+        String v = sp().getString("look", "glass");
+        return Themes.has(v) ? v : Themes.GLASS;
+    }
+
+    static void setLook(String v) { put("look", Themes.has(v) ? v : Themes.GLASS); }
+
     // MARK: - City
 
     static String city() { return sp().getString("city", Config.CITY).trim(); }
