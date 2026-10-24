@@ -655,9 +655,42 @@ final class Recs {
         return out;
     }
 
-    /** The app a catalog row's title opens (the "*" rule of service_map, when every title opens the same app), or null: no rows. */
-    String catalogApp() {
-        return listOnly() ? target("", false) : null;
+    // MARK: - What Launcher needs (which app a service opens; the rest of this class stays about the picks)
+
+    /** The SERVICES row (name part, key, package) for a provider's name on TMDB, or null when the TV has no app we know for it. */
+    String[] serviceRow(String providerName) {
+        return service(providerName);
+    }
+
+    boolean appInstalled(String pkg) {
+        return installed(pkg);
+    }
+
+    /** The app service_map sends this service to (its own rule, else the "*" rule; only when it is on the TV), or null. */
+    String serviceOverride(String providerName) {
+        return target(providerName, false);
+    }
+
+    /** service_map has a rule for named services, not only "*". */
+    boolean hasNamedRules() {
+        for (String[] rule : MAP) if (!rule[0].equals("*")) return true;
+        return false;
+    }
+
+    /** The app service_map's "*" rule names, for every service without a rule of its own and for what can't be found out (when it is on the TV), or null. */
+    String catchAllApp() {
+        return target("", false);
+    }
+
+    /** The service is in hide_services: it never opens, even when its app is on the TV. */
+    boolean hiddenService(String providerName) {
+        String n = providerName.toLowerCase(Locale.ROOT);
+        for (String key : HIDDEN) if (n.contains(key)) return true;
+        return false;
+    }
+
+    String appName(String pkg) {
+        return appLabel(pkg);
     }
 
     /** A pick that opens Stremio and doesn't know its IMDb id yet. */
@@ -968,7 +1001,8 @@ final class Recs {
         }
     }
 
-    private JSONObject get(String path) throws IOException, org.json.JSONException {
+    /** A TMDB request (the key is added); Launcher asks for a title's streaming services with it. */
+    JSONObject get(String path) throws IOException, org.json.JSONException {
         String key = readKey();
         if (key == null) throw new IOException("no TMDB key");
         boolean bearer = key.startsWith("eyJ");   // read access token (v4) or API key (v3)

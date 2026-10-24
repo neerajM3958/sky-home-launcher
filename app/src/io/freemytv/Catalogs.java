@@ -29,8 +29,8 @@ import java.util.concurrent.Executors;
 
 /**
  * The poster rows under the drawer's weather and quotes cards (config.properties "catalogs"): one TMDB list request per
- * row, saved for a few hours, with posters loaded only when a row is near the screen. A title opens in the app that
- * service_map's "*" rule names (Stremio on its page), so there are no rows without that rule.
+ * row, saved for a few hours, with posters loaded only when a row is near the screen. A title opens through Launcher
+ * (its own app, its Play Store page, or service_map's "*" app), like every other card.
  */
 final class Catalogs {
     static final class Item {
@@ -109,9 +109,9 @@ final class Catalogs {
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
     void removeListener(Listener l) { listeners.remove(l); }
 
-    /** The rows to show; empty without the app that opens them. TMDB's rows also need its key and "catalogs=" not empty. */
+    /** The rows to show: Trakt's when connected, then TMDB's (they need its key and "catalogs=" not empty). A card opens through Launcher. */
     List<Row> rows() {
-        return Recs.get(context).catalogApp() != null ? shown : new ArrayList<Row>();
+        return shown;
     }
 
     /** A new list each time the rows change: the home screen compares it by reference. */
@@ -163,7 +163,6 @@ final class Catalogs {
 
     /** Fetches the rows when they are older than a few hours, in another language or not the ones asked for (the home screen calls this when the drawer opens). */
     void refreshIfStale() {
-        if (Recs.get(context).catalogApp() == null) return;
         Trakt.get(context).refreshIfStale();
         if (fetching || !Recs.hasKey(context)) return;
         List<String> keys = keys();

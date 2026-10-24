@@ -43,7 +43,7 @@ public class EpisodesActivity extends Activity {
     static Intent intent(Context c, Catalogs.Item item) {
         return new Intent(c, EpisodesActivity.class).putExtra("id", item.traktId).putExtra("title", item.title)
                 .putExtra("imdb", item.imdb == null ? "" : item.imdb).putExtra("poster", item.poster)
-                .putExtra("posterUrl", item.posterUrl == null ? "" : item.posterUrl);
+                .putExtra("posterUrl", item.posterUrl == null ? "" : item.posterUrl).putExtra("tmdb", item.id);
     }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -86,6 +86,12 @@ public class EpisodesActivity extends Activity {
         private final Spoken spoken;
         private final int traktId;
         private final String title, imdb;
+        private final int tmdbId;
+        // Where OK opens an episode (Launcher: the show's own app, its Play Store page, the "*" app, or nothing), looked
+        // up once when the screen opens so a press is instant; `waiting` is a press that came before the answer.
+        private Routing.Target target;
+        private Launcher.Handle waiting;
+        private long waitingAt;
         private final Catalogs.Item posterItem = new Catalogs.Item();
 
         private final EpisodeList list = new EpisodeList();
@@ -132,6 +138,7 @@ public class EpisodesActivity extends Activity {
             traktId = intent.getIntExtra("id", 0);
             title = intent.getStringExtra("title") == null ? "" : intent.getStringExtra("title");
             imdb = intent.getStringExtra("imdb") == null ? "" : intent.getStringExtra("imdb");
+            tmdbId = intent.getIntExtra("tmdb", 0);
             posterItem.poster = intent.getStringExtra("poster") == null ? "" : intent.getStringExtra("poster");
             String url = intent.getStringExtra("posterUrl");
             posterItem.posterUrl = url == null || url.isEmpty() ? null : url;
@@ -167,6 +174,10 @@ public class EpisodesActivity extends Activity {
             catalogs.addListener(this);
             Choreographer.getInstance().postFrameCallback(this);
             load();
+            Launcher.get(getContext()).open("tv", tmdbId, imdb, found -> {
+                target = found;
+                invalidate();
+            });
             spoken.readAgain();
         }
 
@@ -400,7 +411,17 @@ public class EpisodesActivity extends Activity {
 
         boolean onKey(KeyEvent e) {
             boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
-            switch (e.getKeyCode()) {
+            int key = e.getKeyCode();
+            if (waiting != null && key != KeyEvent.KEYCODE_DPAD_CENTER && key != KeyEvent.KEYCODE_ENTER
+                    && key != KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                // A press is waiting for where the show streams: Back or moving cancels it (Back does only that).
+                if (down && key != KeyEvent.KEYCODE_BACK) stopWaiting();
+                if (key == KeyEvent.KEYCODE_BACK) {
+                    if (!down) stopWaiting();
+                    return true;
+                }
+            }
+            switch (key) {
                 case KeyEvent.KEYCODE_DPAD_UP:
                     if (down) move(0, -1);
                     return true;
@@ -537,22 +558,66 @@ public class EpisodesActivity extends Activity {
             moved();
         }
 
+        private void stopWaiting() {
+            if (waiting == null) return;
+            waiting.cancel();
+            waiting = null;
+            invalidate();
+        }
+
         private void openEpisode(EpisodeList.Episode e) {
-            String app = Recs.get(getContext()).catalogApp();
-            if (app == null) return;
-            String uri = Recs.STREMIO.equals(app) && !imdb.isEmpty() ? Recs.stremioEpisode(imdb, e.season, e.number) : null;
-            HomeApps.Item item = HomeApps.app(app, title, uri);
+            if (waiting != null) return;
             RectF r = rowBox(sel);
-            if (!HomeApps.open(activity, item, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()))) {
-                Toast.makeText(getContext(), Ui.trf("Couldn't open {app}.", "app", item.label), Toast.LENGTH_SHORT).show();
+            final RectF from = new RectF(r);
+            Routing.Target t = target;
+            if (t == null || (t.kind == Routing.NONE && t.reason == Routing.COULDNT_CHECK)) {
+                // Not known yet (or the first try timed out): ask now, with the dots on the row if it takes a moment.
+                waitingAt = SystemClock.uptimeMillis();
+                waiting = Launcher.get(getContext()).open("tv", tmdbId, imdb, found -> {
+                    waiting = null;
+                    target = found;
+                    go(found, e, from);
+                });
+                return;
             }
+            go(t, e, from);
+        }
+
+        /** Stremio opens the episode itself; another app opens the show (service apps take no episode address). */
+        private void go(Routing.Target t, EpisodeList.Episode e, RectF from) {
+            Launcher launcher = Launcher.get(getContext());
+            if (t.kind == Routing.APP) {
+                String uri = Recs.STREMIO.equals(t.pkg) && !imdb.isEmpty() ? Recs.stremioEpisode(imdb, e.season, e.number) : t.uri;
+                HomeApps.Item item = HomeApps.app(t.pkg, launcher.appName(t.pkg), uri);
+                if (!HomeApps.open(activity, item, this, Math.round(from.left), Math.round(from.top), Math.round(from.width()), Math.round(from.height()))) {
+                    Toast.makeText(getContext(), Ui.trf("Couldn't open {app}.", "app", item.label), Toast.LENGTH_SHORT).show();
+                }
+            } else if (t.kind == Routing.STORE) {
+                if (!HomeApps.openStore(activity, t.pkg)) Toast.makeText(getContext(), Ui.tr("Couldn't open the Play Store."), Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(getContext(), Launcher.message(t), Toast.LENGTH_SHORT).show();
+            }
+            invalidate();
+        }
+
+        /** Where OK goes, in words (before the answer is in: just that it opens the episode). */
+        private String whereOkGoes() {
+            Routing.Target t = target;
+            if (t == null) return Ui.tr("OK opens the episode.");
+            Launcher launcher = Launcher.get(getContext());
+            if (t.kind == Routing.APP) {
+                return Recs.STREMIO.equals(t.pkg) && !imdb.isEmpty() ? Ui.trf("OK opens the episode in {app}.", "app", launcher.appName(t.pkg))
+                        : Ui.trf("OK opens the show in {app}.", "app", launcher.appName(t.pkg));
+            }
+            if (t.kind == Routing.STORE) return Ui.trf("OK opens {app} in the Play Store.", "app", launcher.appName(t.pkg));
+            return Launcher.message(t);
         }
 
         // MARK: - Drawing
 
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (!scroll.settled() || !pop.settled() || SystemClock.uptimeMillis() - lastSky >= 100) invalidate();
+            if (!scroll.settled() || !pop.settled() || waiting != null || SystemClock.uptimeMillis() - lastSky >= 100) invalidate();
             Choreographer.getInstance().postFrameCallback(this);
         }
 
@@ -681,13 +746,17 @@ public class EpisodesActivity extends Activity {
             c.restore();
             y += (titleLayout.getLineBaseline(titleLayout.getLineCount() - 1) - titleLayout.getLineBaseline(0)) + 44 * k + 30 * k;
             if (!summary.isEmpty()) c.drawText(summary, POSTER_X * k, y, pCount);
-            String hint = zone == CHOOSER ? Ui.tr("OK picks, Back cancels.")
-                    : zone == BAR ? Ui.tr("OK changes the filter. Down goes to the episodes.")
-                    : list.sort == EpisodeList.NUMBER_DESC || list.sort == EpisodeList.NUMBER_ASC
-                    ? Ui.tr("OK opens the episode. ← → jump a season.") : Ui.tr("OK opens the episode. ← → scroll a page.");
-            float hy = h - 130 * k;
-            hy = drawWrapped(c, hint, POSTER_X * k, hy, 470 * k);
-            if (zone == LIST) drawWrapped(c, Ui.tr("Channel + and − scroll a page."), POSTER_X * k, hy - 6 * k, 470 * k);
+            float hy = h - (zone == LIST ? 200 : 130) * k;
+            if (zone == CHOOSER) {
+                drawWrapped(c, Ui.tr("OK picks, Back cancels."), POSTER_X * k, hy, 470 * k);
+            } else if (zone == BAR) {
+                drawWrapped(c, Ui.tr("OK changes the filter. Down goes to the episodes."), POSTER_X * k, hy, 470 * k);
+            } else {
+                hy = drawWrapped(c, whereOkGoes(), POSTER_X * k, hy, 470 * k);
+                hy = drawWrapped(c, list.sort == EpisodeList.NUMBER_DESC || list.sort == EpisodeList.NUMBER_ASC
+                        ? Ui.tr("← → jump a season.") : Ui.tr("← → scroll a page."), POSTER_X * k, hy - 6 * k, 470 * k);
+                drawWrapped(c, Ui.tr("Channel + and − scroll a page."), POSTER_X * k, hy - 6 * k, 470 * k);
+            }
         }
 
         private void drawBar(Canvas c) {
@@ -786,6 +855,13 @@ public class EpisodesActivity extends Activity {
             if (e.watched) {
                 float cw = Symbols.width(getContext(), "check", 24 * k);
                 Symbols.draw(getContext(), c, "check", r.right - 40 * k - cw / 2, r.centerY(), 24 * k, blend(0xCCFFFFFF, INK, f));
+            }
+            long waited = SystemClock.uptimeMillis() - waitingAt;
+            if (waiting != null && i == sel && waited >= 150) {      // waiting for where the show streams
+                fill.setColor(0x80000000);
+                c.drawRoundRect(r, 18 * k, 18 * k, fill);
+                fill.setColor(0xFFFFFFFF);
+                Ui.dots(c, r.centerX(), r.centerY(), 6 * k, waited / 1000f, fill);
             }
         }
 

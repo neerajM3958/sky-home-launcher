@@ -113,8 +113,8 @@ The first values come from `config.properties`, created by the first build (Goog
 | `latitude`, `longitude` | Your city, for the weather and the sunset | New York |
 | `city` | The name on the weather card | `Weather` |
 | `hide_animation` | Leave cartoons and anime out of the picks | `false` |
-| `flatrate_only` | `false`: picks may be any popular title, not only ones on a subscription service in your region (use with `service_map`) | `true` |
-| `catalogs` | Poster rows below the drawer's weather and quotes (`trending`, `popular_movies`, `popular_shows`, `top_rated`, `now_playing`, `upcoming`, `hindi`); `none` for no rows; need `service_map` with a `*` rule | `trending,popular_movies,popular_shows,hindi,top_rated` |
+| `flatrate_only` | `false`: picks may be any popular title, not only ones on a subscription service in your region | `true` |
+| `catalogs` | Poster rows below the drawer's weather and quotes (`trending`, `popular_movies`, `popular_shows`, `top_rated`, `now_playing`, `upcoming`, `hindi`); `none` for no rows | `trending,popular_movies,popular_shows,hindi,top_rated` |
 | `language` | `auto` (follows the TV), or a language with a [translation](#translations) (`en`, `pt`, `es`, `de`, `ru`, `fr`, `ja`…) | `auto` |
 | `show_crypto` | Show Binance crypto prices on home and screensaver | `true` |
 | `currency` | Crypto prices in `USD`, `EUR`, `BRL`… | `USD` |
@@ -123,7 +123,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `hide_services` | Streaming services to leave out of the picks even when their app is on the TV (`netflix`, `prime`, `disney`…), comma separated; for apps the TV ships that you don't subscribe to. Google TV only | empty |
 | `pick_count` | How many picks the home screen rotates through, 3 to 12. At 3 it shows this hour's three; with more, left and right slide through them in a circle | 3 |
 | `pick_rotate_seconds` | If above 0, the picks move by themselves this often while focus is not on them | 0 |
-| `service_map` | Picks from every streaming service in your region, each opening an app you choose: `netflix,prime=app.one;youtube=app.two;*=app.three` (`*` is every other service). Titles open the app's home, not the title's page, and Watchmode links are off. Empty: only from the streaming apps installed on the TV | empty |
+| `service_map` | Picks from every streaming service in your region, each opening an app you choose: `netflix,prime=app.one;youtube=app.two;*=app.three` (`*` is every other service). Titles open the app's home, not the title's page, and Watchmode links are off. Empty: picks only from the streaming apps installed on the TV; the poster rows and the Trakt rows follow [Opening a title](#opening-a-title) | empty |
 | `hide_apps` | Apps to leave out of the shelf, All Apps and the picks, by id or name (part of it), comma separated; for apps the TV ships that can't be uninstalled, like Samsung's built-in Netflix. LG and Samsung only | empty |
 
 Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
@@ -132,7 +132,13 @@ Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`:
 
 Free, and it takes two minutes: create an account at [themoviedb.org](https://www.themoviedb.org/signup), then open [Settings → API](https://www.themoviedb.org/settings/api) and request a developer key. Paste the *API Read Access Token* (or the *API Key*) after `tmdb_key=`. It's your key: `config.properties` stays out of git.
 
-### Opening a title, not just its app (optional)
+### Opening a title
+
+A card in the poster rows or the Trakt rows opens **the app of the service that streams the title in your region** (`tmdb_region`): a Netflix title in Netflix, and so on. When that app isn't on the TV it opens the app's **Play Store page** (on a TV where Free My TV turned the app off, the page has an *Enable* button); when the title is on no service there, it says "This title is unavailable in your region." A title on several services opens in one you have, then by price (subscription, then free, then rent or buy). While the answer comes (one TMDB request, kept for a day) the card shows three blinking dots, and Back or moving away cancels it; if it takes over 3 seconds it says it couldn't check.
+
+With a `service_map` rule everything goes where the rule says, as before: `*=com.stremio.one` opens every title in Stremio, on the title's page. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key.
+
+### Opening the title's page in its app (optional)
 
 With a free [Watchmode](https://api.watchmode.com/) key (`watchmode_key=` in `config.properties`), a pick opens its own page in the streaming app instead of the app's home. The free plan (2,500 credits a month) is enough: each title costs two requests the first time and is remembered after that. It works where the app takes the title's web address (tested: Prime Video and JioHotstar); where it doesn't, the pick just opens the app, as without a key.
 
@@ -146,7 +152,7 @@ Free Trakt account, Android and Google TV only. Three rows appear first under th
 
 OK on a show in *Shows you watch* opens its episodes: every episode with its number and air date, watched ones marked, and a bar of four buttons on top: **sort** (number or date, newest or oldest first), **season**, **date** (last 7 or 30 days, this year, a year, not aired yet) and **watched** (all, unwatched, watched). The filters combine, *Clear filters* resets them, and the sort is remembered. It opens on the next episode you haven't seen; ← → jump a season, Channel + and − scroll a page, Back goes up to the buttons and then out; OK opens the episode in Stremio.
 
-Other titles open in the app of the `*` rule of `service_map` (Stremio opens on the title's page), so the rows need that rule, like `catalogs`. *Trakt* → *Disconnect* forgets the sign-in. The rows follow what Trakt has: Stremio, for one, adds to your history only when you connect Trakt in its settings.
+Other titles open as described in [Opening a title](#opening-a-title). *Trakt* → *Disconnect* forgets the sign-in. The rows follow what Trakt has: Stremio, for one, adds to your history only when you connect Trakt in its settings.
 
 ## Going back
 
