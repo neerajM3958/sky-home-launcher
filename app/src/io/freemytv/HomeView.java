@@ -2967,10 +2967,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         if (opening != null) return;      // still looking up where a title streams
-        if (!sheetOpen && zone == Z_BROWSE && trailerOn) {      // OK while the trailer plays: pause or play
-            trailer.togglePause();
-            return;
-        }
         HomeApps.Item it;
         RectF r;
         if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
@@ -3016,6 +3012,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_BROWSE) {
             Catalogs.Item listed = browseItem();
             if (listed == null) return;
+            stopTrailer();      // OK opens the title, even while its trailer plays
             click.open();
             browseRect(browseRowIndex, browseCol[browseRowIndex], cardRect);
             openTitle(listed, cardRect);
@@ -3129,7 +3126,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             handler.removeCallbacks(holdStart);
             holdArmed = false;
             okHeld = true;
-            if (!trailerOn) startTrailer(false);
+            trailerKey();        // held OK: starts the trailer, or pauses and resumes the one playing
             return;
         }
         if (sheetOpen) toggleShelf(); else startReorder();
