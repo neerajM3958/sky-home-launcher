@@ -137,7 +137,7 @@ public class SettingsActivity extends Activity {
         private final Scene scene = new Scene();
         private final Look look = Themes.create(Prefs.look(), scene);
         private final Handler handler = new Handler(Looper.getMainLooper());
-        private final Spring[] pop = new Spring[12];
+        private final Spring[] pop = new Spring[16];     // one per row of the longest list (Home Settings: 14 with the Dollar row)
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
         // The list picker (the app of a remote button): what it shows, which one is in use, where we are.
         private final List<String> pickLabels = new ArrayList<>();

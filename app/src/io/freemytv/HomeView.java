@@ -793,7 +793,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
-        if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) catDirty = browseDirty = true;     // the waiting dots move
+        if ((openingItem != null && up - openingAt >= OPEN_LOADER_MS) || (trailerOn && trailer.loading())) catDirty = browseDirty = true;     // the waiting dots and the trailer's spinner move
         if (catMoving || catDirty) catalogLayer.invalidate();
         if (browseMoving || browseDirty) browseLayer.invalidate();
         if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
@@ -2354,6 +2354,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 imageFill.setAlpha(255);
             }
         }
+        if (trailerOn && trailer.loading()) {      // asked for, not showing yet: the picture dims and a spinner turns on it
+            fill.setShader(null);
+            fill.setColor(0x73000000);
+            c.drawRoundRect(stage, r, r, fill);
+            spin.setStrokeWidth(6 * k);
+            Ui.spinner(c, stage.centerX(), stage.centerY(), 34 * k, SystemClock.uptimeMillis() / 1000f, spin);
+        }
         if (browseTextGen != Ui.generation) buildBrowseText();
         lBrowseTitle.setColor(look.color(Look.TITLE, dark()));
         lBrowseFacts.setColor(look.color(Look.META, dark()));
@@ -2426,6 +2433,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean trailerOn;
     private String trailerId = "";
     private final RectF pill = new RectF();
+    private final Paint spin = new Paint(Paint.ANTI_ALIAS_FLAG);
+    {
+        spin.setStyle(Paint.Style.STROKE);
+        spin.setStrokeCap(Paint.Cap.ROUND);
+        spin.setColor(0xFFFFFFFF);
+    }
     private final Path playArrow = new Path();
     private final TrailerPlayer.Listener trailerListener = new TrailerPlayer.Listener() {
         @Override public void onPlaying() {

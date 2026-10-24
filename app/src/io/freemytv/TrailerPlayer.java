@@ -42,13 +42,29 @@ final class TrailerPlayer {
             + "mc.decodingInfo=function(c){var v=(c&&c.video&&c.video.contentType)||'';"
             + "if(/av01/i.test(v))return Promise.resolve({supported:false,smooth:false,powerEfficient:false});return d(c);};}}catch(e){}"
             + "var st=document.createElement('style');"
-            + "st.textContent='body *{visibility:hidden!important}body video{visibility:visible!important}html,body{background:#000!important}';"
+            + "st.textContent='body *{visibility:hidden!important}body video,body #fmtb,body #fmtb *,body #fmts{visibility:visible!important}@keyframes fmtspin{to{transform:rotate(360deg)}}html,body{background:#000!important}';"
             + "var put=setInterval(function(){var h=document.head||document.documentElement;if(h){h.appendChild(st);clearInterval(put);}},5);"
+            + "var btn=null,ring=null,hideT=0;"
+            // Built with the DOM (YouTube's page refuses innerHTML); sizes in vh: the page is about 220 CSS pixels high.
+            + "function bar(){var i=document.createElement('i');i.style.cssText='width:1.8vh;height:6vh;background:#fff;margin:0 .8vh';return i;}"
+            + "function icon(p){while(btn.firstChild)btn.removeChild(btn.firstChild);"
+            + "if(p){var t=document.createElement('i');t.style.cssText='border-style:solid;border-width:3.2vh 0 3.2vh 5.2vh;border-color:transparent transparent transparent #fff;margin-left:1vh';btn.appendChild(t);}"
+            + "else{btn.appendChild(bar());btn.appendChild(bar());}}"
+            + "function flash(p){if(!btn&&document.body){btn=document.createElement('div');btn.id='fmtb';"
+            + "btn.style.cssText='position:fixed;left:4vh;bottom:4vh;width:15vh;height:15vh;border-radius:50%;background:rgba(0,0,0,.6);"
+            + "display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .25s;z-index:2147483647';document.body.appendChild(btn);}"
+            + "if(!btn)return;icon(p);btn.style.opacity=1;clearTimeout(hideT);"
+            + "if(!p)hideT=setTimeout(function(){btn.style.opacity=0;},2500);}"
+            + "function spin(on){if(!ring&&document.body){ring=document.createElement('div');ring.id='fmts';"
+            + "ring.style.cssText='position:fixed;left:50%;top:50%;width:13vh;height:13vh;margin:-6.5vh 0 0 -6.5vh;box-sizing:border-box;"
+            + "border:1.4vh solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:fmtspin .9s linear infinite;display:none;z-index:2147483647';"
+            + "document.body.appendChild(ring);}if(ring)ring.style.display=on?'block':'none';}"
             + "function hook(v){if(v.__h)return;v.__h=1;"
-            + "v.addEventListener('playing',function(){FMT.state(1)});v.addEventListener('pause',function(){FMT.state(2)});"
-            + "v.addEventListener('ended',function(){FMT.state(0)});v.addEventListener('waiting',function(){FMT.state(3)});}"
+            + "v.addEventListener('playing',function(){FMT.state(1);spin(false);flash(false);});v.addEventListener('pause',function(){FMT.state(2);flash(true);});"
+            + "v.addEventListener('waiting',function(){FMT.state(3);spin(true);});v.addEventListener('canplay',function(){spin(false);});"
+            + "v.addEventListener('ended',function(){FMT.state(0)});}"
             + "setInterval(function(){var v=document.querySelector('video');if(v){hook(v);"
-            + "if(!window.__on&&!v.paused&&v.currentTime>0.2){window.__on=1;FMT.state(1);}"
+            + "if(!window.__on&&!v.paused&&v.currentTime>0.2){window.__on=1;FMT.state(1);flash(false);}"
             + "}"
             + "if(document.querySelector('.ytp-error')&&!window.__err){window.__err=1;FMT.error(150);}},500);})();";
 
@@ -78,6 +94,11 @@ final class TrailerPlayer {
                 listener.onFailed();
             }
         };
+    }
+
+    /** The trailer was asked for and isn't showing yet (the home screen draws a spinner meanwhile). */
+    boolean loading() {
+        return open && !playing;
     }
 
     /** True from play() until stop(): the player is loading, playing or paused. */
