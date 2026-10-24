@@ -119,8 +119,8 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6;
-        private static final int TRAKT_ROW = 6;   // the main menu's row that opens it
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7;
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7;   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -140,9 +140,10 @@ public class SettingsActivity extends Activity {
         // order) and the selection.
         private final List<String[]> shelfRows = new ArrayList<>();
         private final List<String> shelfOrder = new ArrayList<>();
-        private boolean editingTop;
+        private boolean editingTop, editingRows;     // editingRows: the poster rows (Free My TV > TMDB)
         private int pickFor, pickCurrent, pickScroll;   // pickFor: the remote button (index + 1)
-        private static final int PICK_CITY = 0, PICK_LANGUAGE = -1;
+        private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_REGION = -2;
+        private final List<String> regionCodes = new ArrayList<>();      // the region picker: "auto", then the countries
         private final List<String[]> cities = new ArrayList<>();
         private String cityStatus = "";
         private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
@@ -208,9 +209,9 @@ public class SettingsActivity extends Activity {
             });
         }
 
-        /** A main menu row that needs something it doesn't have (Trakt without a Client ID): greyed, and OK does nothing. */
+        /** A main menu row that needs something it doesn't have (Trakt without a Client ID, TMDB without its key): greyed, and OK does nothing. */
         private boolean disabledRow(int row) {
-            return screen == MAIN && row == TRAKT_ROW && !Trakt.configured();
+            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext())));
         }
 
         @Override public AccessibilityNodeProvider getAccessibilityNodeProvider() {
@@ -229,11 +230,15 @@ public class SettingsActivity extends Activity {
                     }
                     String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
                             Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"),
-                            Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TV Settings")};
+                            Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TMDB") + ", " + tmdbStatus(), Ui.tr("TV Settings")};
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
                 case TRAKT:
                     return traktAction();
+                case TMDB: {
+                    String[] labels = tmdbLabels(), values = tmdbValues();
+                    return row < labels.length ? labels[row] + ", " + values[row] : "";
+                }
                 case HOME_CHOICE: {
                     String name = row == 0 ? "Free My TV, " + Ui.tr("no ads, with the new screensaver")
                             : "Original, " + Ui.tr("the TV's factory home screen");
@@ -257,6 +262,9 @@ public class SettingsActivity extends Activity {
                     if (at >= shelfRows.size()) return "";
                     String[] app = shelfRows.get(at);
                     int place = shelfOrder.indexOf(app[0]);
+                    if (editingRows) {
+                        return app[1] + ", " + (place >= 0 ? Ui.trf("on, place {n}", "n", place + 1) : Ui.tr("off"));
+                    }
                     if (editingTop) {
                         return app[1] + ", " + (place >= 0 ? Ui.trf("in the top buttons, place {n}", "n", place + 1)
                                 : Ui.tr("not in the top buttons"));
@@ -358,8 +366,9 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 8;
+                case MAIN: return 9;
                 case TRAKT: return 1;
+                case TMDB: return tmdbLabels().length;
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -392,7 +401,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -401,8 +410,8 @@ public class SettingsActivity extends Activity {
             String mode = freeActive() ? "Free My TV" : Ui.tr("Original");
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
-                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), ""};
+                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("TV Settings")};
+            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -460,11 +469,10 @@ public class SettingsActivity extends Activity {
                 y += errorLayout.getLineBaseline(errorLayout.getLineCount() - 1) - errorLayout.getLineBaseline(0) + 46 * k;
             }
             y = drawComparison(c, y);
-            y = drawRecs(c, y + 26 * k);
             drawNotices(c, y + 40 * k);
         }
 
-        /** Home screen picks: status, and the credit TMDB asks for. */
+        /** The picks' status, and the credits TMDB and Watchmode ask for (on the TMDB screen). */
         private float drawRecs(Canvas c, float y) {
             float x = LIST_X * k + 30 * k;
             c.drawText(Ui.tr("RECOMMENDATIONS"), x, y, header);
@@ -473,7 +481,7 @@ public class SettingsActivity extends Activity {
             int count = recs.optInt("count");
             if (!hasKey) line = Ui.tr("No TMDB key: see the README (config.properties).");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
-            else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps for tmdb_region={region}.", "region", Recs.REGION);
+            else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
             else if (count > 0) line = Ui.trf("On · {n} titles from the TV's apps, 3 new ones every hour.", "n", count);
             else line = Ui.tr("Fetching titles…");
@@ -618,9 +626,21 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
+                    }
+                    return true;
+                case KeyEvent.KEYCODE_PAGE_UP:
+                case KeyEvent.KEYCODE_CHANNEL_UP:
+                case KeyEvent.KEYCODE_PAGE_DOWN:
+                case KeyEvent.KEYCODE_CHANNEL_DOWN:
+                    if (!scrolling()) return false;
+                    if (down) {
+                        boolean up = e.getKeyCode() == KeyEvent.KEYCODE_PAGE_UP || e.getKeyCode() == KeyEvent.KEYCODE_CHANNEL_UP;
+                        pickScroll = Math.max(0, Math.min(listSize() - rowCount(), pickScroll + (up ? -1 : 1) * Math.max(1, rowCount() - 1)));
+                        invalidate();
+                        spoken.focusMoved();
                     }
                     return true;
                 case KeyEvent.KEYCODE_DPAD_CENTER:
@@ -639,7 +659,16 @@ public class SettingsActivity extends Activity {
                         if (e.getRepeatCount() == 0) backDown = true;
                     } else {
                         if (backDown && !e.isCanceled()) {
-                            if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
+                            if (screen == PICKER && pickFor == PICK_REGION) {
+                                focus = 0;
+                                screen = TMDB;
+                            } else if (screen == SHELF_EDIT && editingRows) {
+                                focus = 2;
+                                screen = TMDB;
+                            } else if (screen == TMDB) {
+                                focus = TMDB_ROW;
+                                screen = MAIN;
+                            } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
                             } else if (screen == PICKER) {
@@ -798,6 +827,46 @@ public class SettingsActivity extends Activity {
             }
         }
 
+        // MARK: - TMDB
+
+        /** The main menu's value: the region, or why the row is greyed. */
+        private String tmdbStatus() {
+            return Recs.hasKey(getContext()) ? regionValue() : Ui.tr("Needs a TMDB key");
+        }
+
+        private String regionValue() {
+            String r = Prefs.region();
+            return r.equals("auto") ? Ui.tr("Automatic") + " · " + Regions.name(Recs.region()) : Regions.name(r);
+        }
+
+        private String[] tmdbLabels() {
+            return new String[] {Ui.tr("Region"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
+        }
+
+        private String[] tmdbValues() {
+            int on = 0;
+            for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
+            return new String[] {regionValue(), onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
+        }
+
+        private void drawTmdb(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
+            c.drawText(Ui.tr("TMDB"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            String[] labels = tmdbLabels(), values = tmdbValues();
+            for (int i = 0; i < labels.length; i++) {
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
+                c.drawText(TextUtils.ellipsize(values[i], new TextPaint(rowValue), 420 * k, TextUtils.TruncateAt.END).toString(),
+                        rowRect.right - 30 * k, base, rowValue);
+            }
+            drawRecs(c, (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 70) * k);
+        }
+
         // MARK: - Home Settings and Remote Buttons
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
@@ -901,6 +970,10 @@ public class SettingsActivity extends Activity {
 
         /** Changes the focused row's value one step (OK and → go forward, ← goes back). */
         private void adjust(int dir) {
+            if (screen == TMDB) {
+                if (focus == 1) Prefs.setHideAnimation(!Prefs.hideAnimation());
+                return;
+            }
             if (screen == REMOTE_KEYS) {
                 int n = appPkgs.size();
                 int at = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[focus]));
@@ -995,6 +1068,7 @@ public class SettingsActivity extends Activity {
 
         private void openShelfEditor(boolean top) {
             editingTop = top;
+            editingRows = false;
             shelfOrder.clear();
             if (top) {
                 shelfOrder.addAll(HomeApps.topButtonKeys());
@@ -1006,6 +1080,21 @@ public class SettingsActivity extends Activity {
                 for (String pkg : HomeApps.shelfPackages(getContext())) if (HomeApps.launchIntent(pm, pkg) != null) shelfOrder.add(pkg);
                 rebuildShelfRows(HomeApps.shelfCandidates(getContext()));
             }
+            pickScroll = 0;
+            focus = 0;
+            screen = SHELF_EDIT;
+        }
+
+        /** The poster rows (Free My TV > TMDB): every row TMDB can fill, the ones that are on first, in their order. */
+        private void openRowsEditor() {
+            editingTop = false;
+            editingRows = true;
+            shelfOrder.clear();
+            shelfOrder.addAll(Prefs.catalogRows());
+            List<String[]> all = new ArrayList<>();
+            for (String key : Catalogs.ALL) all.add(new String[] {key, Catalogs.title(key)});
+            shelfOrder.retainAll(java.util.Arrays.asList(Catalogs.ALL));
+            rebuildShelfRows(all);
             pickScroll = 0;
             focus = 0;
             screen = SHELF_EDIT;
@@ -1032,14 +1121,16 @@ public class SettingsActivity extends Activity {
                 focus = i - pickScroll;
                 break;
             }
-            if (editingTop) Prefs.setTopButtons(shelfOrder); else Prefs.setShelf(shelfOrder);
+            if (editingRows) Prefs.setCatalogRows(shelfOrder);
+            else if (editingTop) Prefs.setTopButtons(shelfOrder);
+            else Prefs.setShelf(shelfOrder);
         }
 
         /** OK: puts the app on the shelf (at the end) or takes it off. */
         private void toggleShelfApp() {
             String pkg = shelfRows.get(pickScroll + focus)[0];
             if (shelfOrder.contains(pkg)) shelfOrder.remove(pkg);
-            else if (editingTop || shelfOrder.size() < HomeApps.MAX_SHELF) shelfOrder.add(pkg);   // three buttons: no limit to reach
+            else if (editingTop || editingRows || shelfOrder.size() < HomeApps.MAX_SHELF) shelfOrder.add(pkg);   // three buttons, seven rows: no limit to reach
             else return;
             refreshShelfRows(pkg);
         }
@@ -1056,7 +1147,7 @@ public class SettingsActivity extends Activity {
 
         private void drawShelfEditor(Canvas c) {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
-            c.drawText(editingTop ? Ui.tr("Top Buttons") : Ui.tr("Shelf"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            c.drawText(editingRows ? Ui.tr("Catalogs") : editingTop ? Ui.tr("Top Buttons") : Ui.tr("Shelf"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
                 String[] app = shelfRows.get(pickScroll + i);
@@ -1072,7 +1163,8 @@ public class SettingsActivity extends Activity {
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
-            c.drawText(editingTop ? Ui.tr("OK adds or removes a button. ← → change the order.")
+            c.drawText(editingRows ? Ui.tr("OK turns a row on or off. ← → change the order.")
+                    : editingTop ? Ui.tr("OK adds or removes a button. ← → change the order.")
                     : Ui.trf("OK adds or removes (up to {n}). ← → change the order.", "n", HomeApps.MAX_SHELF),
                     LIST_X * k + 30 * k, hy, hint);
         }
@@ -1083,6 +1175,15 @@ public class SettingsActivity extends Activity {
             if (which == PICK_CITY) {
                 for (String[] city : cities) pickLabels.add(city[0]);
                 pickCurrent = -1;
+            } else if (which == PICK_REGION) {
+                regionCodes.clear();
+                regionCodes.add("auto");
+                pickLabels.add(Ui.tr("Automatic"));
+                for (Regions.Entry e : Regions.list(getContext())) {
+                    regionCodes.add(e.code);
+                    pickLabels.add(e.name);
+                }
+                pickCurrent = regionCodes.indexOf(Prefs.region());
             } else if (which == PICK_LANGUAGE) {
                 String[] choices = languageChoices();
                 for (String code : choices) {
@@ -1103,7 +1204,7 @@ public class SettingsActivity extends Activity {
         /** A long list (the apps): nine rows at a time, the one in use checked. */
         private void drawPicker(Canvas c) {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
-            String title = pickFor == PICK_CITY ? Ui.tr("City")
+            String title = pickFor == PICK_CITY ? Ui.tr("City") : pickFor == PICK_REGION ? Ui.tr("Region")
                     : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabels()[pickFor - 1];
             c.drawText(title, LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
@@ -1178,6 +1279,20 @@ public class SettingsActivity extends Activity {
                 Prefs.setLanguage(languageChoices()[pickScroll + focus]);
                 focus = 0;
                 screen = HOME_SETTINGS;
+            } else if (screen == PICKER && pickFor == PICK_REGION) {
+                Prefs.setRegion(regionCodes.get(pickScroll + focus));
+                focus = 0;
+                screen = TMDB;
+            } else if (screen == TMDB) {
+                if (focus == 0) {
+                    openPicker(PICK_REGION);
+                } else if (focus == 1) {
+                    adjust(1);
+                    invalidate();
+                    return;
+                } else {
+                    openRowsEditor();
+                }
             } else if (screen == PICKER) {
                 int at = pickScroll + focus;
                 Prefs.setKeyApp(Prefs.KEYS[pickFor - 1], appPkgs.get(at));
@@ -1225,6 +1340,11 @@ public class SettingsActivity extends Activity {
             } else if (focus == TRAKT_ROW) {
                 if (disabledRow(TRAKT_ROW)) return;     // no Client ID: nothing to open
                 screen = TRAKT;
+                focus = 0;
+            } else if (focus == TMDB_ROW) {
+                if (disabledRow(TMDB_ROW)) return;      // no TMDB key: nothing to open
+                Regions.refreshIfStale(c);
+                screen = TMDB;
                 focus = 0;
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

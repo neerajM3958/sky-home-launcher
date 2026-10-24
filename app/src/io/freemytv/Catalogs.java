@@ -81,6 +81,7 @@ final class Catalogs {
     private final Set<String> pending = new HashSet<>();
     private volatile List<Row> rows = new ArrayList<>();      // TMDB's
     private volatile List<Row> shown = new ArrayList<>();     // Trakt's rows (when connected), then TMDB's
+    private volatile String shownFor = "";                   // what wanted() was when `shown` was built
     private volatile boolean fetching;
     private volatile long at, failedAt;
     private volatile String language = "";
@@ -114,27 +115,31 @@ final class Catalogs {
         return shown;
     }
 
-    /** A new list each time the rows change: the home screen compares it by reference. */
+    /** A new list each time the rows change: the home screen compares it by reference. TMDB's follow the order the person set, and a row turned off goes at once. */
     private void rebuild() {
         List<Row> all = new ArrayList<>(Trakt.get(context).rows());
-        if (Recs.hasKey(context)) all.addAll(rows);
+        if (Recs.hasKey(context)) {
+            for (String k : keys()) for (Row r : rows) if (r.key.equals(k)) all.add(r);
+        }
         shown = all;
+        shownFor = wanted();
     }
 
+    /** Every row TMDB can fill, in the order they are offered (Free My TV > TMDB > Poster rows). */
+    static final String[] ALL = {"trending", "popular_movies", "popular_shows", "hindi", "top_rated", "now_playing", "upcoming"};
+
+    /** The rows that are on (Free My TV > TMDB > Poster rows; catalogs= in config.properties gives the first ones), in order. */
     private static List<String> keys() {
         List<String> out = new ArrayList<>();
-        for (String k : Config.CATALOGS.split(",")) {
-            k = k.trim().toLowerCase(Locale.ROOT);
-            if (!k.isEmpty() && title(k) != null && !out.contains(k)) out.add(k);
-        }
+        for (String k : Prefs.catalogRows()) if (title(k) != null && !out.contains(k)) out.add(k);
         return out;
     }
 
     private static String wanted() {
-        return String.join(",", keys());
+        return String.join(",", keys()) + (Prefs.hideAnimation() ? "|noanimation" : "");
     }
 
-    private static String title(String key) {
+    static String title(String key) {
         switch (key) {
             case "trending": return Ui.tr("Trending today");
             case "popular_movies": return Ui.tr("Popular movies");
@@ -163,6 +168,10 @@ final class Catalogs {
 
     /** Fetches the rows when they are older than a few hours, in another language or not the ones asked for (the home screen calls this when the drawer opens). */
     void refreshIfStale() {
+        if (!wanted().equals(shownFor)) {      // the rows or the animation choice changed in the settings
+            rebuild();
+            notifyListeners();
+        }
         Trakt.get(context).refreshIfStale();
         if (fetching || !Recs.hasKey(context)) return;
         List<String> keys = keys();
@@ -216,7 +225,7 @@ final class Catalogs {
         String type = o.optString("media_type", "");
         String kind = type.equals("tv") || key.equals("popular_shows") ? "tv" : type.equals("person") ? null : "movie";
         if (kind == null) return;
-        if (Config.HIDE_ANIMATION) {
+        if (Prefs.hideAnimation()) {
             JSONArray genres = o.optJSONArray("genre_ids");
             for (int i = 0; genres != null && i < genres.length(); i++) if (genres.optInt(i) == ANIMATION) return;
         }

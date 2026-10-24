@@ -1,6 +1,6 @@
 # Recommendations and launching: make them flexible and configurable
 
-**Status: phase 1 is built (branch `rec-routing`, tried on a Skyworth Google TV Stick); phases 2 to 4 are not.** The
+**Status: phases 1 and 2 are built (branch `rec-routing`, tried on a Skyworth Google TV Stick); phases 3 and 4 are not.** The
 questions that need an answer are in *Open questions* at the end, each with the default I would take if you say nothing.
 
 What phase 1 taught, and where it differs from the plan:
@@ -15,6 +15,12 @@ What phase 1 taught, and where it differs from the plan:
 - **Rent and buy providers** Free My TV has no app table for (Google Play, YouTube, "Amazon Video") live in
   `Launcher.EXTRA`, not in `Recs.SERVICES`, so the picks don't start suggesting them.
 - The picks still open through their own stamp (`Pick.pkg`); routing them through `Launcher` belongs to phase 4.
+
+What phase 2 taught:
+- The TMDB section is *Region*, *Hide cartoons and anime* and *Catalogs* (the poster rows editor became *Catalogs*, to
+  match `catalogs=`); the picks' on/off and counts stay under it as *Recommendations* until phase 4.
+- The Catalogs editor reuses the shelf editor: OK turns a row on or off, left and right move it.
+- Without a TMDB key the row is greyed and says "Needs a TMDB key", like Trakt without a Client ID.
 
 ## Goal
 
@@ -187,7 +193,7 @@ Everything about TMDB's data, in one place, in this order (seven rows, so no scr
 5. **Hide cartoons and anime** (on/off): today's `hide_animation`, first value from the config. It adds
    `without_genres=16` to the picks' queries and drops animation from the poster rows (`Catalogs.add`), so a change
    rebuilds both.
-6. **Poster rows**: opens the editor below.
+6. **Catalogs**: opens the editor below.
 7. **Status** (read-only): "Key: set / not set", the picks' status line that is in the main menu today ("On · 24
    titles from the TV's apps, 3 new ones every hour." or the error), and the credits above.
 
@@ -197,7 +203,7 @@ The TMDB key stays in `config.properties`: it is secret, and a 32-character key 
 says "Needs a TMDB key", OK does nothing, and the README says where to get one. The saved choices stay. The *Trakt*
 rows and the Trakt sign-in don't use TMDB, so they are unaffected.
 
-#### The poster rows editor
+#### The Catalogs editor
 
 The same screen as the shelf and the top buttons use: every row TMDB can fill is listed (*Trending today*, *Popular
 movies*, *Popular shows*, *Hindi picks*, *Top rated*, *Now playing*, *Upcoming*), the ones that are on first, in their
@@ -229,7 +235,7 @@ once on the TV, and the README says so.
 | `include_rent_buy` | New, the first value of *Include rent or buy* (default `false`) |
 | `tmdb_region` | Stays, as the first value of the *Region* row; also accepts `auto` (the TV's country). The example config says `auto` |
 | `hide_animation` | Stays, as the first value of *Hide cartoons and anime* |
-| `catalogs` | Stays, as the first values of *Poster rows* (the list of names, or `none`) |
+| `catalogs` | Stays, as the first values of *Catalogs* (the list of names, or `none`) |
 | `trakt_client_id` | Unchanged |
 
 ### The region setting
@@ -292,7 +298,7 @@ all that is left.
    Stremio between the changes. *Done when:* a title whose app is missing opens its store page on the TV; one whose
    app is there opens the app; with a `*` rule it behaves as today.
 2. **The TMDB section and the main-menu relayout.** The two new rows and the moved RECOMMENDATIONS block; *Region*
-   (with `Recs.region()` replacing `Recs.REGION` everywhere), *Hide cartoons and anime* and the *Poster rows* editor
+   (with `Recs.region()` replacing `Recs.REGION` everywhere), *Hide cartoons and anime* and the *Catalogs* editor
    as stored settings with the config as first values; the section greyed without a key, and the *Trakt* row greyed
    without a Client ID (one shared "disabled row" in `drawMain`, `rowText` and `activate`). *Done when:* the main menu
    fits 10 rows and the notices on the TV; changing the region rebuilds the picks for that country; turning a poster
@@ -391,8 +397,8 @@ Mark your answer, or say "defaults". The *default* is what I would build.
     rows (decided in principle; the TMDB credit must stay visible somewhere, and the TMDB section is its place).
     - [x] move it (default) / [ ] keep it and drop another block (say which) / [ ] put the two new sections inside
       *Home Settings* as rows instead
-16. **Poster rows in the TMDB section:** decided: on or off each **and reorderable**, in the shelf-style editor (see
-    *The poster rows editor*). The Trakt rows stay first.
+16. **Catalogs in the TMDB section:** decided: on or off each **and reorderable**, in the shelf-style editor (see
+    *The Catalogs editor*). The Trakt rows stay first.
 17. **The three recommendation settings:** decided: they live in the TMDB section (rows 2 to 4), so *Home Settings*
     doesn't grow and doesn't need to scroll.
 18. **Anything else** you want in this section?

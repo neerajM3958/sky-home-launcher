@@ -129,6 +129,38 @@ final class Prefs {
     static boolean coin(int i) { return sp().getBoolean("coin" + i, true); }
     static void setCoin(int i, boolean on) { put("coin" + i, on); }
 
+    // MARK: - TMDB (Free My TV > TMDB); config.properties gives the first values
+
+    /** "auto" (the TV's own country) or a country code ("IN", "BR"...). */
+    static String region() {
+        String v = (app == null ? Config.TMDB_REGION : sp().getString("region", Config.TMDB_REGION)).trim();
+        return v.isEmpty() || v.equalsIgnoreCase("auto") ? "auto" : v.toUpperCase(Locale.ROOT);
+    }
+
+    static void setRegion(String v) { put("region", v); }
+
+    /** Leave cartoons and anime out of the picks and the poster rows. */
+    static boolean hideAnimation() { return app == null ? Config.HIDE_ANIMATION : sp().getBoolean("hideAnimation", Config.HIDE_ANIMATION); }
+    static void setHideAnimation(boolean on) { put("hideAnimation", on); }
+
+    /** The poster rows that are on, in order (Catalogs' keys); the config's catalogs= until the person edits them. */
+    static List<String> catalogRows() {
+        String v = app == null ? null : sp().getString("catalogRows", null);
+        if (v == null) v = Config.CATALOGS;
+        List<String> out = new ArrayList<>();
+        for (String p : v.split(",")) {
+            p = p.trim().toLowerCase(Locale.ROOT);
+            if (!p.isEmpty() && !p.equals("none") && !out.contains(p)) out.add(p);
+        }
+        return out;
+    }
+
+    static void setCatalogRows(List<String> keys) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : keys) sb.append(sb.length() == 0 ? "" : ",").append(p);
+        put("catalogRows", sb.length() == 0 ? "none" : sb.toString());
+    }
+
     // MARK: - Episodes screen
 
     /** How the episodes screen sorts (an EpisodeList sort), the same for every show. */

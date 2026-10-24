@@ -95,9 +95,17 @@ final class Recs {
         SERVICE_NAME.put("crunchyroll", "Crunchyroll");
         SERVICE_NAME.put("oneplay", "Oneplay");
     }
-    /** Country for "what streams where" (config.properties "tmdb_region", e.g. US, GB, BR). */
-    static final String REGION = Config.TMDB_REGION.trim().toUpperCase(Locale.ROOT);
-    /** The errors the settings say in words: TMDB lists none of the TV's apps in REGION, or the TV has none we know. */
+    /**
+     * Country for "what streams where": the Region setting (Free My TV > TMDB), whose first value is config.properties'
+     * tmdb_region (US, GB, BR...); "auto" is the TV's own country.
+     */
+    static String region() {
+        String v = Prefs.region();
+        if (!v.equals("auto")) return v;
+        String c = Locale.getDefault().getCountry();
+        return c.isEmpty() ? "US" : c.toUpperCase(Locale.ROOT);
+    }
+    /** The errors the settings say in words: TMDB lists none of the TV's apps in the region, or the TV has none we know. */
     static final String NO_APPS = "none of the TV's streaming services are on TMDB";
     static final String NO_KNOWN_APPS = "none of the TV's streaming apps can give picks";
 
@@ -419,7 +427,7 @@ final class Recs {
         if (!any) throw new IOException(NO_KNOWN_APPS);
         // The services the TV has, by their TMDB ids in your region.
         Map<Integer, String[]> services = new HashMap<>();
-        JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + REGION).getJSONArray("results");
+        JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
         for (int i = 0; i < providers.length(); i++) {
             JSONObject o = providers.getJSONObject(i);
             if (mapped()) {
@@ -432,9 +440,9 @@ final class Recs {
         if (services.isEmpty()) throw new IOException(NO_APPS);
         StringBuilder ids = new StringBuilder();
         for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
-        String common = "&language=" + lang() + "&watch_region=" + REGION + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "") + "&include_adult=false"
+        String common = "&language=" + lang() + "&watch_region=" + region() + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "") + "&include_adult=false"
                 + "&sort_by=popularity.desc" + (mapped() ? "" : "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8"))
-                + (Config.HIDE_ANIMATION ? "&without_genres=" + ANIMATION : "");
+                + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         // 1. The most popular right now (TMDB's popularity follows what people are watching and searching for), already
         //    filtered to the TV's services: one request each. The details (which service, runtime) come later, only for
         //    the titles that are shown.
@@ -508,7 +516,7 @@ final class Recs {
     private static Pick add(List<Pick> list, JSONObject o, String kind) {
         String backdrop = o.optString("backdrop_path", "");
         if (backdrop.isEmpty() || "null".equals(backdrop)) return null;
-        if (Config.HIDE_ANIMATION && animated(o)) return null;
+        if (Prefs.hideAnimation() && animated(o)) return null;
         Pick p = new Pick();
         p.id = o.optInt("id");
         p.kind = kind;
@@ -588,8 +596,8 @@ final class Recs {
     private void fetchListOnly(int p) throws Exception {
         String pkg = target("", false);     // the "*" rule's app, when it is on the TV
         if (pkg == null) throw new IOException(NO_KNOWN_APPS);
-        String common = "&language=" + lang() + "&watch_region=" + REGION + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "")
-                + "&include_adult=false&sort_by=popularity.desc" + (Config.HIDE_ANIMATION ? "&without_genres=" + ANIMATION : "");
+        String common = "&language=" + lang() + "&watch_region=" + region() + (Config.FLATRATE_ONLY ? "&with_watch_monetization_types=flatrate" : "")
+                + "&include_adult=false&sort_by=popularity.desc" + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         boolean genres = !loadSavedGenres();
         List<String> paths = new ArrayList<>();
         paths.add("/discover/movie?vote_count.gte=100" + common);
@@ -756,7 +764,7 @@ final class Recs {
         double rating = o.optDouble("vote_average", 0);
         if (rating > 0 && o.optInt("vote_count") >= 10) parts.add(String.format(Ui.locale(), "★ %.1f", rating));
         JSONObject wp = o.optJSONObject("watch/providers");
-        JSONObject br = wp == null ? null : wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(REGION);
+        JSONObject br = wp == null ? null : wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(region());
         JSONArray flat = br == null ? null : br.optJSONArray("flatrate");
         if (mapped()) {
             // A service with its own rule first, then the first of the others (the "*" rule).
@@ -927,7 +935,7 @@ final class Recs {
     }
 
     private long sourceStamp() {
-        long stamp = (Config.TMDB_KEY.hashCode() * 31L + REGION.hashCode()) * 31L + (Config.HIDE_ANIMATION ? 1 : 0);
+        long stamp = (Config.TMDB_KEY.hashCode() * 31L + region().hashCode()) * 31L + (Prefs.hideAnimation() ? 1 : 0);
         for (String[] rule : MAP) stamp = stamp * 31L + rule[0].hashCode() * 31L + rule[1].hashCode()
                 + (HomeApps.launchIntent(context.getPackageManager(), rule[1]) != null ? 1 : 0);
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
@@ -965,7 +973,7 @@ final class Recs {
             JSONArray found = new JSONObject(watchmode("/search/?search_field=tmdb_" + p.kind + "_id&search_value=" + p.id))
                     .optJSONArray("title_results");
             if (found != null && found.length() > 0) {
-                JSONArray sources = new JSONArray(watchmode("/title/" + found.getJSONObject(0).getInt("id") + "/sources/?regions=" + REGION));
+                JSONArray sources = new JSONArray(watchmode("/title/" + found.getJSONObject(0).getInt("id") + "/sources/?regions=" + region()));
                 String[] service = null;
                 for (String[] s : SERVICES) if (s[1].equals(p.app)) service = s;
                 for (int i = 0; service != null && i < sources.length() && link.isEmpty(); i++) {

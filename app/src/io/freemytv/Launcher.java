@@ -187,7 +187,7 @@ final class Launcher {
     // MARK: - Where a title streams (TMDB, kept for a day)
 
     private Info info(String kind, int id) throws Exception {
-        String key = kind + id + "-" + Recs.REGION;
+        String key = kind + id + "-" + Recs.region();
         long now = System.currentTimeMillis();
         Info saved;
         synchronized (memory) {
@@ -220,7 +220,7 @@ final class Launcher {
         info.imdb = imdb.startsWith("tt") ? imdb : "";
         JSONObject wp = o.optJSONObject("watch/providers");
         JSONObject results = wp == null ? null : wp.optJSONObject("results");
-        JSONObject region = results == null ? null : results.optJSONObject(Recs.REGION);
+        JSONObject region = results == null ? null : results.optJSONObject(Recs.region());
         String[] types = {"flatrate", "free", "ads", "rent", "buy"};
         int[] tiers = {0, 1, 1, 2, 2};
         for (int t = 0; region != null && t < types.length; t++) {
