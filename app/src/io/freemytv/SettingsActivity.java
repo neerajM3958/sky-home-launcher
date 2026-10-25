@@ -122,8 +122,8 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15;
-        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15, INTEGRATIONS = 16;
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9;
         private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
@@ -151,6 +151,7 @@ public class SettingsActivity extends Activity {
         private final List<String> regionCodes = new ArrayList<>();      // the region picker: "auto", then the countries
         private final List<String[]> cities = new ArrayList<>();
         private String cityStatus = "";
+        private String integrationsUrl = "", integrationsError = "";   // the Integrations screen's phone address, or why it couldn't start
         private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
         private JSONObject state = new JSONObject(), recs = new JSONObject();
         private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
@@ -250,11 +251,14 @@ public class SettingsActivity extends Activity {
                     String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
                             Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"),
                             Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TMDB") + ", " + tmdbStatus(),
-                            Ui.tr("Stremio") + ", " + stremioStatus(), Ui.tr("TV Settings")};
+                            Ui.tr("Stremio") + ", " + stremioStatus(), Ui.tr("Integrations") + ", " + integrationsStatus(),
+                            Ui.tr("TV Settings")};
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
                 case TRAKT:
                     return traktAction();
+                case INTEGRATIONS:
+                    return integrationsAction();
                 case TMDB: {
                     String[] labels = tmdbLabels(), values = tmdbValues();
                     return row < labels.length ? labels[row] + ", " + values[row] : "";
@@ -358,6 +362,7 @@ public class SettingsActivity extends Activity {
             running = false;
             handler.removeCallbacks(poll);
             Choreographer.getInstance().removeFrameCallback(this);
+            IntegrationsServer.stop();     // leaving the settings screen (even via Home) must not leave it listening
         }
 
         @Override public void doFrame(long frameTimeNanos) {
@@ -414,8 +419,9 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 10;
+                case MAIN: return 11;
                 case TRAKT: return 1;
+                case INTEGRATIONS: return 1;
                 case TMDB: return tmdbLabels().length;
                 case STREMIO: return Math.min(PICK_VISIBLE, stremioRows.size());
                 case LANGUAGES: return Math.min(PICK_VISIBLE, langRows.size());
@@ -469,7 +475,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else if (screen == ADDED_KEYS) drawAdded(c); else if (screen == LEARN) drawLearn(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else if (screen == ADDED_KEYS) drawAdded(c); else if (screen == LEARN) drawLearn(c); else if (screen == INTEGRATIONS) drawIntegrations(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -478,8 +484,8 @@ public class SettingsActivity extends Activity {
             String mode = freeActive() ? "Free My TV" : Ui.tr("Original");
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
-                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), stremioStatus(), ""};
+                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("Integrations"), Ui.tr("TV Settings")};
+            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), stremioStatus(), integrationsStatus(), ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -547,7 +553,7 @@ public class SettingsActivity extends Activity {
             String line;
             String error = recs.optString("error");
             int count = recs.optInt("count");
-            if (!hasKey) line = Ui.tr("No TMDB key: see the README (config.properties).");
+            if (!hasKey) line = Ui.tr("No TMDB key: set one in Free My TV › Integrations.");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
@@ -785,6 +791,12 @@ public class SettingsActivity extends Activity {
                                 Trakt.get(getContext()).cancelLogin();
                                 focus = TRAKT_ROW;
                                 screen = MAIN;
+                            } else if (screen == INTEGRATIONS) {
+                                IntegrationsServer.stop();
+                                integrationsUrl = "";
+                                integrationsError = "";
+                                focus = INTEGRATIONS_ROW;
+                                screen = MAIN;
                             } else {
                                 focus = screen == HOME_SETTINGS ? 2 : screen == SHELF_EDIT ? (editingTop ? 4 : 3)
                                         : screen == REMOTE_KEYS ? 5 : 0;
@@ -843,16 +855,16 @@ public class SettingsActivity extends Activity {
             return drawWrapped(c, text, x, y, gap, 790 * k);
         }
 
-        // The sign-in code as a QR code (the address with the code in it, so the phone's camera needs no typing).
+        // A QR code of the given address or link, so a phone's camera needs no typing.
         private final Paint qrInk = new Paint(), qrBg = new Paint(Paint.ANTI_ALIAS_FLAG);
         private String qrFor = "";
         private android.graphics.Path qrPath;
         private int qrModules;
 
-        private void drawQr(Canvas c, String code, float x, float top) {
-            if (!code.equals(qrFor)) {
-                qrFor = code;
-                boolean[][] m = Qr.encode("https://trakt.tv/activate/" + code);
+        private void drawQr(Canvas c, String text, float x, float top) {
+            if (!text.equals(qrFor)) {
+                qrFor = text;
+                boolean[][] m = Qr.encode(text);
                 qrPath = null;
                 if (m != null) {
                     qrModules = m.length;
@@ -889,7 +901,7 @@ public class SettingsActivity extends Activity {
                 case Trakt.ERR_NETWORK: return Ui.tr("Couldn't reach Trakt. Check the network and try again.");
                 case Trakt.ERR_DENIED: return Ui.tr("Trakt said no: the code was denied.");
                 case Trakt.ERR_EXPIRED: return Ui.tr("The code expired. Press Connect for a new one.");
-                case Trakt.ERR_REFUSED: return Ui.tr("Trakt refused the Client ID: check trakt_client_id in config.properties.");
+                case Trakt.ERR_REFUSED: return Ui.tr("Trakt refused the Client ID: check it in Free My TV › Integrations.");
                 default: return "";
             }
         }
@@ -917,7 +929,7 @@ public class SettingsActivity extends Activity {
                 long left = t.loginSecondsLeft();
                 c.drawText(Ui.trf("Expires in {time}", "time", String.format(Ui.locale(), "%d:%02d", left / 60, left % 60)),
                         x, y + 134 * k, notice);
-                drawQr(c, t.loginCode(), x, y + 178 * k);
+                drawQr(c, "https://trakt.tv/activate/" + t.loginCode(), x, y + 178 * k);
             } else if (state == Trakt.STARTING) {
                 c.drawText(Ui.tr("Asking Trakt for a code…"), x, y, notice);
             } else {
@@ -931,6 +943,61 @@ public class SettingsActivity extends Activity {
                     y = drawWrapped(c, Ui.tr("Connect your Trakt account to see Continue Watching and Watchlist under the home screen's cards."), x, y, 14 * k);
                     drawWrapped(c, Ui.tr("You sign in on your phone or computer with a short code. Free My TV only reads your lists."), x, y, 0);
                 }
+            }
+        }
+
+        // MARK: - Integrations (Free My TV > Integrations): set the TMDB key, Watchmode key and Trakt Client ID from a phone
+
+        /** The main menu's value: how many of the three are set. */
+        private String integrationsStatus() {
+            int n = (Recs.hasKey(getContext()) ? 1 : 0) + (!Prefs.watchmodeKey().isEmpty() ? 1 : 0) + (Trakt.configured() ? 1 : 0);
+            return Ui.trf("{n} of 3 set", "n", n);
+        }
+
+        /** The one button of the Integrations screen. */
+        private String integrationsAction() {
+            return IntegrationsServer.running() ? Ui.tr("Stop") : Ui.tr("Set up on your phone");
+        }
+
+        private void integrationsPressed() {
+            if (IntegrationsServer.running()) {
+                IntegrationsServer.stop();
+                integrationsUrl = "";
+                integrationsError = "";
+                return;
+            }
+            try {
+                integrationsUrl = IntegrationsServer.start();
+                integrationsError = "";
+            } catch (java.io.IOException e) {
+                integrationsUrl = "";
+                integrationsError = Ui.tr("Couldn't start. Check the TV's Wi-Fi or network connection.");
+                AppLog.w("integrations server: " + e.getMessage());
+            }
+        }
+
+        private void drawIntegrations(Canvas c) {
+            float x = LIST_X * k + 30 * k;
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Integrations"), x, (LIST_TOP - 24) * k, heading);
+            float y0 = (LIST_TOP + 20) * k;
+            rowRect.set(LIST_X * k, y0, LIST_R * k, y0 + LIST_ROW_H * k);
+            float f = drawRowBackground(c, 0);
+            rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+            c.drawText(integrationsAction(), rowRect.left + 30 * k, rowRect.centerY() + Ui.halfCap(rowLabel), rowLabel);
+
+            float y = (LIST_TOP + 20 + LIST_ROW_H + 64) * k;
+            y = drawWrapped(c, Ui.trf("TMDB key: {status}", "status", Recs.hasKey(getContext()) ? Ui.tr("Set") : Ui.tr("Not set")), x, y, 10 * k);
+            y = drawWrapped(c, Ui.trf("Watchmode key: {status}", "status", Prefs.watchmodeKey().isEmpty() ? Ui.tr("Not set") : Ui.tr("Set")), x, y, 10 * k);
+            y = drawWrapped(c, Ui.trf("Trakt Client ID: {status}", "status", Trakt.configured() ? Ui.tr("Set") : Ui.tr("Not set")), x, y, 30 * k);
+
+            if (!integrationsUrl.isEmpty()) {
+                y = drawWrapped(c, Ui.trf("On your phone, go to {url}", "url", integrationsUrl), x, y, 30 * k);
+                drawQr(c, integrationsUrl, x, y);
+            } else if (!integrationsError.isEmpty()) {
+                drawWrapped(c, integrationsError, x, y, 0);
+            } else {
+                drawWrapped(c, Ui.tr("Scan the QR or open the address on your phone to set these without typing them here."), x, y, 0);
             }
         }
 
@@ -2044,6 +2111,11 @@ public class SettingsActivity extends Activity {
                 invalidate();
                 spoken.focusMoved();
                 return;
+            } else if (screen == INTEGRATIONS) {
+                integrationsPressed();
+                invalidate();
+                spoken.focusMoved();
+                return;
             } else if (screen == REMOTE_KEYS) {
                 if (focus >= Prefs.KEYS.length) openAdded(0);
                 else openPicker(focus + 1);
@@ -2095,6 +2167,9 @@ public class SettingsActivity extends Activity {
                     return;
                 }
                 openStremio();
+            } else if (focus == INTEGRATIONS_ROW) {
+                screen = INTEGRATIONS;
+                focus = 0;
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }

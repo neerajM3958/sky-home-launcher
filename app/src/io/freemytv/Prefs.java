@@ -219,6 +219,17 @@ final class Prefs {
     static boolean includeRentBuy() { return app == null ? Config.INCLUDE_RENT_BUY : sp().getBoolean("includeRentBuy", Config.INCLUDE_RENT_BUY); }
     static void setIncludeRentBuy(boolean on) { put("includeRentBuy", on); }
 
+    // MARK: - Integrations (Free My TV > Integrations); config.properties gives the first values, never read back once set
+
+    static String tmdbKey() { return (app == null ? Config.TMDB_KEY : sp().getString("tmdbKey", Config.TMDB_KEY)).trim(); }
+    static void setTmdbKey(String v) { put("tmdbKey", v.trim()); }
+
+    static String watchmodeKey() { return (app == null ? Config.WATCHMODE_KEY : sp().getString("watchmodeKey", Config.WATCHMODE_KEY)).trim(); }
+    static void setWatchmodeKey(String v) { put("watchmodeKey", v.trim()); }
+
+    static String traktClientId() { return (app == null ? Config.TRAKT_CLIENT_ID : sp().getString("traktClientId", Config.TRAKT_CLIENT_ID)).trim(); }
+    static void setTraktClientId(String v) { put("traktClientId", v.trim()); }
+
     /** Original languages (two-letter codes) the picks and catalogs are limited to; empty: any. */
     static List<String> languages() {
         String v = app == null ? Config.TMDB_LANGUAGES : sp().getString("languages", Config.TMDB_LANGUAGES);

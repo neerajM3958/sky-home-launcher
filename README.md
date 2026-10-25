@@ -156,6 +156,13 @@ OK on a show in *Shows you watch* opens its episodes: every episode with its num
 
 Other titles open as described in [Opening a title](#opening-a-title). *Trakt* → *Disconnect* forgets the sign-in. The rows follow what Trakt has: Stremio, for one, adds to your history only when you connect Trakt in its settings.
 
+### Setting these keys from your phone (no rebuild)
+
+Google TV only. If the TMDB key, Watchmode key or Trakt Client ID is missing, *Free My TV* → *Integrations* starts a small web
+address on the TV itself (shown as text and a QR code) and stops it again when you leave the screen. Open that address on your
+phone (same Wi-Fi as the TV) to paste in whichever of the three you have — each field links to where to get it — without typing
+anything on the remote or touching `config.properties`. A key already set shows as dots; leaving a field as it is keeps it.
+
 ## Going back
 
 On the TV: *Free My TV* → *Home Screen* → *Original*. The factory home screen, screensaver and every app come back exactly as they were. If the new home screen ever crashes three times in five minutes, it switches back by itself.

@@ -4,7 +4,7 @@ A running list of small changes. Each item is its own section (`## N. Title`); a
 Each section says: what is wanted, where it lives in the code, how to do it, and what is still to decide.
 
 Status (2026-10-25): all items go in **one** pull request, branch `minor-improvements` (off `main` after the catalog screen
-merged). Built so far: items 1 to 6. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
+merged). Built so far: items 1 to 7. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
 taken on the TV); a finished item has a *Built* line and its screenshots.
 
 ---
@@ -234,5 +234,76 @@ The test button was removed afterwards.
 
 ---
 
-<!-- Add the next item below as "## 7. Title" with: Wanted, Where, How, To decide. When an item is built, add a **Built** line and
+## 7. Set the TMDB key, Watchmode key and Trakt Client ID from a phone (no rebuild)
+
+**Wanted.** `tmdb_key`, `watchmode_key` and `trakt_client_id` only come from `config.properties`, baked in at build time.
+Missing one just greys out a row ("Needs a TMDB key") with no way to fix it short of editing `config.properties` and
+rebuilding — out of reach for the person actually using the TV, and typing a 40+ character key with a D-pad isn't
+realistic. Add a *Free My TV > Integrations* screen: it starts a small web server on the TV, shows its address as a QR
+code (the same idea as Trakt's device-login QR), and the person opens that address on their phone to paste the keys
+into a page the TV itself serves. Google TV only — LG and Samsung are plain web apps with no socket-server capability,
+so they keep the config.properties-only path.
+
+**Where.** `Prefs` (new overridable settings, the same one-way-override shape as `region()`), `Recs`/`Trakt` (switch
+their `Config.TMDB_KEY`/`WATCHMODE_KEY`/`TRAKT_CLIENT_ID` reads to the new `Prefs` getters), a new `IntegrationsServer`
+(plain sockets, no library, modeled loosely on `Qr.java`'s self-contained style), and `SettingsActivity` (a new
+`INTEGRATIONS` screen built the same way `TRAKT` is: one actionable row + status text, refreshed by the existing ~2s
+`poll` loop).
+
+**How.**
+- `Prefs.tmdbKey()/setTmdbKey()`, `watchmodeKey()/setWatchmodeKey()`, `traktClientId()/setTraktClientId()`:
+  `sp().getString(key, Config.X)`, the same shape as every other TV-settable value. `Recs`/`Trakt`'s call sites move
+  from `Config.X` to these.
+- `IntegrationsServer.start()`: a random 3-byte hex token, `new ServerSocket(0)` (ephemeral port, all interfaces), the
+  TV's LAN IPv4 from `NetworkInterface.getNetworkInterfaces()` (no new permission: `ACCESS_WIFI_STATE` is only for
+  `WifiManager`), a daemon accept-loop thread, returns `http://<ip>:<port>/<token>`. `stop()` closes the socket.
+- The accept loop spawns one short daemon thread per connection (5s timeout, ~8KB cap): `GET /<token>` renders one
+  inline HTML/CSS page (no external resources); `POST /<token>` reads the 3 form fields and, for each that's
+  non-empty and not the fixed asterisk placeholder, calls the matching `Prefs.setX()`, then 302-redirects back to the
+  GET page (POST-redirect-GET). Any other path is a 404. Field values are never logged, and the page itself only ever
+  receives a boolean ("is one set already"), never the real value — a field shows a fixed asterisk placeholder when
+  set, cleared on focus (`onfocus="this.value=''"`) so a fresh value can be typed; submitting with a field still
+  blank/placeholder leaves that key unchanged (decided: never erase a working key by accident — a new value only gets
+  saved where one was actually typed).
+- Each field gets a short caption on why it matters, and a "Get a key/ID →" link: TMDB → themoviedb.org/settings/api,
+  Watchmode → api.watchmode.com, Trakt → app.trakt.tv/settings/apps/api/new (the same ones already in
+  `config.example.properties`/README).
+- `SettingsActivity`: `INTEGRATIONS` screen, `INTEGRATIONS_ROW` (MAIN's 11th row, between Stremio and TV Settings),
+  `drawIntegrations` (heading, one row "Set up on your phone"/"Stop", three status lines, then the QR + address once
+  running — generalizing `drawQr` to take the final string instead of hardcoding Trakt's URL prefix internally), Back
+  stops the server (same shape as Trakt's `cancelLogin()` on Back), and `pause()` stops it unconditionally too
+  (leaving via Home shouldn't leave it listening).
+- README gets a short subsection near "Your Trakt lists (optional)"; `CLAUDE.md` gets one bullet under "The code",
+  matching the Stremio-install/Remote-Buttons bullets.
+
+**To decide.** Nothing outstanding — the empty-field behavior (keep, never clear) was confirmed in conversation;
+clearing a key isn't built now (consistent with every other TV-settable value: once set on the TV, it always wins
+over `config.properties`, with no "revert to config" path either).
+
+**Built.** *Settings* has an 11th main row, *Integrations* (between *Stremio* and *TV Settings*), showing "{n} of 3 set".
+Opening it shows the three keys' status and a *Set up on your phone* row; pressing it starts `IntegrationsServer` and shows
+the address as text and a QR code (`drawQr`, generalized from Trakt's own). `Prefs.tmdbKey/watchmodeKey/traktClientId`
+override `Config` the same way every other TV-settable value does; `Recs` and `Trakt` read them instead of `Config` directly.
+Tried on my own TV (192.168.0.4), which already had all three keys configured (`3 of 3 set`, Trakt *Connected*, TMDB *India*):
+opened *Integrations*, pressed *Set up on your phone* — the screen showed `http://192.168.0.4:41705/9b3d10` and a QR matching
+it. From a computer on the same network, `GET` that address returned the page with all three fields pre-filled with the fixed
+dot placeholder (never the real keys) and each one's "Get one →" link. To check the safety rule without touching this TV's
+real keys, I `POST`ed the form with every field left blank (simulating someone tapping Save without typing anything): it
+302-redirected to `?saved=1`, which showed "Saved." and the same three dot-placeholders — nothing was overwritten, and the
+TV still read "3 of 3 set" / *Connected* / *India* afterwards. Pressing Back then stopped the server at once: the same address
+refused the connection right away. The HTML/CSS itself is plain and fluid (no fixed widths), confirmed clean at a normal
+browser width; a narrow (~390px) headless-Chrome screenshot on this machine clipped text, which turned out to be a headless
+Chrome quirk at narrow `--window-size` values (unrelated to the page: unchanged at 480px, gone entirely at 800px), not
+something a real phone browser would show. `./build.sh` and `python tools/translate.py --check` both pass (translated all 14
+new strings by hand into all 24 catalogues, Portuguese/Spanish/German/Russian with extra care as the hand-maintained ones).
+Not done: the served page itself isn't localized (it's plain English, since it isn't drawn through `Ui.tr`/the catalogues the
+way the TV's own screens are) — a reasonable line to draw for a one-time setup page, but worth knowing.
+
+| The new row | Idle (all three already set) | Running: address + QR | The phone page |
+|---|---|---|---|
+| ![](images/minor-improvements/7-integrations-main-row.jpg) | ![](images/minor-improvements/7-integrations-idle.jpg) | ![](images/minor-improvements/7-integrations-qr.jpg) | ![](images/minor-improvements/7-phone-page.jpg) |
+
+---
+
+<!-- Add the next item below as "## 8. Title" with: Wanted, Where, How, To decide. When an item is built, add a **Built** line and
 its screenshots (taken on the TV, saved as plans/images/minor-improvements/<item>-<what>.jpg at 1280x720). -->
