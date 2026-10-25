@@ -204,6 +204,10 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   without a publishing app: `content insert` on `content://android.media.tv/watch_next_program` from the shell (the
   provider records `com.android.shell` as the publisher, and values can't hold a `:`, so write the intent as
   `#Intent;action=...;component=pkg/cls;end` and no art address).
+- *Remote Buttons > Added buttons* lets the person add any button: the screen asks `RemoteKeyService` (the only place that sees
+  keys no app gets) through two small files (`remote-learn.req`, `.res`) for the next key that isn't needed to move around
+  (`RemoteKeys.needed`), saved as `learn=` lines in `remote-keys.txt` by key code and scan code, and works on any brand. The
+  service is on whenever a brand has built-in buttons or a button was added (`RemoteKeys.wanted`); *Original* still turns it off.
 - The remote's app buttons (`RemoteKeys`, `RemoteKeyService`) use each brand's key codes: they run only on TCL,
   Vestel, KTC (NextStar) and Sony TVs and Formovie projectors, the service is on only in Free My TV mode, and *Original* takes it out of the enabled accessibility
   services. The system waits for the service on every key, so it lives alone in the `:keys` process: what it reads is

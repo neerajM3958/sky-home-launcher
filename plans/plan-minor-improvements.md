@@ -4,7 +4,7 @@ A running list of small changes. Each item is its own section (`## N. Title`); a
 Each section says: what is wanted, where it lives in the code, how to do it, and what is still to decide.
 
 Status (2026-10-25): all items go in **one** pull request, branch `minor-improvements` (off `main` after the catalog screen
-merged). Built so far: items 1 to 5. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
+merged). Built so far: items 1 to 6. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
 taken on the TV); a finished item has a *Built* line and its screenshots.
 
 ---
@@ -198,9 +198,24 @@ process `:keys`), and the Remote Buttons screen in `SettingsActivity` (`REMOTE_K
 - **Safety.** Learned buttons run only in Free My TV mode, as the service does; *Original* takes the service out of the enabled
   accessibility services, so the original behaviour comes back untouched. Keys from a gamepad or joystick stay ignored.
 
-**To decide.** Whether a learned button may also trigger something other than an app (for example *Open Free My TV's home* or
-*Open Settings*). Whether to ship ready presets for known brands next to this (so TCL, Sony and Skyworth keep working with no
-recording) and let the recording only add to them: that is what the code does today and I'd keep it.
+**Decided (my call, none was asked for).** An added button opens an app or *TV Settings* (what a built-in button can do); other
+actions can come later. The built-in brand presets stay as they are and the added buttons come on top of them.
+
+**Built.** *Remote Buttons* has a last row, *Added buttons* (a list of up to 8, then *Add a button*). *Add a button* shows
+*Press the button on your remote* and waits up to 30 s: `RemoteKeyService` (or the screen itself, for a key that reaches it)
+takes the first key that isn't one of the arrows, OK, Back, Home, Menu, volume, mute or power, and isn't from a game controller,
+writes it (`Prefs.writeLearnResult`), and swallows it (its release too). The screen names it (*Button F7*, or the key's own name
+with its scan code, like *Button STEM 1 (583)*) and opens the app list, where *Remove this button* is the last row. Added buttons
+are saved as `learn=` lines in `remote-keys.txt` by key code and scan code, so they work on any brand, and the key service is on
+whenever there are any (`RemoteKeys.wanted`). Tried on the TV: pressing F7 added *Button F7*, it was set to *TV Settings*, and F7
+then opened Android's Settings from the home screen; removing it brought the list back to *Add a button*. Not proven: that an
+added button also works from inside another app. With SmartTube in front, a key sent from the computer (`adb shell input`) did
+nothing, and neither did this TV's own built-in Netflix key sent the same way, so keys sent that way don't tell anything about
+the service here; that check needs a real remote press. The same path serves the built-in TCL, Sony and Skyworth buttons.
+
+| The new row | Waiting for a button | A button was recorded | The list | Removing it |
+|---|---|---|---|---|
+| ![](images/minor-improvements/6-remote-buttons-added-row.jpg) | ![](images/minor-improvements/6-press-a-button.jpg) | ![](images/minor-improvements/6-recorded-pick-app.jpg) | ![](images/minor-improvements/6-added-buttons-list.jpg) | ![](images/minor-improvements/6-remove-this-button.jpg) |
 
 ---
 

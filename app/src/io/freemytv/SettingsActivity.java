@@ -122,7 +122,7 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
         private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
@@ -157,6 +157,8 @@ public class SettingsActivity extends Activity {
         private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
         private final List<String[]> hiddenRows = new ArrayList<>();     // the Hidden services screen: {key, name}
         private final List<String[]> appsOffRows = new ArrayList<>();    // Apps turned off: {package, name}
+        private int[] keyIds = Prefs.KEYS;      // the remote buttons: the brand's, then the ones added (Prefs.allKeys)
+        private static final int MAX_ADDED = 8;
         private final List<String> torLangRows = new ArrayList<>();      // the Torrentio languages screen: Torrentio's names
         private final java.util.Set<String> appsKept = new java.util.HashSet<>();   // ... and the ones the person keeps on
         private final java.util.Set<String> stremioInstalled = new java.util.HashSet<>();   // services whose app is on the TV (read when the screen opens)
@@ -273,6 +275,12 @@ public class SettingsActivity extends Activity {
                     int at = pickScroll + row;
                     return at < torLangRows.size() ? Torrentio.label(torLangRows.get(at)) + (torChosen(at) ? Ui.tr(", selected") : "") : "";
                 }
+                case ADDED_KEYS: {
+                    String[] labels = addedLabels(), values = addedValues();
+                    return row < labels.length ? labels[row] + (values[row].isEmpty() ? "" : ", " + values[row]) : "";
+                }
+                case LEARN:
+                    return Ui.tr("Press the button on your remote");
                 case LANGUAGES: {
                     int at = pickScroll + row;
                     return at < langRows.size() ? langRows.get(at)[1] + (langChecked(at) ? Ui.tr(", selected") : "") : "";
@@ -414,12 +422,14 @@ public class SettingsActivity extends Activity {
                 case HIDDEN: return Math.min(PICK_VISIBLE, hiddenRows.size());
                 case APPS_OFF: return Math.min(PICK_VISIBLE, appsOffRows.size());
                 case TORRENTIO: return 3;
+                case ADDED_KEYS: return addedLabels().length;
+                case LEARN: return 1;
                 case TOR_LANGS: return Math.min(PICK_VISIBLE, torLangRows.size());
                 case HOME_CHOICE: return 3;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
                 case SHELF_EDIT: return Math.min(PICK_VISIBLE, shelfRows.size());
-                default: return Prefs.KEYS.length;
+                default: return Prefs.KEYS.length + 1;      // the remote buttons, then "Added buttons"
             }
         }
 
@@ -459,7 +469,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else if (screen == ADDED_KEYS) drawAdded(c); else if (screen == LEARN) drawLearn(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -672,6 +682,13 @@ public class SettingsActivity extends Activity {
 
         boolean onKey(KeyEvent e) {
             boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
+            if (screen == LEARN && RemoteKeys.recordable(e)) {      // a button that reached the screen (the service sees the others)
+                if (down && e.getRepeatCount() == 0) {
+                    finishLearn(e.getKeyCode(), e.getScanCode());
+                    invalidate();
+                }
+                return true;
+            }
             switch (e.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_UP:
                     if (down && focus > 0) focus--;
@@ -690,7 +707,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TORRENTIO || screen == TOR_LANGS)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TORRENTIO || screen == TOR_LANGS || screen == ADDED_KEYS)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -744,6 +761,14 @@ public class SettingsActivity extends Activity {
                             } else if (screen == APPS_OFF) {
                                 focus = 2;
                                 screen = HOME_CHOICE;
+                            } else if (screen == ADDED_KEYS) {
+                                focus = Prefs.KEYS.length;
+                                screen = REMOTE_KEYS;
+                            } else if (screen == LEARN) {
+                                Prefs.stopLearning();
+                                openAdded(learnedCount());
+                            } else if (screen == PICKER && pickFor - 1 >= Prefs.KEYS.length) {
+                                openAdded(pickFor - 1 - Prefs.KEYS.length);
                             } else if (screen == TORRENTIO) {
                                 focus = 1;
                                 screen = STREMIO;
@@ -1034,6 +1059,112 @@ public class SettingsActivity extends Activity {
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("The language a title was made in. OK picks or drops one."), LIST_X * k + 30 * k,
                     (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
+        // MARK: - Added buttons (Free My TV > Remote Buttons): the person presses a button and chooses what it opens
+
+        private int learnedCount() {
+            return Math.max(0, keyIds.length - Prefs.KEYS.length);
+        }
+
+        private void refreshKeyIds() {
+            keyIds = Prefs.allKeys();
+        }
+
+        private void openAdded(int at) {
+            refreshKeyIds();
+            loadApps();
+            screen = ADDED_KEYS;
+            focus = Math.max(0, Math.min(at, addedLabels().length - 1));
+            for (Spring s : pop) s.snap(0);
+        }
+
+        /** The added buttons, then the row that adds one (until there are as many as fit). */
+        private String[] addedLabels() {
+            List<String> l = new ArrayList<>();
+            for (int i = Prefs.KEYS.length; i < keyIds.length; i++) l.add(Prefs.learnedName(keyIds[i]));
+            if (learnedCount() < MAX_ADDED) l.add(Ui.tr("Add a button"));
+            return l.toArray(new String[0]);
+        }
+
+        private String[] addedValues() {
+            String[] v = new String[addedLabels().length];
+            java.util.Arrays.fill(v, "");
+            for (int i = 0; i < learnedCount(); i++) v[i] = appOf(keyIds[Prefs.KEYS.length + i]);
+            return v;
+        }
+
+        private void drawAdded(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Added buttons"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            String[] labels = addedLabels(), values = addedValues();
+            for (int i = 0; i < labels.length; i++) {
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
+                c.drawText(values[i], rowRect.right - 30 * k, base, rowValue);
+            }
+            drawWrapped(c, Ui.tr("Press a button on your remote to add it. It opens the app you pick, while Free My TV is on."),
+                    LIST_X * k + 30 * k, (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, 0);
+        }
+
+        private void startLearn() {
+            Prefs.startLearning();
+            HomeMode.ensureRemoteService(getContext(), 0);      // the service sees the buttons no app gets to see
+            screen = LEARN;
+            focus = 0;
+            handler.postDelayed(learnPoll, 250);
+        }
+
+        private final Runnable learnPoll = new Runnable() {
+            @Override public void run() {
+                if (screen != LEARN || !running) return;
+                int[] pressed = Prefs.takeLearnResult();
+                if (pressed != null) {
+                    finishLearn(pressed[0], pressed[1]);
+                } else if (!Prefs.learning()) {         // nothing was pressed in time
+                    openAdded(learnedCount());
+                } else {
+                    handler.postDelayed(this, 250);
+                }
+                invalidate();
+            }
+        };
+
+        /** A button was pressed: it is added (or found again) and the person picks what it opens. */
+        private void finishLearn(int keyCode, int scanCode) {
+            Prefs.stopLearning();
+            int id = Prefs.addLearned(keyCode, scanCode, keyName(keyCode, scanCode));
+            refreshKeyIds();
+            loadApps();
+            openPicker(id - Prefs.LEARNED + Prefs.KEYS.length + 1);
+        }
+
+        /** "Button STEM 1" or "Button 114" for a key that has no name. */
+        private static String keyName(int keyCode, int scanCode) {
+            String name = KeyEvent.keyCodeToString(keyCode).replace("KEYCODE_", "").replace('_', ' ');
+            if (keyCode == KeyEvent.KEYCODE_UNKNOWN || name.matches("\\d+")) name = String.valueOf(scanCode > 0 ? scanCode : keyCode);
+            else if (scanCode > 0 && (name.startsWith("STEM") || name.startsWith("BUTTON") || name.startsWith("F"))) name += " (" + scanCode + ")";
+            return Ui.trf("Button {n}", "n", name);
+        }
+
+        private void drawLearn(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Add a button"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            rowRect.set(LIST_X * k, (LIST_TOP + 20) * k, LIST_R * k, (LIST_TOP + 20 + 140) * k);
+            float pulse = 0.5f + 0.5f * (float) Math.sin(SystemClock.uptimeMillis() / 260.0);
+            Paint big = Ui.text(Ui.displaySemibold, 40 * k, look.ink(0xF2FFFFFF, currentNight));
+            c.drawText(Ui.tr("Press the button on your remote"), LIST_X * k + 30 * k, rowRect.top + 70 * k, big);
+            Paint dots = new Paint(Paint.ANTI_ALIAS_FLAG);
+            dots.setColor(Ui.alpha(look.ink(0xFFFFFFFF, currentNight), 0.35f + 0.5f * pulse));
+            c.drawCircle(LIST_X * k + 46 * k, rowRect.top + 130 * k, 10 * k, dots);
+            drawWrapped(c, Ui.tr("The arrows, OK, Back, Home and volume can't be added. Back cancels."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + 200) * k, 0);
+            postInvalidateDelayed(80);
         }
 
         // MARK: - Torrentio addon (Free My TV > Stremio)
@@ -1372,7 +1503,20 @@ public class SettingsActivity extends Activity {
             return on ? Ui.tr("On") : Ui.tr("Off");
         }
 
+        /** The remote buttons screen: the brand's buttons, then a row for the ones the person added. */
         private String[] keyLabels() {
+            String[] own = ownKeyLabels();
+            String[] all = java.util.Arrays.copyOf(own, own.length + 1);
+            all[own.length] = Ui.tr("Added buttons");
+            return all;
+        }
+
+        /** The name of button `i` (an index of keyIds): the brand's label, or what the person's button was called. */
+        private String keyLabelOf(int i) {
+            return i < Prefs.KEYS.length ? ownKeyLabels()[i] : Prefs.learnedName(keyIds[i]);
+        }
+
+        private String[] ownKeyLabels() {
             if (RemoteKeys.SKYWORTH) return new String[] {Ui.tr("Netflix button"), Ui.tr("YouTube button"),
                     Ui.tr("Prime Video button"), Ui.tr("Disney+ button"), Ui.tr("Settings button")};
             if (RemoteKeys.STEM_NETFLIX) return new String[] {Ui.tr("Netflix button")};
@@ -1386,12 +1530,15 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] keyValues() {
-            String[] v = new String[Prefs.KEYS.length];
-            for (int i = 0; i < v.length; i++) {
-                int at = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[i]));
-                v[i] = at >= 0 ? appLabels.get(at) : Ui.tr("Not installed");
-            }
+            String[] v = new String[Prefs.KEYS.length + 1];
+            for (int i = 0; i < Prefs.KEYS.length; i++) v[i] = appOf(Prefs.KEYS[i]);
+            v[Prefs.KEYS.length] = learnedCount() == 0 ? Ui.tr("None") : String.valueOf(learnedCount());
             return v;
+        }
+
+        private String appOf(int id) {
+            int at = appPkgs.indexOf(Prefs.keyApp(id));
+            return at >= 0 ? appLabels.get(at) : Ui.tr("Not installed");
         }
 
         /** Installed TV apps, by name, after "Nothing": what a remote button can open. */
@@ -1406,7 +1553,7 @@ public class SettingsActivity extends Activity {
             appPkgs.add("");
             // On Sony, "nothing" leaves the key to the TV, which opens its usual app.
             appLabels.add(RemoteKeys.SONY ? Ui.tr("Sony default") : Ui.tr("Nothing"));
-            if (RemoteKeys.SKYWORTH) {      // the gear button: Android's own Settings (the stock launcher's panel is off)
+            if (RemoteKeys.SKYWORTH || Prefs.hasLearned()) {      // the gear button: Android's own Settings (the stock launcher's panel is off)
                 appPkgs.add(Prefs.TV_SETTINGS);
                 appLabels.add(Ui.tr("TV Settings"));
             }
@@ -1454,11 +1601,18 @@ public class SettingsActivity extends Activity {
                 else if (focus == TMDB_ANIMATION) Prefs.setHideAnimation(!Prefs.hideAnimation());
                 return;
             }
-            if (screen == REMOTE_KEYS) {
+            if (screen == REMOTE_KEYS || screen == ADDED_KEYS) {
+                boolean added = screen == ADDED_KEYS;
+                if (!added && focus >= Prefs.KEYS.length) {       // the "Added buttons" row
+                    if (dir > 0) openAdded(0);
+                    return;
+                }
+                if (added && focus >= learnedCount()) return;       // the "Add a button" row: OK only
+                int id = added ? keyIds[Prefs.KEYS.length + focus] : Prefs.KEYS[focus];
                 int n = appPkgs.size();
-                int at = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[focus]));
+                int at = appPkgs.indexOf(Prefs.keyApp(id));
                 int next = at < 0 ? (dir > 0 ? 0 : n - 1) : (at + dir + n) % n;
-                Prefs.setKeyApp(Prefs.KEYS[focus], appPkgs.get(next));
+                Prefs.setKeyApp(id, appPkgs.get(next));
                 return;
             }
             switch (focus) {
@@ -1690,7 +1844,8 @@ public class SettingsActivity extends Activity {
                 pickCurrent = java.util.Arrays.asList(choices).indexOf(Prefs.language());
             } else {
                 pickLabels.addAll(appLabels);
-                pickCurrent = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[which - 1]));
+                if (which - 1 >= Prefs.KEYS.length) pickLabels.add(Ui.tr("Remove this button"));
+                pickCurrent = appPkgs.indexOf(Prefs.keyApp(keyIds[which - 1]));
             }
             int visible = Math.min(PICK_VISIBLE, pickLabels.size());
             int at = Math.max(0, pickCurrent);
@@ -1703,7 +1858,7 @@ public class SettingsActivity extends Activity {
         private void drawPicker(Canvas c) {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             String title = pickFor == PICK_CITY ? Ui.tr("City") : pickFor == PICK_REGION ? Ui.tr("Region")
-                    : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabels()[pickFor - 1];
+                    : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabelOf(pickFor - 1);
             c.drawText(title, LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
@@ -1758,6 +1913,7 @@ public class SettingsActivity extends Activity {
 
         private void activate() {
             Context c = getContext();
+            if (screen == LEARN) return;        // waiting for a button on the remote
             if (screen == HOME_CHOICE && focus == 2) {
                 openAppsOff();
             } else if (screen == APPS_OFF) {
@@ -1829,9 +1985,20 @@ public class SettingsActivity extends Activity {
                 return;
             } else if (screen == PICKER) {
                 int at = pickScroll + focus;
-                Prefs.setKeyApp(Prefs.KEYS[pickFor - 1], appPkgs.get(at));
-                focus = pickFor - 1;
-                screen = REMOTE_KEYS;
+                boolean added = pickFor - 1 >= Prefs.KEYS.length;
+                if (at >= appPkgs.size()) {         // "Remove this button"
+                    Prefs.removeLearned(keyIds[pickFor - 1]);
+                    refreshKeyIds();
+                    openAdded(Math.min(pickFor - 1 - Prefs.KEYS.length, learnedCount()));
+                } else {
+                    Prefs.setKeyApp(keyIds[pickFor - 1], appPkgs.get(at));
+                    if (added) {
+                        openAdded(pickFor - 1 - Prefs.KEYS.length);
+                    } else {
+                        focus = pickFor - 1;
+                        screen = REMOTE_KEYS;
+                    }
+                }
             } else if (screen == SHELF_EDIT) {
                 toggleShelfApp();
                 invalidate();
@@ -1842,7 +2009,11 @@ public class SettingsActivity extends Activity {
                 spoken.focusMoved();
                 return;
             } else if (screen == REMOTE_KEYS) {
-                openPicker(focus + 1);
+                if (focus >= Prefs.KEYS.length) openAdded(0);
+                else openPicker(focus + 1);
+            } else if (screen == ADDED_KEYS) {
+                if (focus < learnedCount()) openPicker(Prefs.KEYS.length + focus + 1);
+                else startLearn();
             } else if (screen == HOME_SETTINGS && focus == 0) {
                 openPicker(PICK_LANGUAGE);
             } else if (screen == HOME_SETTINGS && focus == CITY_ROW) {
@@ -1868,6 +2039,7 @@ public class SettingsActivity extends Activity {
                 openShelfEditor(true);
             } else if (focus == 5) {
                 HomeMode.ensureRemoteService(c, 0);   // the buttons work from inside other apps through this service
+                refreshKeyIds();
                 loadApps();
                 screen = REMOTE_KEYS;
                 focus = 0;

@@ -354,6 +354,12 @@ final class Prefs {
     }
 
     private static final String[] keyApps = new String[KEYS.length];   // null = the default
+    /**
+     * Buttons the person added by pressing them (Settings > Remote Buttons > Added buttons): each {key code, scan code, name,
+     * package}, saved as "learn=" lines in the same file. Their ids, where a button is an int, start at LEARNED.
+     */
+    static final int LEARNED = 200_000;
+    private static final List<String[]> learned = new ArrayList<>();
     private static long keysStamp = Long.MIN_VALUE;
 
     /** A temporary file per process (two can start together after an update), synced before it replaces the old one. */
@@ -382,35 +388,169 @@ final class Prefs {
         writeKeys(sb.toString());
     }
 
-    /** Package the key opens ("" = nothing). */
-    static String keyApp(int keyCode) {
-        synchronized (keyApps) {
-            File f = keysFile();
-            long stamp = f.lastModified() * 31 + f.length();   // 0 without the file: every key opens its default
-            if (stamp != keysStamp) {
-                keysStamp = stamp;
-                java.util.Arrays.fill(keyApps, null);
-                if (stamp != 0) {
-                    try (BufferedReader r = new BufferedReader(new FileReader(f))) {
-                        String line;
-                        while ((line = r.readLine()) != null) {
-                            for (int i = 0; i < KEYS.length; i++) {
-                                String prefix = KEYS[i] + "=";
-                                if (line.startsWith(prefix)) keyApps[i] = line.substring(prefix.length());
-                            }
-                        }
-                    } catch (IOException ignored) {
-                    }
+    /** Reads the file again when it changed. Call with keyApps locked. */
+    private static void loadKeys() {
+        File f = keysFile();
+        long stamp = f.lastModified() * 31 + f.length();   // 0 without the file: every key opens its default
+        if (stamp == keysStamp) return;
+        keysStamp = stamp;
+        java.util.Arrays.fill(keyApps, null);
+        learned.clear();
+        if (stamp == 0) return;
+        try (BufferedReader r = new BufferedReader(new FileReader(f))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.startsWith("learn=")) {
+                    String[] p = line.substring(6).split("\\|", 4);
+                    if (p.length == 4) learned.add(p);
+                    continue;
+                }
+                for (int i = 0; i < KEYS.length; i++) {
+                    String prefix = KEYS[i] + "=";
+                    if (line.startsWith(prefix)) keyApps[i] = line.substring(prefix.length());
                 }
             }
+        } catch (IOException ignored) {
+        }
+    }
+
+    /** Package the key opens ("" = nothing). `keyCode` is a built-in key or the id of an added button. */
+    static String keyApp(int keyCode) {
+        synchronized (keyApps) {
+            loadKeys();
+            if (keyCode >= LEARNED) return keyCode - LEARNED < learned.size() ? learned.get(keyCode - LEARNED)[3] : "";
             for (int i = 0; i < KEYS.length; i++) if (KEYS[i] == keyCode && keyApps[i] != null) return keyApps[i];
             return defaultApp(keyCode);
         }
     }
 
-    static void setKeyApp(int keyCode, String pkg) {
+    /** The id of the added button for this key and scan code, or -1. */
+    static int learnedId(int keyCode, int scanCode) {
+        synchronized (keyApps) {
+            loadKeys();
+            for (int i = 0; i < learned.size(); i++) {
+                String[] l = learned.get(i);
+                if (l[0].equals(String.valueOf(keyCode)) && l[1].equals(String.valueOf(scanCode))) return LEARNED + i;
+            }
+            return -1;
+        }
+    }
+
+    static boolean hasLearned() {
+        synchronized (keyApps) {
+            loadKeys();
+            return !learned.isEmpty();
+        }
+    }
+
+    static String learnedName(int id) {
+        synchronized (keyApps) {
+            loadKeys();
+            return id - LEARNED < learned.size() ? learned.get(id - LEARNED)[2] : "";
+        }
+    }
+
+    /** The built-in keys, then the ids of the added buttons. */
+    static int[] allKeys() {
+        synchronized (keyApps) {
+            loadKeys();
+            int[] all = java.util.Arrays.copyOf(KEYS, KEYS.length + learned.size());
+            for (int i = 0; i < learned.size(); i++) all[KEYS.length + i] = LEARNED + i;
+            return all;
+        }
+    }
+
+    /** Writes every choice and every added button (`id`'s app replaced by `pkg`). Call with keyApps locked. */
+    private static void writeAll(int id, String pkg) {
         StringBuilder sb = new StringBuilder();
-        for (int key : KEYS) sb.append(key).append('=').append(key == keyCode ? pkg : keyApp(key)).append('\n');
+        for (int key : KEYS) sb.append(key).append('=').append(key == id ? pkg : keyApp(key)).append('\n');
+        for (int i = 0; i < learned.size(); i++) {
+            String[] l = learned.get(i);
+            sb.append("learn=").append(l[0]).append('|').append(l[1]).append('|').append(l[2]).append('|')
+                    .append(LEARNED + i == id ? pkg : l[3]).append('\n');
+        }
         if (writeKeys(sb.toString())) version++;
     }
+
+    static void setKeyApp(int keyCode, String pkg) {
+        synchronized (keyApps) {
+            loadKeys();
+            writeAll(keyCode, pkg);
+        }
+    }
+
+    /** Adds a button (a key and scan code the person pressed); returns its id, the existing one if it was added already. */
+    static int addLearned(int keyCode, int scanCode, String name) {
+        synchronized (keyApps) {
+            int known = learnedId(keyCode, scanCode);
+            if (known >= 0) return known;
+            learned.add(new String[] {String.valueOf(keyCode), String.valueOf(scanCode), name.replace('|', ' ').replace('\n', ' '), ""});
+            writeAll(-1, "");
+            return LEARNED + learned.size() - 1;
+        }
+    }
+
+    static void removeLearned(int id) {
+        synchronized (keyApps) {
+            loadKeys();
+            if (id < LEARNED || id - LEARNED >= learned.size()) return;
+            learned.remove(id - LEARNED);
+            writeAll(-1, "");
+        }
+    }
+
+    // Learning a button: the settings screen asks (a file), and the first key that arrives is written to another one, by the
+    // key service (its own process: it sees keys no app gets to see) or by the settings screen itself.
+    private static final long LEARN_MS = 30_000;
+
+    private static File learnFile(String name) {
+        return new File(app.getFilesDir(), name);
+    }
+
+    static void startLearning() {
+        //noinspection ResultOfMethodCallIgnored
+        learnFile("remote-learn.res").delete();
+        try (FileOutputStream out = new FileOutputStream(learnFile("remote-learn.req"))) {
+            out.write('1');
+        } catch (IOException ignored) {
+        }
+    }
+
+    /** True while a button is being waited for (a few seconds at most). Cheap: the service asks on every key. */
+    static boolean learning() {
+        File f = learnFile("remote-learn.req");
+        if (!f.exists()) return false;
+        if (System.currentTimeMillis() - f.lastModified() < LEARN_MS) return true;
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+        return false;
+    }
+
+    static void stopLearning() {
+        //noinspection ResultOfMethodCallIgnored
+        learnFile("remote-learn.req").delete();
+    }
+
+    static void writeLearnResult(int keyCode, int scanCode) {
+        try (FileOutputStream out = new FileOutputStream(learnFile("remote-learn.res"))) {
+            out.write((keyCode + "|" + scanCode).getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ignored) {
+        }
+    }
+
+    /** {key code, scan code} of the button that was pressed, once; null while none was. */
+    static int[] takeLearnResult() {
+        File f = learnFile("remote-learn.res");
+        if (!f.exists()) return null;
+        try (BufferedReader r = new BufferedReader(new FileReader(f))) {
+            String[] p = r.readLine().split("\\|");
+            return new int[] {Integer.parseInt(p[0]), Integer.parseInt(p[1])};
+        } catch (IOException | RuntimeException e) {
+            return null;
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        }
+    }
+
 }
