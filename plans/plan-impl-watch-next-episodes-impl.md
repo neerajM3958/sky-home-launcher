@@ -1,6 +1,6 @@
 # Plan: Watch Next shows in "Shows you watch", and their episodes page
 
-Status: planned, not built. Google TV only (like Trakt's rows and Watch Next).
+Status: implemented; Watch Next TV flow could not be exercised on the current TV. Google TV only (like Trakt's rows and Watch Next).
 
 ## Wanted
 
@@ -135,5 +135,16 @@ exception: the exact episode that Watch Next says you are on resumes in that app
 
 ## To decide
 
-Nothing blocking. Defaults chosen: the row shows at most 12 Watch Next shows (the cap Continue Watching uses) inside the row's 20; the
-match uses exact names only.
+Nothing blocking. Confirmed decisions: keep the 60-day cutoff and leave out entries with no engagement time; use a title year when the
+Watch Next title supplies one to distinguish exact TMDB matches, and leave unresolved same-name matches out. The row shows at most 12
+Watch Next shows (the cap Continue Watching uses) inside the row's 20.
+
+## Built
+
+- Watch Next now retains entry type, kind, season and episode data. Continue Watching still merges only continue/next entries; Shows you
+  watch merges recent TV entries including app watchlists. Both rows follow `Prefs.watchNext` and require the existing TV-listings permission.
+- Watch Next shows open the episodes page with TMDB episodes, a pinned Resume/Watchlist row, a resume marker and intent fallback. When Trakt
+  is connected, the page resolves a Trakt id for watched marks. Trakt show recency is included in row sorting.
+- Added the new strings to all 24 catalogues and updated README and `CLAUDE.md`.
+- Computer checks: `build.sh` succeeds; `tools/translate.py --check` passes (352 keys). Installed on `192.168.0.10`; Free My TV's Home screen opened without an Android runtime crash.
+- The TV's Watch Next provider returned no rows. Test inserts were denied by `com.android.providers.tv.permission.WRITE_EPG_DATA`. A temporary hardcoded fixture was used only in a local validation build: the TV rendered one Continue Watching card and two deduplicated show cards, opened Breaking Bad's 72-episode page with “Bit by a Dead Bee” pinned, and the pinned Resume action opened the fixture's Settings intent. The fixture and temporary source logs were removed before the final build; no provider test entries were written. The live provider path and an actual streaming-app intent still need a publisher entry to verify.

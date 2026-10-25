@@ -17,6 +17,8 @@ final class EpisodeList {
         String title = "";
         long aired;             // UTC milliseconds; 0 when Trakt has no date
         boolean watched;
+        boolean resume;
+        boolean resumePinned;
     }
 
     static final int NUMBER_DESC = 0, NUMBER_ASC = 1, DATE_DESC = 2, DATE_ASC = 3;

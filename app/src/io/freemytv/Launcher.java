@@ -179,6 +179,13 @@ final class Launcher {
         });
     }
 
+    /** Gets the IMDb id from the cached TMDB detail response, without blocking the episodes screen. */
+    void imdb(String kind, int tmdbId, Consumer<String> done) {
+        if (tmdbId <= 0 || !Recs.hasKey(context)) { main.post(() -> done.accept("")); return; }
+        net.execute(() -> { String id=""; try { Info i=info(kind,tmdbId); id=i.imdb; } catch(Exception e) { AppLog.w("TMDB IMDb id: "+e.getMessage()); }
+            String answer=id; main.post(() -> done.accept(answer)); });
+    }
+
     private Routing.Target target(Info info, String kind, String imdb) {
         return withPage(Routing.decide(info == null ? null : info.offers, env), kind, imdb, info);
     }

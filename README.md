@@ -113,7 +113,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `hide_animation` | Leave cartoons and anime out of the picks | `false` |
 | `flatrate_only` | `false`: picks and catalogs may be any popular title, not only ones on a subscription service in your region | `true` |
 | `tmdb_languages` | Only titles whose original language is one of these (`en,hi,ko`), for the picks and the catalogs; empty for any. Free My TV → TMDB → Languages changes it on the TV | empty |
-| `watch_next` | *Continue Watching* also lists what the TV's other apps say you were watching (Android's Watch Next; read on the TV, nothing leaves it), without repeating what Trakt lists. The TV asks once to allow reading it; *Home Settings* turns it on or off | `true` |
+| `watch_next` | *Continue Watching* and *Shows you watch* also list what the TV's other apps say you were watching (Android's Watch Next; read on the TV, nothing leaves it), without repeating what Trakt lists. The TV asks once to allow reading it; *Home Settings* turns it on or off | `true` |
 | `include_rent_buy` | `true`: picks and catalogs also include titles you can only rent or buy (with `flatrate_only` on) | `false` |
 | `catalogs` | Catalogs below the drawer's weather and quotes (`trending`, `popular_movies`, `popular_shows`, `top_rated`, `now_playing`, `upcoming`, `hindi`); `none` for no rows | `trending,popular_movies,popular_shows,hindi,top_rated` |
 | `language` | `auto` (follows the TV), or a language with a [translation](#translations) (`en`, `pt`, `es`, `de`, `ru`, `fr`, `ja`…) | `auto` |
@@ -157,6 +157,8 @@ Free Trakt account, Android and Google TV only. Three rows appear first under th
 3. On the TV: *Free My TV* → *Trakt* → *Connect*. It shows a short code and a QR code: scan the QR code with your phone's camera (the code is already in the link), or open the address and enter the code. No password is typed on the TV, and Free My TV only reads your lists.
 
 OK on a show in *Shows you watch* opens its episodes: every episode with its number and air date, watched ones marked, and a bar of four buttons on top: **sort** (number or date, newest or oldest first), **season**, **date** (last 7 or 30 days, this year, a year, not aired yet) and **watched** (all, unwatched, watched). The filters combine, *Clear filters* resets them, and the sort is remembered. It opens on the next episode you haven't seen; ← → jump a season, Channel + and − scroll a page, Back goes up to the buttons and then out; OK opens the episode in Stremio.
+
+On Google TV, *Shows you watch* also includes recent shows published by the TV's apps in Android's Watch Next list, including apps' watchlists. A show's page lists its TMDB episodes; when Trakt is connected, Free My TV looks up watched marks there. A **Resume** row at the top reopens the app's Watch Next intent, and the matching episode is marked there too. Watchlist entries say **Watchlist** and open the app. Other episodes use the regular title routing. The same *Home Settings → Apps' Continue Watching* switch controls both Watch Next rows. Entries older than 60 days, or with no engagement time, are left out.
 
 Other titles open as described in [Opening a title](#opening-a-title). *Trakt* → *Disconnect* forgets the sign-in. The rows follow what Trakt has: Stremio, for one, adds to your history only when you connect Trakt in its settings.
 

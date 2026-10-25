@@ -3139,10 +3139,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (catRows.isEmpty()) return;
             Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
             click.open();
-            if (listed.launch != null) {        // what an app says you were watching: back into that app
-                openWatchNext(listed);
-            } else if (listed.episodes) {      // a show you watch: its episodes, not the app
+            if (listed.episodes) {      // a show you watch: its episodes, not the app
                 activity.startActivity(EpisodesActivity.intent(activity, listed));
+            } else if (listed.launch != null) {        // what an app says you were watching: back into that app
+                openWatchNext(listed);
             } else {
                 posterRect(catRowIndex, catCol[catRowIndex], cardRect);
                 openTitle(listed, cardRect);
