@@ -71,6 +71,7 @@ final class HomeMode {
         "com.homwee.help",                                                            // user manual
         // Xiaomi
         "com.miui.tv.analytics", "com.xiaomi.statistic",                              // telemetry
+        "com.mitv.tvhome.atv",                                                        // PatchWall (the content-discovery home)
         "com.mitv.tvhome.mitvplus", "com.xm.webcontent",                              // Mi TV+ promo channels, promo web content
         // Skyworth (VEON and other badges; MediaTek)
         "com.smartdevice.epopplayer", "com.coocaa.demonow.lightining",               // store demos (start on screen on)
