@@ -130,7 +130,7 @@ The first values come from `config.properties`, created by the first build (Goog
 
 Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
 
-Google TV only, on the TV: *Free My TV* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) off. The tabs go with them, and the home screen shows the clock, the weather and the shelf; nothing is fetched for the picks, and the catalogs and Trakt rows stay.
+Google TV only, on the TV: *Free My TV* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) on; they are off until you do. Off, the tabs are gone and the home screen shows the clock, the weather and the shelf; nothing is fetched for the picks, and the catalogs and Trakt rows stay.
 
 ### The TMDB key
 
