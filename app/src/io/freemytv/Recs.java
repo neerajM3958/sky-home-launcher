@@ -179,7 +179,7 @@ final class Recs {
 
     /** There is nothing to show and nothing coming: no TMDB key, or the last fetch failed or found no titles. */
     boolean noPicks() {
-        return !hasKey(context) || (picks.isEmpty() && !error.isEmpty());
+        return !hasKey(context) || !Prefs.picks() || (picks.isEmpty() && !error.isEmpty());
     }
 
     static String periodLabel() {
@@ -202,7 +202,7 @@ final class Recs {
     /** This hour's picks (pick_count, 3 by default), movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
     List<Pick> now(String kind) {
         List<Pick> list = new ArrayList<>();
-        if (!hasKey(context)) return list;    // no TMDB key: no recommendations
+        if (!hasKey(context) || !Prefs.picks()) return list;    // no TMDB key, or the picks are turned off: no recommendations
         Map<String, Boolean> have = new HashMap<>();   // one look per app, not per title (this runs every 15 s)
         for (Pick p : picks) {
             if ((kind == null || kind.equals(p.kind))
@@ -265,7 +265,7 @@ final class Recs {
 
     /** With a key: fetches the list if stale or the time of day (morning/afternoon/night) changed; then the details. */
     void refreshIfStale() {
-        if (!hasKey(context) || fetching) return;
+        if (!hasKey(context) || !Prefs.picks() || fetching) return;
         long now = System.currentTimeMillis();
         long stamp = sourceStamp();   // a new key, country, animation choice or installed streaming-app set refetches
         boolean newKey = stamp != keyStamp;

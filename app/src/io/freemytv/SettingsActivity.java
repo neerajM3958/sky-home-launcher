@@ -124,7 +124,7 @@ public class SettingsActivity extends Activity {
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15, INTEGRATIONS = 16;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9;
-        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
+        private static final int TMDB_PICKS = 1, TMDB_FROM = 2, TMDB_STREAM = 3, RENT_BUY_ROW = 4, TMDB_LANGS = 5, TMDB_HIDDEN = 6, TMDB_ANIMATION = 7, TMDB_CATALOGS = 8;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -555,6 +555,7 @@ public class SettingsActivity extends Activity {
             String error = recs.optString("error");
             int count = recs.optInt("count");
             if (!hasKey) line = Ui.tr("No TMDB key: set one in Free My TV › Integrations.");
+            else if (!Prefs.picks()) line = Ui.tr("Off: the home screen shows no picks.");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
@@ -564,11 +565,11 @@ public class SettingsActivity extends Activity {
             c.drawText(TextUtils.ellipsize(line, notice, 790 * k, TextUtils.TruncateAt.END).toString(), x, y + 42 * k, notice);
             version.setTextAlign(Paint.Align.LEFT);
             c.drawText(Ui.tr("This product uses the TMDB API but is not endorsed or certified by TMDB."), x, y + 78 * k, version);
-            if (!Config.WATCHMODE_KEY.trim().isEmpty()) {
+            if (!Prefs.watchmodeKey().isEmpty()) {
                 c.drawText(Ui.tr("Links to the titles by Watchmode."), x, y + 108 * k, version);
             }
             version.setTextAlign(Paint.Align.CENTER);
-            return y + (Config.WATCHMODE_KEY.trim().isEmpty() ? 78 : 108) * k;
+            return y + (Prefs.watchmodeKey().isEmpty() ? 78 : 108) * k;
         }
 
         /** List row: no background; focused, white with a shadow (the Apple TV focus). Returns how focused it is. */
@@ -1015,14 +1016,14 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] tmdbLabels() {
-            return new String[] {Ui.tr("Region"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
+            return new String[] {Ui.tr("Region"), Ui.tr("Picks carousel"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
                     Ui.tr("Languages"), Ui.tr("Hidden services"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
         }
 
         private String[] tmdbValues() {
             int on = 0;
             for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
-            return new String[] {regionValue(), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
+            return new String[] {regionValue(), onOff(Prefs.picks()), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
                     onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()), languagesValue(), hiddenValue(),
                     onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
         }
@@ -1662,7 +1663,8 @@ public class SettingsActivity extends Activity {
                 return;
             }
             if (screen == TMDB) {
-                if (focus == TMDB_FROM) Prefs.setRecommendFromApps(!Prefs.recommendFromApps());
+                if (focus == TMDB_PICKS) Prefs.setPicks(!Prefs.picks());
+                else if (focus == TMDB_FROM) Prefs.setRecommendFromApps(!Prefs.recommendFromApps());
                 else if (focus == TMDB_STREAM) Prefs.setFlatrateOnly(!Prefs.flatrateOnly());
                 else if (focus == RENT_BUY_ROW && !disabledRow(RENT_BUY_ROW)) Prefs.setIncludeRentBuy(!Prefs.includeRentBuy());
                 else if (focus == TMDB_ANIMATION) Prefs.setHideAnimation(!Prefs.hideAnimation());

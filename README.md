@@ -130,6 +130,8 @@ The first values come from `config.properties`, created by the first build (Goog
 
 Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
 
+Google TV only, on the TV: *Free My TV* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) off. The tabs go with them, and the home screen shows the clock, the weather and the shelf; nothing is fetched for the picks, and the catalogs and Trakt rows stay.
+
 ### The TMDB key
 
 Free, and it takes two minutes: create an account at [themoviedb.org](https://www.themoviedb.org/signup), then open [Settings → API](https://www.themoviedb.org/settings/api) and request a developer key. Paste the *API Read Access Token* (or the *API Key*) after `tmdb_key=`. It's your key: `config.properties` stays out of git.

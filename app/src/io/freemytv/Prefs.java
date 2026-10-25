@@ -185,6 +185,10 @@ final class Prefs {
 
     static void setRegion(String v) { put("region", v); }
 
+    /** The picks carousel (the cards under the tabs). Off, none are fetched or shown; the tabs, shelf and catalogs stay. */
+    static boolean picks() { return app == null || sp().getBoolean("picks", true); }
+    static void setPicks(boolean on) { put("picks", on); }
+
     /** Leave cartoons and anime out of the picks and the poster rows. */
     static boolean hideAnimation() { return app == null ? Config.HIDE_ANIMATION : sp().getBoolean("hideAnimation", Config.HIDE_ANIMATION); }
     static void setHideAnimation(boolean on) { put("hideAnimation", on); }

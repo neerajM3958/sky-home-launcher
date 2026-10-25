@@ -3938,8 +3938,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
 
+    /** The picks carousel and its tabs: needs the TMDB key, and the person hasn't turned it off (Settings > TMDB). */
     private boolean picksOn() {
-        return Recs.hasKey(getContext());
+        return Recs.hasKey(getContext()) && Prefs.picks();
     }
 
     private long topWeatherAt = -1;
