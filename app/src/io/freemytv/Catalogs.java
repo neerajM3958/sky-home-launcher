@@ -44,6 +44,8 @@ final class Catalogs {
         double rating;
         String imdb;        // Trakt's rows know it already: Stremio's page needs no TMDB request
         int traktId;        // Trakt's own id, for its episode list
+        int season, episode, wnKind;
+        String episodeTitle = "";
         boolean episodes;   // OK opens the show's episodes (the "Shows you watch" row) instead of the title's page
         String stars;       // "★ 7.8", or null
         String posterUrl;   // Trakt's own poster (a whole address); null: `poster` is a TMDB path
@@ -82,6 +84,7 @@ final class Catalogs {
     private final ExecutorService images = Executors.newFixedThreadPool(2, r -> daemon(r, "posters"));
     private final ExecutorService watching = Executors.newSingleThreadExecutor(r -> daemon(r, "watch-next"));
     private volatile List<Item> watchNext = new ArrayList<>();    // what the TV's apps say you were watching, newest first
+    private volatile List<Item> watchShows = new ArrayList<>();
     private volatile boolean watchNextBusy, watchNextAgain;
     private volatile long watchNextAt;
     private final List<Listener> listeners = new ArrayList<>();
@@ -144,7 +147,7 @@ final class Catalogs {
 
     /** A new list each time the rows change: the home screen compares it by reference. TMDB's follow the order the person set, and a row turned off goes at once. */
     private void rebuild() {
-        List<Row> all = withWatchNext(new ArrayList<>(Trakt.get(context).rows()));
+        List<Row> all = withWatchShows(withWatchNext(new ArrayList<>(Trakt.get(context).rows())));
         List<Row> tmdb = new ArrayList<>();
         if (Recs.hasKey(context)) {
             for (String k : keys()) for (Row r : rows) if (r.key.equals(k)) tmdb.add(r);
@@ -184,6 +187,30 @@ final class Catalogs {
         return trakt;
     }
 
+    /** Adds Watch Next shows to Trakt's Shows you watch row, keeping their resume intents for the episodes page. */
+    private List<Row> withWatchShows(List<Row> trakt) {
+        if (!Prefs.watchNext() || !WatchNext.permitted(context)) return trakt;
+        List<Item> mine = watchShows;
+        if (mine.isEmpty()) return trakt;
+        int at = -1;
+        for (int i=0;i<trakt.size();i++) if (Trakt.SHOWS.equals(trakt.get(i).key)) { at=i; break; }
+        List<Item> theirs = at < 0 ? new ArrayList<>() : trakt.get(at).items;
+        Row row = new Row(); row.key=Trakt.SHOWS; row.title=Ui.tr("Shows you watch"); row.items.addAll(theirs);
+        int added=0;
+        for (Item source : mine) {
+            if (added >= WatchNext.MAX || row.items.size() >= 20) break;
+            if (listedShow(source, theirs)) continue;
+            Item it=new Item(); it.kind=source.kind; it.title=source.title; it.id=source.id; it.poster=source.poster; it.at=source.at;
+            it.launch=source.launch; it.appPkg=source.appPkg; it.episodes=true; it.season=source.season; it.episode=source.episode;
+            it.episodeTitle=source.episodeTitle; it.wnKind=source.wnKind; row.items.add(it); added++;
+        }
+        if (added == 0) return trakt;
+        java.util.Collections.sort(row.items, (a,b)->Long.compare(b.at,a.at));
+        if (at < 0) { int ci=-1; for(int i=0;i<trakt.size();i++) if(Trakt.CONTINUE.equals(trakt.get(i).key)){ci=i;break;} trakt.add(ci<0?0:ci+1,row); }
+        else trakt.set(at,row);
+        return trakt;
+    }
+
     /** Trakt's list already has the title: by TMDB id when both know it, else by name. */
     private static boolean listed(Item it, List<Item> trakt) {
         String name = WatchNext.normalize(it.title);
@@ -194,11 +221,23 @@ final class Catalogs {
         return false;
     }
 
+    /** Shows row identity prefers two known TMDB ids; names are the fallback only when an id is missing. */
+    private static boolean listedShow(Item it,List<Item> trakt){
+        String name=WatchNext.normalize(it.title);
+        for(Item t:trakt){
+            if(!it.kind.equals(t.kind))continue;
+            if(it.id>0&&t.id>0){if(it.id==t.id)return true;continue;}
+            if(name.equals(WatchNext.normalize(t.title)))return true;
+        }
+        return false;
+    }
+
     /** Reads Watch Next again (a local query, TMDB lookups kept): when the drawer opens, and when an app changes its entries. */
     void refreshWatchNext(boolean changed) {
         if (!Prefs.watchNext() || !WatchNext.permitted(context)) {
-            if (!watchNext.isEmpty()) {
+            if (!watchNext.isEmpty() || !watchShows.isEmpty()) {
                 watchNext = new ArrayList<>();
+                watchShows = new ArrayList<>();
                 rebuild();
                 notifyListeners();
             }
@@ -215,9 +254,11 @@ final class Catalogs {
                 do {
                     watchNextAgain = false;
                     List<Item> next = WatchNext.items(context);
-                    if (!same(next, watchNext)) {
+                    List<Item> shows = WatchNext.showItems(context);
+                    if (!same(next, watchNext) || !same(shows, watchShows)) {
                         AppLog.w("watch next: " + next.size() + " from the TV's apps");
                         watchNext = next;
+                        watchShows = shows;
                         rebuild();
                         notifyListeners();
                     }
@@ -235,8 +276,10 @@ final class Catalogs {
         if (a.size() != b.size()) return false;
         for (int i = 0; i < a.size(); i++) {
             Item x = a.get(i), y = b.get(i);
-            if (!x.title.equals(y.title) || x.at != y.at || x.progress != y.progress || !java.util.Objects.equals(x.sub, y.sub)
-                    || !java.util.Objects.equals(x.poster, y.poster)) return false;
+            if (!x.title.equals(y.title) || x.id != y.id || x.at != y.at || x.progress != y.progress || x.wnKind != y.wnKind
+                    || x.season != y.season || x.episode != y.episode || !java.util.Objects.equals(x.episodeTitle,y.episodeTitle) || !java.util.Objects.equals(x.sub, y.sub)
+                    || !java.util.Objects.equals(x.poster, y.poster) || !java.util.Objects.equals(x.appPkg,y.appPkg)
+                    || !java.util.Objects.equals(x.launch==null?null:x.launch.toUri(0),y.launch==null?null:y.launch.toUri(0))) return false;
         }
         return true;
     }
