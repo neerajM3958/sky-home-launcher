@@ -230,6 +230,23 @@ final class Prefs {
 
     static void setLanguages(List<String> codes) { put("languages", String.join(",", codes)); }
 
+    /**
+     * The Torrentio addon for Stremio (Settings > Stremio): its language names and the biggest size. Until the person
+     * chooses, the languages are the TMDB section's and the size is 5 GB; an empty list is "all languages".
+     */
+    static List<String> torrentioLanguages() {
+        if (app == null || !sp().contains("torrentioLanguages")) return Torrentio.fromTmdb(languages());
+        List<String> out = new ArrayList<>();
+        for (String p : sp().getString("torrentioLanguages", "").split(",")) if (!p.isEmpty() && !out.contains(p)) out.add(p);
+        return out;
+    }
+
+    static void setTorrentioLanguages(List<String> names) { put("torrentioLanguages", String.join(",", names)); }
+
+    static String torrentioSize() { return app == null ? Torrentio.DEFAULT_SIZE : sp().getString("torrentioSize", Torrentio.DEFAULT_SIZE); }
+
+    static void setTorrentioSize(String size) { put("torrentioSize", size); }
+
     /** Continue Watching also lists what the TV's other apps published (Android's Watch Next); the config gives the first value. */
     static boolean watchNext() { return app == null ? Config.WATCH_NEXT : sp().getBoolean("watchNext", Config.WATCH_NEXT); }
     static void setWatchNext(boolean on) { put("watchNext", on); }

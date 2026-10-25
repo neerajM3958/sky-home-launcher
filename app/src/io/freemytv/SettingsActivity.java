@@ -122,7 +122,7 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
         private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
@@ -157,6 +157,7 @@ public class SettingsActivity extends Activity {
         private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
         private final List<String[]> hiddenRows = new ArrayList<>();     // the Hidden services screen: {key, name}
         private final List<String[]> appsOffRows = new ArrayList<>();    // Apps turned off: {package, name}
+        private final List<String> torLangRows = new ArrayList<>();      // the Torrentio languages screen: Torrentio's names
         private final java.util.Set<String> appsKept = new java.util.HashSet<>();   // ... and the ones the person keeps on
         private final java.util.Set<String> stremioInstalled = new java.util.HashSet<>();   // services whose app is on the TV (read when the screen opens)
         private final List<String[]> stremioRows = new ArrayList<>();     // the Stremio screen: {key, name}, "missing" first
@@ -263,6 +264,14 @@ public class SettingsActivity extends Activity {
                 case APPS_OFF: {
                     int at = pickScroll + row;
                     return at < appsOffRows.size() ? appsOffRows.get(at)[1] + ", " + appsOffValue(at) : "";
+                }
+                case TORRENTIO: {
+                    String[] labels = torrentioLabels(), values = torrentioValues();
+                    return row < labels.length ? labels[row] + ", " + values[row] : "";
+                }
+                case TOR_LANGS: {
+                    int at = pickScroll + row;
+                    return at < torLangRows.size() ? Torrentio.label(torLangRows.get(at)) + (torChosen(at) ? Ui.tr(", selected") : "") : "";
                 }
                 case LANGUAGES: {
                     int at = pickScroll + row;
@@ -404,6 +413,8 @@ public class SettingsActivity extends Activity {
                 case LANGUAGES: return Math.min(PICK_VISIBLE, langRows.size());
                 case HIDDEN: return Math.min(PICK_VISIBLE, hiddenRows.size());
                 case APPS_OFF: return Math.min(PICK_VISIBLE, appsOffRows.size());
+                case TORRENTIO: return 3;
+                case TOR_LANGS: return Math.min(PICK_VISIBLE, torLangRows.size());
                 case HOME_CHOICE: return 3;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -448,7 +459,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -679,7 +690,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TORRENTIO || screen == TOR_LANGS)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -733,6 +744,12 @@ public class SettingsActivity extends Activity {
                             } else if (screen == APPS_OFF) {
                                 focus = 2;
                                 screen = HOME_CHOICE;
+                            } else if (screen == TORRENTIO) {
+                                focus = 1;
+                                screen = STREMIO;
+                            } else if (screen == TOR_LANGS) {
+                                focus = 0;
+                                screen = TORRENTIO;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
@@ -1019,6 +1036,103 @@ public class SettingsActivity extends Activity {
                     (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
         }
 
+        // MARK: - Torrentio addon (Free My TV > Stremio)
+
+        private static final String TORRENTIO_KEY = "torrentio";
+
+        private String torrentioLanguageValue() {
+            List<String> names = Prefs.torrentioLanguages();
+            if (names.isEmpty()) return Ui.tr("All languages");
+            List<String> shown = new ArrayList<>();
+            for (String n : names) shown.add(Torrentio.label(n));
+            return String.join(", ", shown);
+        }
+
+        private String torrentioSummary() {
+            return torrentioLanguageValue() + " · " + Torrentio.sizeLabel(Prefs.torrentioSize());
+        }
+
+        private String[] torrentioLabels() {
+            return new String[] {Ui.tr("Language"), Ui.tr("Size limit"), Ui.tr("Add to Stremio")};
+        }
+
+        private String[] torrentioValues() {
+            return new String[] {torrentioLanguageValue(), Torrentio.sizeLabel(Prefs.torrentioSize()), ""};
+        }
+
+        private void openTorrentio() {
+            focus = 0;
+            screen = TORRENTIO;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void drawTorrentio(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Torrentio addon"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            String[] labels = torrentioLabels(), values = torrentioValues();
+            for (int i = 0; i < labels.length; i++) {
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
+                if (i == 2) {
+                    float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
+                    Symbols.draw(getContext(), c, "chevron_right", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 22 * k, blend(0x99FFFFFF, INK, f));
+                } else {
+                    c.drawText(TextUtils.ellipsize(values[i], new TextPaint(rowValue), 640 * k, TextUtils.TruncateAt.END).toString(),
+                            rowRect.right - 30 * k, base, rowValue);
+                }
+            }
+            drawWrapped(c, Ui.tr("A third-party addon that finds streams for Stremio. Free My TV only sends Stremio its install link."),
+                    LIST_X * k + 30 * k, (LIST_TOP + 20 + 3 * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, 0);
+        }
+
+        private boolean torChosen(int at) {
+            return Prefs.torrentioLanguages().contains(torLangRows.get(at));
+        }
+
+        private void openTorLangs() {
+            torLangRows.clear();
+            for (String[] l : Torrentio.LANGUAGES) torLangRows.add(l[0]);
+            pickScroll = 0;
+            focus = 0;
+            screen = TOR_LANGS;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void toggleTorLang() {
+            int at = pickScroll + focus;
+            if (at >= torLangRows.size()) return;
+            List<String> names = Prefs.torrentioLanguages();
+            if (!names.remove(torLangRows.get(at))) names.add(torLangRows.get(at));
+            Prefs.setTorrentioLanguages(names);
+        }
+
+        private void drawTorLangs(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Language"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(Torrentio.label(torLangRows.get(at)), rowRect.left + 30 * k, base, rowLabel);
+                if (torChosen(at)) {
+                    float cw = Symbols.width(getContext(), "check", 26 * k);
+                    Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
+                }
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            c.drawText(Ui.tr("OK picks a language. With none picked, every language is used."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
         // MARK: - Apps turned off (Free My TV > Home Screen)
 
         private String appsOffValue(int at) {
@@ -1131,6 +1245,7 @@ public class SettingsActivity extends Activity {
         private void openStremio() {
             stremioRows.clear();
             stremioRows.add(new String[] {"", Ui.tr("Use Stremio as fallback OTT")});
+            stremioRows.add(new String[] {TORRENTIO_KEY, Ui.tr("Torrentio addon")});
             for (String[] s : Recs.serviceNames()) stremioRows.add(s);
             stremioRows.add(new String[] {Routing.OTHER, Ui.tr("Other services")});
             stremioInstalled.clear();
@@ -1144,11 +1259,12 @@ public class SettingsActivity extends Activity {
         /** A service whose app isn't on the TV: nothing to choose (its titles follow the fallback). */
         private boolean stremioOff(int at) {
             String key = stremioRows.get(at)[0];
-            return !key.isEmpty() && !key.equals(Routing.OTHER) && !stremioInstalled.contains(key);
+            return !key.isEmpty() && !key.equals(Routing.OTHER) && !key.equals(TORRENTIO_KEY) && !stremioInstalled.contains(key);
         }
 
         private String stremioValue(int at) {
             String key = stremioRows.get(at)[0];
+            if (key.equals(TORRENTIO_KEY)) return torrentioSummary();
             if (stremioOff(at)) return Ui.tr("Not installed");
             return key.isEmpty() ? onOff(Prefs.stremioForMissing()) : Prefs.toStremio(key) ? Ui.tr("Stremio") : Ui.tr("Its app");
         }
@@ -1156,6 +1272,10 @@ public class SettingsActivity extends Activity {
         private void toggleStremio() {
             if (stremioOff(pickScroll + focus)) return;
             String key = stremioRows.get(pickScroll + focus)[0];
+            if (key.equals(TORRENTIO_KEY)) {
+                openTorrentio();
+                return;
+            }
             if (key.isEmpty()) Prefs.setStremioForMissing(!Prefs.stremioForMissing());
             else Prefs.setToStremio(key, !Prefs.toStremio(key));
         }
@@ -1178,7 +1298,9 @@ public class SettingsActivity extends Activity {
             }
             // What the focused row does, in words.
             int at = pickScroll + focus;
-            String caption = at >= stremioRows.size() ? "" : stremioRows.get(at)[0].isEmpty()
+            String caption = at >= stremioRows.size() ? "" : stremioRows.get(at)[0].equals(TORRENTIO_KEY)
+                    ? Ui.tr("A third-party addon that finds streams for Stremio. Free My TV only sends Stremio its install link.")
+                    : stremioRows.get(at)[0].isEmpty()
                     ? Ui.tr("When a title's app isn't on the TV, or no service we know streams it, open it in Stremio instead of its Play Store page.")
                     : stremioOff(at) ? Ui.tr("This app isn't installed, so its titles follow the fallback above.")
                     : Ui.tr("Each service opens in its own app or in Stremio. OK changes it.");
@@ -1304,6 +1426,19 @@ public class SettingsActivity extends Activity {
                 toggleAppsOff();
                 return;
             }
+            if (screen == TOR_LANGS) {
+                toggleTorLang();
+                return;
+            }
+            if (screen == TORRENTIO) {
+                if (focus == 1) {
+                    int at = java.util.Arrays.asList(Torrentio.SIZES).indexOf(Prefs.torrentioSize());
+                    Prefs.setTorrentioSize(Torrentio.SIZES[(Math.max(0, at) + dir + Torrentio.SIZES.length) % Torrentio.SIZES.length]);
+                } else if (focus == 0 && dir > 0) {
+                    openTorLangs();
+                }
+                return;
+            }
             if (screen == LANGUAGES) {
                 toggleLanguage();
                 return;
@@ -1420,11 +1555,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TOR_LANGS;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : screen == TOR_LANGS ? torLangRows.size() : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1629,6 +1764,20 @@ public class SettingsActivity extends Activity {
                 toggleAppsOff();
                 invalidate();
                 return;
+            } else if (screen == TOR_LANGS) {
+                toggleTorLang();
+                invalidate();
+                return;
+            } else if (screen == TORRENTIO) {
+                if (focus == 0) {
+                    openTorLangs();
+                } else if (focus == 1) {
+                    adjust(1);
+                    invalidate();
+                    return;
+                } else if (!Torrentio.install(c, Prefs.torrentioLanguages(), Prefs.torrentioSize())) {
+                    HomeMode.notice(c, Ui.trf("Couldn't open {app}.", "app", "Stremio"));
+                }
             } else if (screen == HOME_CHOICE) {
                 boolean wantFree = focus == 0;
                 boolean already = wantFree ? freeActive() : HomeMode.ORIGINAL.equals(state.optString("mode", HomeMode.ORIGINAL));
