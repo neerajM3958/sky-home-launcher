@@ -131,5 +131,41 @@ Torrentio's names (`hindi`, `portuguese`).
 
 ---
 
-<!-- Add the next item below as "## 6. Title" with: Wanted, Where, How, To decide. When an item is built, add a **Built** line and
+## 6. Learn the remote's buttons instead of hard-coded key codes
+
+**Wanted.** Setting up a remote (the Skyworth one needed it) shouldn't mean someone reads key codes from a log and adds them to the
+code. In *Free My TV > Remote Buttons* the person presses a button on their remote, the app records it, and they choose what it
+opens. Any button can be added, not only the brand's Netflix, YouTube and Prime ones.
+
+**Where today.** `Prefs.KEYS` and the `KEY_*` constants (TCL's 4062 and 190, Sony's `SONY_KEY` + scan code, Skyworth's STEM_1, F8,
+F6...), `RemoteKeys` (`supported()` runs only on TCL, Vestel, KTC, Sony, Formovie and Skyworth), `RemoteKeyService` (the
+accessibility service whose key filter is the only thing that sees some buttons: the YouTube button never reaches an app's
+window), `Prefs.keyApp` / `setKeyApp` (saved in `remote-keys.txt`, never in SharedPreferences, because the service lives in its own
+process `:keys`), and the Remote Buttons screen in `SettingsActivity` (`REMOTE_KEYS`).
+
+**How.**
+- **Record.** *Remote Buttons > Add a button*: a prompt "Press the button on your remote". The settings app can't see most of
+  these keys (they are consumed before the window), so the recording is done by `RemoteKeyService`: the screen writes a request
+  to the same shared file, the service's key filter takes the next key, writes `{keyCode, scanCode, device vendor id, name}`
+  back and swallows it, and the screen shows "Recorded: Button 9 (scan 583)". If the service isn't on (Free My TV mode off), the
+  screen says so and how to switch it on. A timeout (15 s) cancels.
+- **Never recordable.** The arrows, OK, Back, Home, Menu, volume, mute and power: a wrong recording must not lock the person out.
+  Say so on the screen ("This button is needed to move around").
+- **Save.** The list of recorded buttons lives in `remote-keys.txt` next to today's lines, as `learned=<keyCode>:<scanCode>:<name>`
+  (the scan code is stored because Sony sends one key code for five buttons). `Prefs.KEYS` becomes the built-in list plus the
+  learned ones; `RemoteKeys.onKey` matches on key code, and on scan code when one was recorded.
+- **Brand gate.** A learned button works on any brand (the person recorded it on their own remote); only the built-in codes stay
+  gated by `supported()`.
+- **Choose what it opens.** The same picker as today (an app, *TV Settings*, or the brand default), plus a name the person can
+  edit. A learned button can be renamed, changed or removed; a *Reset buttons* row removes every learned button.
+- **Safety.** Learned buttons run only in Free My TV mode, as the service does; *Original* takes the service out of the enabled
+  accessibility services, so the original behaviour comes back untouched. Keys from a gamepad or joystick stay ignored.
+
+**To decide.** Whether a learned button may also trigger something other than an app (for example *Open Free My TV's home* or
+*Open Settings*). Whether to ship ready presets for known brands next to this (so TCL, Sony and Skyworth keep working with no
+recording) and let the recording only add to them: that is what the code does today and I'd keep it.
+
+---
+
+<!-- Add the next item below as "## 7. Title" with: Wanted, Where, How, To decide. When an item is built, add a **Built** line and
 its screenshots (taken on the TV, saved as plans/images/minor-improvements/<item>-<what>.jpg at 1280x720). -->
