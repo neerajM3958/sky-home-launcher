@@ -17,7 +17,6 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
-import android.media.tv.TvInputManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -49,7 +48,7 @@ import java.util.function.Consumer;
 /**
  * The home screen, styled after the Apple TV app with the macOS 27 glass:
  *  - at the top left, the "For You" title and the tabs (Explore, Movies, Shows); at the top right, icon-only glass
- *    buttons (Live TV, HDMI Inputs, Settings), with the focused one's name below it, and the small crypto quotes
+ *    buttons (Home Settings, Settings, Live TV, AV and HDMI input), with the focused one's name below it, and the small crypto quotes
  *    (logo + price) at the right end of the tab row;
  *  - three cards with the titles recommended for right now in the selected tab (Recs, from TMDB); the background is
  *    the first card's photo, heavily blurred and almost white (Backdrop); without one, a light gradient;
@@ -88,7 +87,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8, BROWSE = 9;
+    // The input popover (1920-wide units): the panel's width, its rows, and the layer that holds it with room for the shadow.
+    private static final float POP_W = 520, POP_ROW_H = 72, POP_TITLE_H = 64, POP_PAD = 14, POP_TOP = 168,
+            POP_LAYER_W = 600, POP_LAYER_H = 800, POP_LAYER_TOP = 130;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8, BROWSE = 9, POP = 11;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
@@ -112,7 +114,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Click click;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences ui;
-    private final TvInputManager tvInputs;
     private final Spoken spoken = new Spoken(this, new Spoken.Source() {
         @Override public void items(List<Integer> out) { a11yItems(out); }
         @Override public String text(int id) { return a11yText(id); }
@@ -125,7 +126,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public void hold(int id) { a11yHold(); }
     });
     private final RectF a11yRect = new RectF();
-    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer;
+    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, popLayer, toastLayer;
     private int zone = Z_SHELF;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
@@ -217,12 +218,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // Bottom drawer
     private List<HomeApps.Item> drawerItems = new ArrayList<>();
-    private int drawerInputs;          // how many leading items are inputs (the rest are shortcuts)
     private Spring[] drawerFocus = new Spring[0];
     private RectF[] drawerRects = new RectF[0];
     private final RectF quotesCard = new RectF();
     private final Spring drawer = new Spring(0.46f, 0.92f, 0);
     private boolean drawerOpen;
+
+    // The input popover: under the HDMI input and AV input top buttons, one row for each input of that kind.
+    private final Spring popIn = new Spring(0.34f, 0.88f, 0);
+    private Spring[] popFocus = new Spring[0];
+    private List<HomeApps.Item> popItems = new ArrayList<>();
+    private final RectF popPanel = new RectF(), popRow = new RectF();
+    private String popTitle = "";
+    private int popIndex;
+    private boolean popOpen, popDirty;
+    private Paint popLabel;
     private final Catalogs catalogs;
     private final Layer catalogLayer;
     private final Spring catIn = new Spring(0.5f, 0.92f, 0), catRow = new Spring(0.42f, 0.92f, 0), catFocus = new Spring(0.3f, 0.82f, 0);
@@ -362,6 +372,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case CATALOG: drawCatalog(c); break;
                 case BROWSE: drawBrowse(c); break;
                 case SHEET: drawSheet(c); break;
+                case POP: drawPopover(c); break;
                 default: drawToast(c); break;
             }
             scene.setOffset(0, 0);
@@ -374,12 +385,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean appsStale = true;
     private int appsVersion, appsGeneration;
     private long appsAt;
-
-    private final TvInputManager.TvInputCallback inputCallback = new TvInputManager.TvInputCallback() {
-        @Override public void onInputStateChanged(String inputId, int state) { reloadSoon(); }
-        @Override public void onInputAdded(String inputId) { reloadSoon(); }
-        @Override public void onInputRemoved(String inputId) { reloadSoon(); }
-    };
 
     private void reloadSoon() {
         handler.removeCallbacks(reloadSoon);
@@ -427,7 +432,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs = Recs.get(a);
         click = new Click(a);
         ui = a.getSharedPreferences("home-ui", Context.MODE_PRIVATE);
-        tvInputs = (TvInputManager) a.getSystemService(Context.TV_INPUT_SERVICE);
         launcherApps = (LauncherApps) a.getSystemService(Context.LAUNCHER_APPS_SERVICE);
         if (launcherApps != null) launcherApps.registerCallback(packages, handler);
         setFocusable(true);
@@ -442,18 +446,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogs = Catalogs.get(a);
         details = Details.get(a);
         sheetLayer = new Layer(a, SHEET);
+        popLayer = new Layer(a, POP);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, toastLayer}) {
+        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
         setContentDescription("Free My TV");
         drawerLayer.setVisibility(INVISIBLE);
+        popLayer.setVisibility(INVISIBLE);
         catalogLayer.setVisibility(INVISIBLE);
         browseLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < topFocus.length; i++) {
@@ -464,7 +470,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cardFocus[i] = new Spring(0.32f, 0.78f, 0);
             cardRects[i] = new RectF();
         }
-        setLightButtons(HomeApps.topButtons());
+        setLightButtons(HomeApps.topButtons(a));
         recs.setLight(true);
         checkNight(false);
         sheetLayer.setVisibility(INVISIBLE);
@@ -473,7 +479,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // First time: right away (a cold start opens with the apps already there); missing logos come from reload().
         setShelf(HomeApps.shelf(a, false));
         setStatusItems(statusList(a));
-        setDrawerItems(drawerList(a));
+        setDrawerItems(new ArrayList<>());      // the drawer holds the quotes card and the poster rows; the inputs are top buttons now
     }
 
     // MARK: - Lifecycle (called by HomeActivity)
@@ -496,7 +502,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.refreshIfStale();
         recs.refreshIfStale();
         catalogs.refreshWatchNext(false);
-        if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
         if (look.m.animatedBackground) handler.postDelayed(drift, 100);
         if (Config.PICK_ROTATE_SECONDS > 0) handler.postDelayed(rotate, Config.PICK_ROTATE_SECONDS * 1000L);
@@ -534,7 +539,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.removeListener(this);
         catalogs.removeListener(this);
         details.removeListener(this);
-        if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
+        closePop(true);
     }
 
     void destroy() {
@@ -551,6 +556,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         shelfIndex = 0;
         sheetOpen = false;
         drawerOpen = false;
+        closePop(!animated);
         if (animated) {
             sheet.target = 0;
             drawer.target = 0;
@@ -630,6 +636,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(catalogLayer, width, height);
         measure(browseLayer, width, height);
         measure(sheetLayer, width, height);
+        measure(popLayer, Math.round(POP_LAYER_W * kk), Math.round(POP_LAYER_H * kk));
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
     }
@@ -652,6 +659,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
+        place(popLayer, Math.round((CONTENT_R - POP_W - 40) * kk), Math.round(POP_LAYER_TOP * kk));
         place(toastLayer, (width - toastLayer.getMeasuredWidth()) / 2, 0);
     }
 
@@ -727,6 +735,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         rowTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
         drawerLabel = Ui.text(Ui.medium, 23 * k, 0xEBFFFFFF);
         drawerLabel.setTextAlign(Paint.Align.CENTER);
+        popLabel = Ui.text(Ui.medium, 27 * k, 0xEBFFFFFF);
         cardTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
         cardText = Ui.text(Ui.medium, 29 * k, 0xF2FFFFFF);
         cardDim = Ui.numbers(Ui.medium, 23 * k, 0xADFFFFFF);
@@ -775,6 +784,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt);
+        boolean popMoving = step(popFocus, dt) | popIn.step(dt);
         boolean catMoving = catIn.step(dt) | catRow.step(dt) | catFocus.step(dt) | step(catShift, dt);
         boolean browseMoving = browseIn.step(dt) | browsePos.step(dt) | browseFocus.step(dt) | browseSwap.step(dt) | step(browseShift, dt);
         boolean toastFading = tickToast(up);
@@ -794,6 +804,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
+        if (popMoving || popDirty) popLayer.invalidate();
+        if (!popOpen && popIn.value <= 0.001f && popLayer.getVisibility() == VISIBLE) popLayer.setVisibility(INVISIBLE);
         if ((openingItem != null && up - openingAt >= OPEN_LOADER_MS) || (trailerOn && trailer.loading())) catDirty = browseDirty = true;     // the waiting dots and the trailer's spinner move
         if (catMoving || catDirty) catalogLayer.invalidate();
         if (browseMoving || browseDirty) browseLayer.invalidate();
@@ -803,7 +815,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
         catWasMoving = catMoving;
         browseWasMoving = browseMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = browseDirty = false;
+        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = browseDirty = popDirty = false;
         if (updateClock()) {
             layoutStatus();
             status.invalidate();
@@ -816,7 +828,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || sheetMoving || catMoving || browseMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
+                || sheetMoving || popMoving || popOpen || catMoving || browseMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
                 || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
@@ -1561,19 +1573,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - Bottom drawer
 
-    private static List<HomeApps.Item> drawerList(Context c) {
-        return HomeApps.allInputs(c);       // the inputs only; the old Shortcuts row is gone
-    }
-
     private void setDrawerItems(List<HomeApps.Item> list) {
-        int inputs = 0;
-        while (inputs < list.size() && (list.get(inputs).kind == HomeApps.INPUT || list.get(inputs).kind == HomeApps.LIVE_TV)) inputs++;
         boolean same = list.size() == drawerItems.size();
         for (int i = 0; same && i < list.size(); i++) {
             same = list.get(i).key.equals(drawerItems.get(i).key) && list.get(i).connected == drawerItems.get(i).connected;
         }
         drawerItems = list;
-        drawerInputs = inputs;
         if (drawerFocus.length != list.size()) {
             drawerFocus = new Spring[list.size()];
             drawerRects = new RectF[list.size()];
@@ -1591,12 +1596,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void layoutDrawer() {
         int n = drawerItems.size();
         float left = MARGIN * k, right = CONTENT_R * k;
-        float gap = 18 * k, groupGap = 56 * k;
-        int groups = drawerInputs > 0 && drawerInputs < n ? 2 : 1;
-        float tw = Math.min(230 * k, (right - left - Math.max(0, n - groups) * gap - (groups - 1) * groupGap) / Math.max(1, n));
+        float gap = 18 * k;
+        float tw = Math.min(230 * k, (right - left - Math.max(0, n - 1) * gap) / Math.max(1, n));
         float x = left, top = ROW_TOP * k;
         for (int i = 0; i < n; i++) {
-            if (i == drawerInputs && i > 0) x += groupGap - gap;
             drawerRects[i].set(x, top, x + tw, top + ROW_H * k);
             x += tw + gap;
         }
@@ -1639,6 +1642,122 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!shelf.isEmpty() && drawerIndex < drawerRects.length) shelfIndex = nearest(tileRects, drawerRects[drawerIndex].centerX());
     }
 
+    // MARK: - The input popover (HDMI input, AV input): a choice among the inputs of one kind
+
+    /** OK on an input button: one input opens at once; several open the popover, with the first one that has a device on it. */
+    private void openInputs(HomeApps.Item group, RectF from) {
+        List<HomeApps.Item> list = HomeApps.inputGroup(getContext().getApplicationContext(), group.key);
+        if (list.isEmpty()) return;
+        if (list.size() == 1) {
+            launch(list.get(0), from);
+            return;
+        }
+        popItems = list;
+        popTitle = group.label;
+        popIndex = 0;
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).connected) {
+                popIndex = i;
+                break;
+            }
+        }
+        if (popFocus.length != list.size()) {
+            popFocus = new Spring[list.size()];
+            for (int i = 0; i < popFocus.length; i++) popFocus[i] = new Spring(0.3f, 0.82f, 0);
+        }
+        aim(popFocus, popIndex, true);
+        layoutPop();
+        popOpen = true;
+        popIn.target = 1;
+        popLayer.setVisibility(VISIBLE);
+        popDirty = statusDirty = true;
+        wake();
+        spoken.focusMoved();
+    }
+
+    private void closePop(boolean snap) {
+        if (!popOpen && popIn.value <= 0.001f) return;
+        popOpen = false;
+        popIn.target = 0;
+        if (snap) {
+            popIn.snap(0);
+            popLayer.setVisibility(INVISIBLE);
+        }
+        popDirty = statusDirty = true;
+        wake();
+        spoken.focusMoved();
+    }
+
+    private void movePop(int dy) {
+        if (dy == 0) return;
+        int next = Math.max(0, Math.min(popItems.size() - 1, popIndex + dy));
+        if (next == popIndex) return;
+        popIndex = next;
+        aim(popFocus, popIndex, false);
+        popDirty = true;
+        click.move();
+        spoken.focusMoved();
+    }
+
+    private void choosePop() {
+        if (popIndex >= popItems.size()) {
+            closePop(false);
+            return;
+        }
+        HomeApps.Item it = popItems.get(popIndex);
+        popRowRect(popIndex, popRow);
+        final RectF from = new RectF(popRow);
+        closePop(false);
+        click.open();
+        launch(it, from);
+    }
+
+    private void layoutPop() {
+        float right = CONTENT_R * k, top = POP_TOP * k;
+        popPanel.set(right - POP_W * k, top, right, top + (POP_TITLE_H + POP_PAD) * k + popItems.size() * POP_ROW_H * k);
+    }
+
+    /** Row `i` of the popover in screen coordinates. */
+    private void popRowRect(int i, RectF out) {
+        float y = popPanel.top + (POP_TITLE_H + POP_PAD / 2f) * k + i * POP_ROW_H * k;
+        out.set(popPanel.left + POP_PAD * k, y, popPanel.right - POP_PAD * k, y + (POP_ROW_H - 6) * k);
+    }
+
+    /** Glass panel with the kind's name and a row for each input: the focused one white with dark text, one with no device dimmed. */
+    private void drawPopover(Canvas c) {
+        float a = Ui.clamp(popIn.value);
+        if (a <= 0.01f || popItems.isEmpty()) return;
+        applyTone();
+        float s = 0.95f + 0.05f * a;
+        int save = c.saveLayerAlpha(popPanel.left - 60 * k, popPanel.top - 40 * k, popPanel.right + 60 * k, popPanel.bottom + 80 * k,
+                Math.round(255 * a));
+        c.scale(s, s, popPanel.right - 60 * k, popPanel.top);
+        drawerGlass(c, popPanel, 34 * k, 0.8f, 0x22000000, 14 * k);
+        rowTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
+        c.drawText(popTitle, popPanel.left + (POP_PAD + 14) * k, popPanel.top + 44 * k, rowTitle);
+        for (int i = 0; i < popItems.size() && i < popFocus.length; i++) {
+            HomeApps.Item it = popItems.get(i);
+            float f = Ui.clamp(popFocus[i].value), r = 24 * k;
+            popRowRect(i, popRow);
+            if (f > 0.01f) {
+                tmp.set(popRow);
+                tmp.offset(0, 8 * k * f);
+                shadow.setColor(Ui.alpha(0xFF000000, 0.35f * f));
+                shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
+                fill.setShader(null);
+                fill.setColor(Ui.alpha(WHITE, f));
+                c.drawRoundRect(popRow, r, r, fill);
+            }
+            int ink = blend(look.color(it.connected ? Look.ITEM_ON : Look.ITEM_OFF, dark()), INK, f);
+            Symbols.draw(getContext(), c, it.symbol, popRow.left + 44 * k, popRow.centerY(), 32 * k, ink);
+            popLabel.setColor(ink);
+            fitPaint.set(popLabel);
+            String label = TextUtils.ellipsize(it.label, fitPaint, popRow.width() - 100 * k, TextUtils.TruncateAt.END).toString();
+            c.drawText(label, popRow.left + 88 * k, popRow.centerY() + Ui.halfCap(popLabel), popLabel);
+        }
+        c.restoreToCount(save);
+    }
+
     /** Color for the drawer's text and symbols: dark by day, white at night. */
     private int drawerInk(float alpha) {
         return Ui.alpha(look.color(Look.INK_PURE, dark()), alpha);
@@ -1663,9 +1782,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         hourPaint.setColor(look.color(Look.DRAWER_DIM, dark()));
         hourTemp.setColor(drawerInk(0.95f));
         pricePaint.setColor(drawerInk(0.95f));
-        float titleBase = ROW_TITLE * k;
-        if (drawerInputs > 0) c.drawText(Ui.tr("Inputs"), drawerRects[0].left + 4 * k, titleBase, rowTitle);
-        if (drawerInputs < drawerItems.size()) c.drawText(Ui.tr("Shortcuts"), drawerRects[drawerInputs].left + 4 * k, titleBase, rowTitle);
         int top = -1;
         for (int i = 0; i < drawerItems.size(); i++) if (drawerFocus[i].value > 0.02f && (top < 0 || drawerFocus[i].value > drawerFocus[top].value)) top = i;
         for (int i = 0; i < drawerItems.size(); i++) if (i != top) drawDrawerTile(c, i);
@@ -1693,8 +1809,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fill.setColor(Ui.alpha(WHITE, f));
             c.drawRoundRect(cell, r, r, fill);
         }
-        boolean off = it.kind == HomeApps.INPUT && !it.connected;
-        int ink = blend(look.color(off ? Look.ITEM_OFF : Look.ITEM_ON, dark()), INK, f);
+        int ink = blend(look.color(Look.ITEM_ON, dark()), INK, f);
         Symbols.draw(getContext(), c, it.symbol, cx, cell.top + cell.height() * 0.4f, 34 * k * s, ink);
         drawerLabel.setColor(ink);
         drawerLabel.setTextSize(23 * k * s);
@@ -2709,14 +2824,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         LOADER.execute(() -> {
             final List<HomeApps.Item> s = apps ? HomeApps.shelf(c, true) : null;
             final List<HomeApps.Item> st = statusList(c);
-            final List<HomeApps.Item> d = drawerList(c);
             final List<HomeApps.Item> o = apps ? HomeApps.others(c) : null;
-            final List<HomeApps.Item> top = apps ? HomeApps.topButtons() : null;   // they change with Prefs too
+            final List<HomeApps.Item> top = apps ? HomeApps.topButtons(c) : null;   // they change with Prefs too
             handler.post(() -> {
                 if (top != null) setLightButtons(top);
                 if (s != null) setShelf(s);
                 setStatusItems(st);
-                setDrawerItems(d);
                 if (o != null && !sheetOpen) setOthers(o);
                 else if (o != null) appsStale = true;   // All Apps is open: its list comes next time
             });
@@ -2813,7 +2926,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void back() {
-        if (sheetOpen) {
+        if (popOpen) {
+            closePop(false);
+        } else if (sheetOpen) {
             closeSheet();
         } else if (trailerOn) {      // Back stops the trailer first
             stopTrailer();
@@ -2837,6 +2952,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void move(int dx, int dy) {
         stopTrailer();      // an arrow ends the trailer, and moves on
+        if (popOpen) {
+            movePop(dy);
+            return;
+        }
         if (sheetOpen) {
             moveGrid(dx, dy);
             return;
@@ -2969,6 +3088,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             dropReorder();
             return;
         }
+        if (popOpen) {
+            choosePop();
+            return;
+        }
         if (opening != null) return;      // still looking up where a title streams
         HomeApps.Item it;
         RectF r;
@@ -3035,15 +3158,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             openSheet();
             return;
         }
-        if (it.kind == HomeApps.INPUTS) {
-            openDrawer();
-            for (int i = 0; i < drawerItems.size(); i++) {
-                if (drawerItems.get(i).kind == HomeApps.INPUT) {
-                    drawerIndex = i;
-                    break;
-                }
-            }
-            retarget(false);
+        if (it.kind == HomeApps.INPUT_GROUP) {
+            openInputs(it, r);
             return;
         }
         launch(it, r);
@@ -3117,6 +3233,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Holding OK: All Apps puts the app on the shelf or takes it off; on the shelf, the app is lifted to move
 
     private void hold() {
+        if (popOpen) return;
         if (!sheetOpen && zone == Z_BROWSE) {       // the trailer of the focused title
             handler.removeCallbacks(holdStart);
             holdArmed = false;
@@ -3358,7 +3475,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - TalkBack: every reachable item as a virtual node (Spoken). Id = group * 1000 + index + 1.
 
     /** The drawer's weather (0) and quotes (1) cards: read by TalkBack, never focused by the remote. */
-    private static final int GRID = 9, WIDGETS = 8;
+    private static final int GRID = 9, WIDGETS = 8, POPUP = 12;
 
     private static int a11yId(int group, int index) {
         return group * 1000 + index + 1;
@@ -3369,6 +3486,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void a11yItems(List<Integer> out) {
+        if (popOpen) {
+            for (int i = 0; i < popItems.size(); i++) out.add(a11yId(POPUP, i));
+            return;
+        }
         if (sheetOpen) {
             for (int i = 0; i < others.size(); i++) out.add(a11yId(GRID, i));
             return;
@@ -3383,6 +3504,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String a11yText(int id) {
         int group = (id - 1) / 1000, i = (id - 1) % 1000;
         switch (group) {
+            case POPUP: return label(popItems, i);
             case GRID:
                 if (i >= others.size()) return "";
                 return label(others, i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", others.size());
@@ -3410,6 +3532,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int group = (id - 1) / 1000, i = (id - 1) % 1000;
         float dy;
         switch (group) {
+            case POPUP:
+                if (!popOpen || i >= popItems.size()) return false;
+                popRowRect(i, a11yRect);
+                dy = 0;
+                break;
             case GRID: {
                 if (!sheetOpen || i >= others.size()) return false;
                 float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
@@ -3456,6 +3583,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private int a11yFocused() {
+        if (popOpen) return popItems.isEmpty() ? -1 : a11yId(POPUP, popIndex);
         if (sheetOpen) return others.isEmpty() ? -1 : a11yId(GRID, gridIndex);
         switch (zone) {
             case Z_TOP: return a11yId(Z_TOP, topIndex);
@@ -3491,6 +3619,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             gridIndex = i;
             retargetGrid(false);
             gridDirty = true;
+            click.move();
+            return;
+        }
+        if (group == POPUP) {
+            if (!popOpen || i >= popItems.size()) return;
+            popIndex = i;
+            aim(popFocus, popIndex, false);
+            popDirty = true;
             click.move();
             return;
         }
@@ -4077,7 +4213,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /**
-     * The round buttons (Live TV, HDMI Inputs and Settings by default): icon-only glass circles (light by day, smoked at
+     * The round buttons (Screensaver, Home Settings and Settings by default; also Live TV, AV input and HDMI input): icon-only glass circles (light by day, smoked at
      * night); the focused one turns white with a dark icon (the tvOS focus) and its name appears below it.
      */
     private void drawLightButtons(Canvas c) {
@@ -4093,7 +4229,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             shadows.draw(c, tmp, rad, SHADOW_BLUR * k, shadow);
             look.roundButton(c, cell, rad, f, dark());
             Symbols.draw(getContext(), c, it.symbol, cell.centerX(), cell.centerY(), 27 * k * s, look.roundButtonInk(f, dark()));
-            if (f > 0.01f) {
+            if (f > 0.01f && !popOpen) {
                 String label = it.label;
                 float half = lTip.measureText(label) / 2;
                 float x = Math.min(r.centerX(), CONTENT_R * k - half);

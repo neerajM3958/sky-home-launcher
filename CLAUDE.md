@@ -235,6 +235,10 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
 - Trailers on the catalog screen play in YouTube's embedded player (`TrailerPlayer`), in a window of its own over the video area
   (this TV decodes video onto a plane under the app's window); the YouTube app opens one only after a long OK press, never on
   autoplay.
+- Inputs are top buttons, not a drawer row: `HomeApps.TOP_AV` and `TOP_HDMI` (kind `INPUT_GROUP`) list the TV's inputs of that kind
+  (`HomeApps.inputGroup`: HDMI ports, or composite/component/S-Video/SCART); one opens at once, several open `HomeView`'s popover
+  (`popLayer`, rows under the buttons, Up/Down/OK/Back). A button is left out on a TV without that input. Google TV only; `web/`
+  still has its drawer.
 - Settings > Integrations: when the TMDB key, Watchmode key or Trakt Client ID is missing, OK there starts `IntegrationsServer`
   (a small raw-socket HTTP server, no library, up only while the screen is open) and shows its LAN address as text and a QR code
   (`drawQr`, generalized from Trakt's device-login QR). The one page it serves never reads a key back, only whether one is set

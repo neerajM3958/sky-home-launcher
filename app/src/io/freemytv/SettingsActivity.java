@@ -1822,7 +1822,7 @@ public class SettingsActivity extends Activity {
             shelfOrder.clear();
             if (top) {
                 shelfOrder.addAll(HomeApps.topButtonKeys());
-                rebuildShelfRows(HomeApps.topCandidates());
+                rebuildShelfRows(HomeApps.topCandidates(getContext()));
             } else {
                 // Only the apps the shelf shows: one that was uninstalled would hold a place (and count toward the
                 // limit) without a row to take it off.

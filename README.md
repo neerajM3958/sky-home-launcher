@@ -132,6 +132,8 @@ Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`:
 
 Google TV only, on the TV: *Free My TV* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) on; they are off until you do. Off, the tabs are gone and the home screen shows the clock, the weather and the shelf; nothing is fetched for the picks, and the catalogs and Trakt rows stay.
 
+Google TV only: the inputs are round buttons now, not a row in the drawer. *Free My TV* → *Top Buttons* can hold *Live TV*, *AV input* and *HDMI input* (a button shows only when the TV has that input). One input opens at once; with several HDMI inputs, OK opens a small list under the button to choose from (a dimmed one has no device on it). An old *HDMI Inputs* button becomes *HDMI input*.
+
 ### The TMDB key
 
 Free, and it takes two minutes: create an account at [themoviedb.org](https://www.themoviedb.org/signup), then open [Settings → API](https://www.themoviedb.org/settings/api) and request a developer key. Paste the *API Read Access Token* (or the *API Key*) after `tmdb_key=`. It's your key: `config.properties` stays out of git.
