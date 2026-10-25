@@ -137,7 +137,7 @@ public class SettingsActivity extends Activity {
         private final Scene scene = new Scene();
         private final Look look = Themes.create(Prefs.look(), scene);
         private final Handler handler = new Handler(Looper.getMainLooper());
-        private final Spring[] pop = new Spring[16];     // one per row of the longest list (Home Settings: 14 with the Dollar row)
+        private final Spring[] pop = new Spring[16];     // one per row of the longest unscrolled list (MAIN: 11 rows)
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
         // The list picker (the app of a remote button): what it shows, which one is in use, where we are.
         private final List<String> pickLabels = new ArrayList<>();
@@ -304,7 +304,8 @@ public class SettingsActivity extends Activity {
                 case REMOTE_KEYS: {
                     boolean keys = screen == REMOTE_KEYS;
                     String[] labels = keys ? keyLabels() : settingLabels(), values = keys ? keyValues() : settingValues();
-                    return row < labels.length ? labels[row] + ", " + values[row] : "";
+                    int at = pickScroll + row;
+                    return at < labels.length ? labels[at] + ", " + values[at] : "";
                 }
                 case PICKER: {
                     int at = pickScroll + row;
@@ -432,7 +433,7 @@ public class SettingsActivity extends Activity {
                 case LEARN: return 1;
                 case TOR_LANGS: return Math.min(PICK_VISIBLE, torLangRows.size());
                 case HOME_CHOICE: return 3;
-                case HOME_SETTINGS: return settingLabels().length;
+                case HOME_SETTINGS: return Math.min(PICK_VISIBLE, settingLabels().length);
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
                 case SHELF_EDIT: return Math.min(PICK_VISIBLE, shelfRows.size());
                 default: return Prefs.KEYS.length + 1;      // the remote buttons, then "Added buttons"
@@ -782,6 +783,7 @@ public class SettingsActivity extends Activity {
                                 focus = 0;
                                 screen = TORRENTIO;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
+                                pickScroll = 0;
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
                             } else if (screen == PICKER) {
@@ -1685,7 +1687,8 @@ public class SettingsActivity extends Activity {
                 Prefs.setKeyApp(id, appPkgs.get(next));
                 return;
             }
-            switch (focus) {
+            int row = pickScroll + focus;
+            switch (row) {
                 case 0: break;   // OK opens the language picker.
                 case 1: {
                     int at = java.util.Arrays.asList(UNITS).indexOf(Prefs.temperature());
@@ -1716,7 +1719,7 @@ public class SettingsActivity extends Activity {
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
-                    Prefs.setCoin(focus - COIN_ROWS, !Prefs.coin(focus - COIN_ROWS));
+                    Prefs.setCoin(row - COIN_ROWS, !Prefs.coin(row - COIN_ROWS));
                     break;
             }
             HomeData.get(getContext()).settingsChanged();
@@ -1807,11 +1810,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TOR_LANGS;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TOR_LANGS || screen == HOME_SETTINGS;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : screen == TOR_LANGS ? torLangRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : screen == TOR_LANGS ? torLangRows.size() : screen == HOME_SETTINGS ? settingLabels().length : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1987,20 +1990,22 @@ public class SettingsActivity extends Activity {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(keys ? Ui.tr("Remote Buttons") : Ui.tr("Home Settings"),
                     LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
-            for (int i = 0; i < labels.length; i++) {
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
                 float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
                 float f = drawRowBackground(c, i);
                 rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
-                boolean locked = !keys && i >= COIN_ROWS && !Prefs.quotes();
+                boolean locked = !keys && at >= COIN_ROWS && !Prefs.quotes();
                 rowValue.setColor(blend(locked ? 0x59FFFFFF : 0xB3FFFFFF, locked ? 0x591C1C1E : 0xB31C1C1E, f));
                 if (locked) rowLabel.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
-                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
-                c.drawText(values[i], rowRect.right - 30 * k, base, rowValue);
+                c.drawText(labels[at], rowRect.left + 30 * k, base, rowLabel);
+                c.drawText(values[at], rowRect.right - 30 * k, base, rowValue);
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
-            float hy = (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
+            float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
             c.drawText(Ui.tr("OK or the arrows change the value."), LIST_X * k + 30 * k, hy, hint);
             if (keys && !RemoteKeys.SKYWORTH) {
                 c.drawText(RemoteKeys.VESTEL ? Ui.tr("YouTube, Prime Video and Google Play: the TV itself controls those buttons.")
@@ -2048,10 +2053,12 @@ public class SettingsActivity extends Activity {
                 String[] city = cities.get(pickScroll + focus);
                 Prefs.setCity(city[1], city[2], city[3]);
                 HomeData.get(c).settingsChanged();
+                pickScroll = 0;
                 focus = CITY_ROW;
                 screen = HOME_SETTINGS;
             } else if (screen == PICKER && pickFor == PICK_LANGUAGE) {
                 Prefs.setLanguage(languageChoices()[pickScroll + focus]);
+                pickScroll = 0;
                 focus = 0;
                 screen = HOME_SETTINGS;
             } else if (screen == PICKER && pickFor == PICK_REGION) {
@@ -2122,9 +2129,9 @@ public class SettingsActivity extends Activity {
             } else if (screen == ADDED_KEYS) {
                 if (focus < learnedCount()) openPicker(Prefs.KEYS.length + focus + 1);
                 else startLearn();
-            } else if (screen == HOME_SETTINGS && focus == 0) {
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == 0) {
                 openPicker(PICK_LANGUAGE);
-            } else if (screen == HOME_SETTINGS && focus == CITY_ROW) {
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == CITY_ROW) {
                 askCity();
                 return;
             } else if (screen == HOME_SETTINGS) {
@@ -2140,6 +2147,7 @@ public class SettingsActivity extends Activity {
                 activity.showPreview();
             } else if (focus == 2) {
                 screen = HOME_SETTINGS;
+                pickScroll = 0;
                 focus = 0;
             } else if (focus == 3) {
                 openShelfEditor(false);
