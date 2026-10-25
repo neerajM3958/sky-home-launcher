@@ -122,8 +122,8 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10;
-        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15, INTEGRATIONS = 16;
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9;
         private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
@@ -151,11 +151,17 @@ public class SettingsActivity extends Activity {
         private final List<String> regionCodes = new ArrayList<>();      // the region picker: "auto", then the countries
         private final List<String[]> cities = new ArrayList<>();
         private String cityStatus = "";
+        private String integrationsUrl = "", integrationsError = "";   // the Integrations screen's phone address, or why it couldn't start
         private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
         private JSONObject state = new JSONObject(), recs = new JSONObject();
         private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
         private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
         private final List<String[]> hiddenRows = new ArrayList<>();     // the Hidden services screen: {key, name}
+        private final List<String[]> appsOffRows = new ArrayList<>();    // Apps turned off: {package, name}
+        private int[] keyIds = Prefs.KEYS;      // the remote buttons: the brand's, then the ones added (Prefs.allKeys)
+        private static final int MAX_ADDED = 8;
+        private final List<String> torLangRows = new ArrayList<>();      // the Torrentio languages screen: Torrentio's names
+        private final java.util.Set<String> appsKept = new java.util.HashSet<>();   // ... and the ones the person keeps on
         private final java.util.Set<String> stremioInstalled = new java.util.HashSet<>();   // services whose app is on the TV (read when the screen opens)
         private final List<String[]> stremioRows = new ArrayList<>();     // the Stremio screen: {key, name}, "missing" first
         private int screen = MAIN, focus;
@@ -187,7 +193,7 @@ public class SettingsActivity extends Activity {
                 }
                 wasBusy = nowBusy;
                 invalidate();
-                handler.postDelayed(this, busy() ? 500 : 2000);
+                handler.postDelayed(this, busy() || StremioInstall.busy() ? 500 : 2000);
             }
         };
 
@@ -225,8 +231,7 @@ public class SettingsActivity extends Activity {
         private boolean disabledRow(int row) {
             if (screen == STREMIO) return pickScroll + row < stremioRows.size() && stremioOff(pickScroll + row);
             if (screen == TMDB) return row == RENT_BUY_ROW && !Prefs.flatrateOnly();     // everything is included then
-            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext()))
-                    || (row == STREMIO_ROW && !stremioOn));
+            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext())));
         }
 
         @Override public AccessibilityNodeProvider getAccessibilityNodeProvider() {
@@ -246,11 +251,14 @@ public class SettingsActivity extends Activity {
                     String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
                             Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"),
                             Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TMDB") + ", " + tmdbStatus(),
-                            Ui.tr("Stremio") + ", " + stremioStatus(), Ui.tr("TV Settings")};
+                            Ui.tr("Stremio") + ", " + stremioStatus(), Ui.tr("Integrations") + ", " + integrationsStatus(),
+                            Ui.tr("TV Settings")};
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
                 case TRAKT:
                     return traktAction();
+                case INTEGRATIONS:
+                    return integrationsAction();
                 case TMDB: {
                     String[] labels = tmdbLabels(), values = tmdbValues();
                     return row < labels.length ? labels[row] + ", " + values[row] : "";
@@ -259,6 +267,24 @@ public class SettingsActivity extends Activity {
                     int at = pickScroll + row;
                     return at < hiddenRows.size() ? hiddenRows.get(at)[1] + (hiddenChecked(at) ? Ui.tr(", hidden") : "") : "";
                 }
+                case APPS_OFF: {
+                    int at = pickScroll + row;
+                    return at < appsOffRows.size() ? appsOffRows.get(at)[1] + ", " + appsOffValue(at) : "";
+                }
+                case TORRENTIO: {
+                    String[] labels = torrentioLabels(), values = torrentioValues();
+                    return row < labels.length ? labels[row] + ", " + values[row] : "";
+                }
+                case TOR_LANGS: {
+                    int at = pickScroll + row;
+                    return at < torLangRows.size() ? Torrentio.label(torLangRows.get(at)) + (torChosen(at) ? Ui.tr(", selected") : "") : "";
+                }
+                case ADDED_KEYS: {
+                    String[] labels = addedLabels(), values = addedValues();
+                    return row < labels.length ? labels[row] + (values[row].isEmpty() ? "" : ", " + values[row]) : "";
+                }
+                case LEARN:
+                    return Ui.tr("Press the button on your remote");
                 case LANGUAGES: {
                     int at = pickScroll + row;
                     return at < langRows.size() ? langRows.get(at)[1] + (langChecked(at) ? Ui.tr(", selected") : "") : "";
@@ -268,10 +294,11 @@ public class SettingsActivity extends Activity {
                     return at < stremioRows.size() ? stremioRows.get(at)[1] + ", " + stremioValue(at) : "";
                 }
                 case HOME_CHOICE: {
+                    if (row == 2) return Ui.tr("Apps turned off") + ", " + Ui.tr("Keep the apps you want on");
                     String name = row == 0 ? "Free My TV, " + Ui.tr("no ads, with the new screensaver")
                             : "Original, " + Ui.tr("the TV's factory home screen");
                     boolean inUse = (row == 0) == freeActive();
-                    return name + (inUse ? Ui.tr(". In use") : "") + ", " + Ui.trf("{i} of {n}", "i", row + 1, "n", 2);
+                    return name + (inUse ? Ui.tr(". In use") : "") + ", " + Ui.trf("{i} of {n}", "i", row + 1, "n", 3);
                 }
                 case HOME_SETTINGS:
                 case REMOTE_KEYS: {
@@ -335,6 +362,7 @@ public class SettingsActivity extends Activity {
             running = false;
             handler.removeCallbacks(poll);
             Choreographer.getInstance().removeFrameCallback(this);
+            IntegrationsServer.stop();     // leaving the settings screen (even via Home) must not leave it listening
         }
 
         @Override public void doFrame(long frameTimeNanos) {
@@ -391,17 +419,23 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 10;
+                case MAIN: return 11;
                 case TRAKT: return 1;
+                case INTEGRATIONS: return 1;
                 case TMDB: return tmdbLabels().length;
                 case STREMIO: return Math.min(PICK_VISIBLE, stremioRows.size());
                 case LANGUAGES: return Math.min(PICK_VISIBLE, langRows.size());
                 case HIDDEN: return Math.min(PICK_VISIBLE, hiddenRows.size());
-                case HOME_CHOICE: return 2;
+                case APPS_OFF: return Math.min(PICK_VISIBLE, appsOffRows.size());
+                case TORRENTIO: return 3;
+                case ADDED_KEYS: return addedLabels().length;
+                case LEARN: return 1;
+                case TOR_LANGS: return Math.min(PICK_VISIBLE, torLangRows.size());
+                case HOME_CHOICE: return 3;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
                 case SHELF_EDIT: return Math.min(PICK_VISIBLE, shelfRows.size());
-                default: return Prefs.KEYS.length;
+                default: return Prefs.KEYS.length + 1;      // the remote buttons, then "Added buttons"
             }
         }
 
@@ -441,7 +475,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else if (screen == ADDED_KEYS) drawAdded(c); else if (screen == LEARN) drawLearn(c); else if (screen == INTEGRATIONS) drawIntegrations(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -450,8 +484,8 @@ public class SettingsActivity extends Activity {
             String mode = freeActive() ? "Free My TV" : Ui.tr("Original");
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
-                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), stremioStatus(), ""};
+                    Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("Integrations"), Ui.tr("TV Settings")};
+            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(), stremioStatus(), integrationsStatus(), ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -519,7 +553,7 @@ public class SettingsActivity extends Activity {
             String line;
             String error = recs.optString("error");
             int count = recs.optInt("count");
-            if (!hasKey) line = Ui.tr("No TMDB key: see the README (config.properties).");
+            if (!hasKey) line = Ui.tr("No TMDB key: set one in Free My TV › Integrations.");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
@@ -593,7 +627,8 @@ public class SettingsActivity extends Activity {
             String[][] options = {{"Free My TV", Ui.tr("No ads, with the new screensaver")},
                     {Ui.tr("Original"), Ui.tr("The TV's factory home screen")}};
             int current = freeActive() ? 0 : 1;
-            for (int i = 0; i < 2; i++) {
+            options = new String[][] {options[0], options[1], {Ui.tr("Apps turned off"), Ui.tr("Keep the apps you want on")}};
+            for (int i = 0; i < 3; i++) {
                 float y = (LIST_TOP + 20 + i * (CHOICE_H + ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + CHOICE_H * k);
                 float f = drawRowBackground(c, i);
@@ -601,14 +636,17 @@ public class SettingsActivity extends Activity {
                 rowSub.setColor(blend(0x8CFFFFFF, 0x991C1C1E, f));
                 c.drawText(options[i][0], rowRect.left + 30 * k, rowRect.top + 44 * k, rowLabel);
                 c.drawText(options[i][1], rowRect.left + 30 * k, rowRect.top + 80 * k, rowSub);
-                if (i == current) {
+                if (i == 2) {
+                    float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
+                    Symbols.draw(getContext(), c, "chevron_right", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 22 * k, blend(0x99FFFFFF, INK, f));
+                } else if (i == current) {
                     float cw = Symbols.width(getContext(), "check", 26 * k);
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("Switching takes a few seconds; the screen blinks while it measures."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + 2 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
+                    (LIST_TOP + 20 + 3 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
         }
 
         private int blend(int a, int b, float f) {
@@ -650,6 +688,13 @@ public class SettingsActivity extends Activity {
 
         boolean onKey(KeyEvent e) {
             boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
+            if (screen == LEARN && RemoteKeys.recordable(e)) {      // a button that reached the screen (the service sees the others)
+                if (down && e.getRepeatCount() == 0) {
+                    finishLearn(e.getKeyCode(), e.getScanCode());
+                    invalidate();
+                }
+                return true;
+            }
             switch (e.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_UP:
                     if (down && focus > 0) focus--;
@@ -668,7 +713,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TORRENTIO || screen == TOR_LANGS || screen == ADDED_KEYS)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -719,6 +764,23 @@ public class SettingsActivity extends Activity {
                             } else if (screen == HIDDEN) {
                                 focus = TMDB_HIDDEN;
                                 screen = TMDB;
+                            } else if (screen == APPS_OFF) {
+                                focus = 2;
+                                screen = HOME_CHOICE;
+                            } else if (screen == ADDED_KEYS) {
+                                focus = Prefs.KEYS.length;
+                                screen = REMOTE_KEYS;
+                            } else if (screen == LEARN) {
+                                Prefs.stopLearning();
+                                openAdded(learnedCount());
+                            } else if (screen == PICKER && pickFor - 1 >= Prefs.KEYS.length) {
+                                openAdded(pickFor - 1 - Prefs.KEYS.length);
+                            } else if (screen == TORRENTIO) {
+                                focus = 1;
+                                screen = STREMIO;
+                            } else if (screen == TOR_LANGS) {
+                                focus = 0;
+                                screen = TORRENTIO;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
@@ -728,6 +790,12 @@ public class SettingsActivity extends Activity {
                             } else if (screen == TRAKT) {
                                 Trakt.get(getContext()).cancelLogin();
                                 focus = TRAKT_ROW;
+                                screen = MAIN;
+                            } else if (screen == INTEGRATIONS) {
+                                IntegrationsServer.stop();
+                                integrationsUrl = "";
+                                integrationsError = "";
+                                focus = INTEGRATIONS_ROW;
                                 screen = MAIN;
                             } else {
                                 focus = screen == HOME_SETTINGS ? 2 : screen == SHELF_EDIT ? (editingTop ? 4 : 3)
@@ -787,16 +855,16 @@ public class SettingsActivity extends Activity {
             return drawWrapped(c, text, x, y, gap, 790 * k);
         }
 
-        // The sign-in code as a QR code (the address with the code in it, so the phone's camera needs no typing).
+        // A QR code of the given address or link, so a phone's camera needs no typing.
         private final Paint qrInk = new Paint(), qrBg = new Paint(Paint.ANTI_ALIAS_FLAG);
         private String qrFor = "";
         private android.graphics.Path qrPath;
         private int qrModules;
 
-        private void drawQr(Canvas c, String code, float x, float top) {
-            if (!code.equals(qrFor)) {
-                qrFor = code;
-                boolean[][] m = Qr.encode("https://trakt.tv/activate/" + code);
+        private void drawQr(Canvas c, String text, float x, float top) {
+            if (!text.equals(qrFor)) {
+                qrFor = text;
+                boolean[][] m = Qr.encode(text);
                 qrPath = null;
                 if (m != null) {
                     qrModules = m.length;
@@ -833,7 +901,7 @@ public class SettingsActivity extends Activity {
                 case Trakt.ERR_NETWORK: return Ui.tr("Couldn't reach Trakt. Check the network and try again.");
                 case Trakt.ERR_DENIED: return Ui.tr("Trakt said no: the code was denied.");
                 case Trakt.ERR_EXPIRED: return Ui.tr("The code expired. Press Connect for a new one.");
-                case Trakt.ERR_REFUSED: return Ui.tr("Trakt refused the Client ID: check trakt_client_id in config.properties.");
+                case Trakt.ERR_REFUSED: return Ui.tr("Trakt refused the Client ID: check it in Free My TV › Integrations.");
                 default: return "";
             }
         }
@@ -861,7 +929,7 @@ public class SettingsActivity extends Activity {
                 long left = t.loginSecondsLeft();
                 c.drawText(Ui.trf("Expires in {time}", "time", String.format(Ui.locale(), "%d:%02d", left / 60, left % 60)),
                         x, y + 134 * k, notice);
-                drawQr(c, t.loginCode(), x, y + 178 * k);
+                drawQr(c, "https://trakt.tv/activate/" + t.loginCode(), x, y + 178 * k);
             } else if (state == Trakt.STARTING) {
                 c.drawText(Ui.tr("Asking Trakt for a code…"), x, y, notice);
             } else {
@@ -875,6 +943,61 @@ public class SettingsActivity extends Activity {
                     y = drawWrapped(c, Ui.tr("Connect your Trakt account to see Continue Watching and Watchlist under the home screen's cards."), x, y, 14 * k);
                     drawWrapped(c, Ui.tr("You sign in on your phone or computer with a short code. Free My TV only reads your lists."), x, y, 0);
                 }
+            }
+        }
+
+        // MARK: - Integrations (Free My TV > Integrations): set the TMDB key, Watchmode key and Trakt Client ID from a phone
+
+        /** The main menu's value: how many of the three are set. */
+        private String integrationsStatus() {
+            int n = (Recs.hasKey(getContext()) ? 1 : 0) + (!Prefs.watchmodeKey().isEmpty() ? 1 : 0) + (Trakt.configured() ? 1 : 0);
+            return Ui.trf("{n} of 3 set", "n", n);
+        }
+
+        /** The one button of the Integrations screen. */
+        private String integrationsAction() {
+            return IntegrationsServer.running() ? Ui.tr("Stop") : Ui.tr("Set up on your phone");
+        }
+
+        private void integrationsPressed() {
+            if (IntegrationsServer.running()) {
+                IntegrationsServer.stop();
+                integrationsUrl = "";
+                integrationsError = "";
+                return;
+            }
+            try {
+                integrationsUrl = IntegrationsServer.start();
+                integrationsError = "";
+            } catch (java.io.IOException e) {
+                integrationsUrl = "";
+                integrationsError = Ui.tr("Couldn't start. Check the TV's Wi-Fi or network connection.");
+                AppLog.w("integrations server: " + e.getMessage());
+            }
+        }
+
+        private void drawIntegrations(Canvas c) {
+            float x = LIST_X * k + 30 * k;
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Integrations"), x, (LIST_TOP - 24) * k, heading);
+            float y0 = (LIST_TOP + 20) * k;
+            rowRect.set(LIST_X * k, y0, LIST_R * k, y0 + LIST_ROW_H * k);
+            float f = drawRowBackground(c, 0);
+            rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+            c.drawText(integrationsAction(), rowRect.left + 30 * k, rowRect.centerY() + Ui.halfCap(rowLabel), rowLabel);
+
+            float y = (LIST_TOP + 20 + LIST_ROW_H + 64) * k;
+            y = drawWrapped(c, Ui.trf("TMDB key: {status}", "status", Recs.hasKey(getContext()) ? Ui.tr("Set") : Ui.tr("Not set")), x, y, 10 * k);
+            y = drawWrapped(c, Ui.trf("Watchmode key: {status}", "status", Prefs.watchmodeKey().isEmpty() ? Ui.tr("Not set") : Ui.tr("Set")), x, y, 10 * k);
+            y = drawWrapped(c, Ui.trf("Trakt Client ID: {status}", "status", Trakt.configured() ? Ui.tr("Set") : Ui.tr("Not set")), x, y, 30 * k);
+
+            if (!integrationsUrl.isEmpty()) {
+                y = drawWrapped(c, Ui.trf("On your phone, go to {url}", "url", integrationsUrl), x, y, 30 * k);
+                drawQr(c, integrationsUrl, x, y);
+            } else if (!integrationsError.isEmpty()) {
+                drawWrapped(c, integrationsError, x, y, 0);
+            } else {
+                drawWrapped(c, Ui.tr("Scan the QR or open the address on your phone to set these without typing them here."), x, y, 0);
             }
         }
 
@@ -1005,6 +1128,257 @@ public class SettingsActivity extends Activity {
                     (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
         }
 
+        // MARK: - Added buttons (Free My TV > Remote Buttons): the person presses a button and chooses what it opens
+
+        private int learnedCount() {
+            return Math.max(0, keyIds.length - Prefs.KEYS.length);
+        }
+
+        private void refreshKeyIds() {
+            keyIds = Prefs.allKeys();
+        }
+
+        private void openAdded(int at) {
+            refreshKeyIds();
+            loadApps();
+            screen = ADDED_KEYS;
+            focus = Math.max(0, Math.min(at, addedLabels().length - 1));
+            for (Spring s : pop) s.snap(0);
+        }
+
+        /** The added buttons, then the row that adds one (until there are as many as fit). */
+        private String[] addedLabels() {
+            List<String> l = new ArrayList<>();
+            for (int i = Prefs.KEYS.length; i < keyIds.length; i++) l.add(Prefs.learnedName(keyIds[i]));
+            if (learnedCount() < MAX_ADDED) l.add(Ui.tr("Add a button"));
+            return l.toArray(new String[0]);
+        }
+
+        private String[] addedValues() {
+            String[] v = new String[addedLabels().length];
+            java.util.Arrays.fill(v, "");
+            for (int i = 0; i < learnedCount(); i++) v[i] = appOf(keyIds[Prefs.KEYS.length + i]);
+            return v;
+        }
+
+        private void drawAdded(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Added buttons"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            String[] labels = addedLabels(), values = addedValues();
+            for (int i = 0; i < labels.length; i++) {
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
+                c.drawText(values[i], rowRect.right - 30 * k, base, rowValue);
+            }
+            drawWrapped(c, Ui.tr("Press a button on your remote to add it. It opens the app you pick, while Free My TV is on."),
+                    LIST_X * k + 30 * k, (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, 0);
+        }
+
+        private void startLearn() {
+            Prefs.startLearning();
+            HomeMode.ensureRemoteService(getContext(), 0);      // the service sees the buttons no app gets to see
+            screen = LEARN;
+            focus = 0;
+            handler.postDelayed(learnPoll, 250);
+        }
+
+        private final Runnable learnPoll = new Runnable() {
+            @Override public void run() {
+                if (screen != LEARN || !running) return;
+                int[] pressed = Prefs.takeLearnResult();
+                if (pressed != null) {
+                    finishLearn(pressed[0], pressed[1]);
+                } else if (!Prefs.learning()) {         // nothing was pressed in time
+                    openAdded(learnedCount());
+                } else {
+                    handler.postDelayed(this, 250);
+                }
+                invalidate();
+            }
+        };
+
+        /** A button was pressed: it is added (or found again) and the person picks what it opens. */
+        private void finishLearn(int keyCode, int scanCode) {
+            Prefs.stopLearning();
+            int id = Prefs.addLearned(keyCode, scanCode, keyName(keyCode, scanCode));
+            refreshKeyIds();
+            loadApps();
+            openPicker(id - Prefs.LEARNED + Prefs.KEYS.length + 1);
+        }
+
+        /** "Button STEM 1" or "Button 114" for a key that has no name. */
+        private static String keyName(int keyCode, int scanCode) {
+            String name = KeyEvent.keyCodeToString(keyCode).replace("KEYCODE_", "").replace('_', ' ');
+            if (keyCode == KeyEvent.KEYCODE_UNKNOWN || name.matches("\\d+")) name = String.valueOf(scanCode > 0 ? scanCode : keyCode);
+            else if (scanCode > 0 && (name.startsWith("STEM") || name.startsWith("BUTTON") || name.startsWith("F"))) name += " (" + scanCode + ")";
+            return Ui.trf("Button {n}", "n", name);
+        }
+
+        private void drawLearn(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Add a button"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            rowRect.set(LIST_X * k, (LIST_TOP + 20) * k, LIST_R * k, (LIST_TOP + 20 + 140) * k);
+            float pulse = 0.5f + 0.5f * (float) Math.sin(SystemClock.uptimeMillis() / 260.0);
+            Paint big = Ui.text(Ui.displaySemibold, 40 * k, look.ink(0xF2FFFFFF, currentNight));
+            c.drawText(Ui.tr("Press the button on your remote"), LIST_X * k + 30 * k, rowRect.top + 70 * k, big);
+            Paint dots = new Paint(Paint.ANTI_ALIAS_FLAG);
+            dots.setColor(Ui.alpha(look.ink(0xFFFFFFFF, currentNight), 0.35f + 0.5f * pulse));
+            c.drawCircle(LIST_X * k + 46 * k, rowRect.top + 130 * k, 10 * k, dots);
+            drawWrapped(c, Ui.tr("The arrows, OK, Back, Home and volume can't be added. Back cancels."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + 200) * k, 0);
+            postInvalidateDelayed(80);
+        }
+
+        // MARK: - Torrentio addon (Free My TV > Stremio)
+
+        private static final String TORRENTIO_KEY = "torrentio";
+
+        private String torrentioLanguageValue() {
+            List<String> names = Prefs.torrentioLanguages();
+            if (names.isEmpty()) return Ui.tr("All languages");
+            List<String> shown = new ArrayList<>();
+            for (String n : names) shown.add(Torrentio.label(n));
+            return String.join(", ", shown);
+        }
+
+        private String torrentioSummary() {
+            return torrentioLanguageValue() + " · " + Torrentio.sizeLabel(Prefs.torrentioSize());
+        }
+
+        private String[] torrentioLabels() {
+            return new String[] {Ui.tr("Language"), Ui.tr("Size limit"), Ui.tr("Add to Stremio")};
+        }
+
+        private String[] torrentioValues() {
+            return new String[] {torrentioLanguageValue(), Torrentio.sizeLabel(Prefs.torrentioSize()), ""};
+        }
+
+        private void openTorrentio() {
+            focus = 0;
+            screen = TORRENTIO;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void drawTorrentio(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Torrentio addon"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            String[] labels = torrentioLabels(), values = torrentioValues();
+            for (int i = 0; i < labels.length; i++) {
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
+                if (i == 2) {
+                    float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
+                    Symbols.draw(getContext(), c, "chevron_right", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 22 * k, blend(0x99FFFFFF, INK, f));
+                } else {
+                    c.drawText(TextUtils.ellipsize(values[i], new TextPaint(rowValue), 640 * k, TextUtils.TruncateAt.END).toString(),
+                            rowRect.right - 30 * k, base, rowValue);
+                }
+            }
+            drawWrapped(c, Ui.tr("A third-party addon that finds streams for Stremio. Free My TV only sends Stremio its install link."),
+                    LIST_X * k + 30 * k, (LIST_TOP + 20 + 3 * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, 0);
+        }
+
+        private boolean torChosen(int at) {
+            return Prefs.torrentioLanguages().contains(torLangRows.get(at));
+        }
+
+        private void openTorLangs() {
+            torLangRows.clear();
+            for (String[] l : Torrentio.LANGUAGES) torLangRows.add(l[0]);
+            pickScroll = 0;
+            focus = 0;
+            screen = TOR_LANGS;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void toggleTorLang() {
+            int at = pickScroll + focus;
+            if (at >= torLangRows.size()) return;
+            List<String> names = Prefs.torrentioLanguages();
+            if (!names.remove(torLangRows.get(at))) names.add(torLangRows.get(at));
+            Prefs.setTorrentioLanguages(names);
+        }
+
+        private void drawTorLangs(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Language"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(Torrentio.label(torLangRows.get(at)), rowRect.left + 30 * k, base, rowLabel);
+                if (torChosen(at)) {
+                    float cw = Symbols.width(getContext(), "check", 26 * k);
+                    Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
+                }
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            c.drawText(Ui.tr("OK picks a language. With none picked, every language is used."), LIST_X * k + 30 * k,
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
+        // MARK: - Apps turned off (Free My TV > Home Screen)
+
+        private String appsOffValue(int at) {
+            return appsKept.contains(appsOffRows.get(at)[0]) ? Ui.tr("Kept on") : Ui.tr("Turned off");
+        }
+
+        private void openAppsOff() {
+            appsOffRows.clear();
+            appsOffRows.addAll(HomeMode.debloatApps(getContext()));
+            appsKept.clear();
+            for (String[] row : appsOffRows) if (HomeMode.keepsOn(getContext(), row[0])) appsKept.add(row[0]);
+            pickScroll = 0;
+            focus = 0;
+            screen = APPS_OFF;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void toggleAppsOff() {
+            int at = pickScroll + focus;
+            if (at >= appsOffRows.size()) return;
+            String pkg = appsOffRows.get(at)[0];
+            boolean keep = appsKept.add(pkg);
+            if (!keep) appsKept.remove(pkg);
+            HomeMode.setKeepOn(getContext(), pkg, keep);       // applied at once, in the background
+        }
+
+        private void drawAppsOff(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Apps turned off"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                boolean kept = appsKept.contains(appsOffRows.get(at)[0]);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(appsOffRows.get(at)[1], rowRect.left + 30 * k, base, rowLabel);
+                rowValue.setColor(blend(kept ? 0xF2FFFFFF : 0x8CFFFFFF, kept ? INK : 0x991C1C1E, f));
+                c.drawText(appsOffValue(at), rowRect.right - 30 * k, base, rowValue);
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            String text = appsOffRows.isEmpty() ? Ui.tr("No apps to turn off on this TV.")
+                    : Ui.tr("OK keeps an app on, or lets Free My TV turn it off.");
+            c.drawText(text, LIST_X * k + 30 * k, (LIST_TOP + 20 + Math.max(1, rows) * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
         // MARK: - Hidden services (Free My TV > TMDB)
 
         private String hiddenValue() {
@@ -1059,7 +1433,7 @@ public class SettingsActivity extends Activity {
 
         /** The main menu's value: whether Stremio is there, and whether anything is sent to it. */
         private String stremioStatus() {
-            if (!stremioOn) return Ui.tr("Not installed");
+            if (!stremioOn) return StremioInstall.status();      // "Install", or how the install is going
             boolean any = Prefs.stremioForMissing();
             for (String[] s : Recs.serviceNames()) any |= Prefs.toStremio(s[0]);
             return onOff(any || Prefs.toStremio(Routing.OTHER));
@@ -1069,6 +1443,7 @@ public class SettingsActivity extends Activity {
         private void openStremio() {
             stremioRows.clear();
             stremioRows.add(new String[] {"", Ui.tr("Use Stremio as fallback OTT")});
+            stremioRows.add(new String[] {TORRENTIO_KEY, Ui.tr("Torrentio addon")});
             for (String[] s : Recs.serviceNames()) stremioRows.add(s);
             stremioRows.add(new String[] {Routing.OTHER, Ui.tr("Other services")});
             stremioInstalled.clear();
@@ -1082,11 +1457,12 @@ public class SettingsActivity extends Activity {
         /** A service whose app isn't on the TV: nothing to choose (its titles follow the fallback). */
         private boolean stremioOff(int at) {
             String key = stremioRows.get(at)[0];
-            return !key.isEmpty() && !key.equals(Routing.OTHER) && !stremioInstalled.contains(key);
+            return !key.isEmpty() && !key.equals(Routing.OTHER) && !key.equals(TORRENTIO_KEY) && !stremioInstalled.contains(key);
         }
 
         private String stremioValue(int at) {
             String key = stremioRows.get(at)[0];
+            if (key.equals(TORRENTIO_KEY)) return torrentioSummary();
             if (stremioOff(at)) return Ui.tr("Not installed");
             return key.isEmpty() ? onOff(Prefs.stremioForMissing()) : Prefs.toStremio(key) ? Ui.tr("Stremio") : Ui.tr("Its app");
         }
@@ -1094,6 +1470,10 @@ public class SettingsActivity extends Activity {
         private void toggleStremio() {
             if (stremioOff(pickScroll + focus)) return;
             String key = stremioRows.get(pickScroll + focus)[0];
+            if (key.equals(TORRENTIO_KEY)) {
+                openTorrentio();
+                return;
+            }
             if (key.isEmpty()) Prefs.setStremioForMissing(!Prefs.stremioForMissing());
             else Prefs.setToStremio(key, !Prefs.toStremio(key));
         }
@@ -1116,7 +1496,9 @@ public class SettingsActivity extends Activity {
             }
             // What the focused row does, in words.
             int at = pickScroll + focus;
-            String caption = at >= stremioRows.size() ? "" : stremioRows.get(at)[0].isEmpty()
+            String caption = at >= stremioRows.size() ? "" : stremioRows.get(at)[0].equals(TORRENTIO_KEY)
+                    ? Ui.tr("A third-party addon that finds streams for Stremio. Free My TV only sends Stremio its install link.")
+                    : stremioRows.get(at)[0].isEmpty()
                     ? Ui.tr("When a title's app isn't on the TV, or no service we know streams it, open it in Stremio instead of its Play Store page.")
                     : stremioOff(at) ? Ui.tr("This app isn't installed, so its titles follow the fallback above.")
                     : Ui.tr("Each service opens in its own app or in Stremio. OK changes it.");
@@ -1188,7 +1570,20 @@ public class SettingsActivity extends Activity {
             return on ? Ui.tr("On") : Ui.tr("Off");
         }
 
+        /** The remote buttons screen: the brand's buttons, then a row for the ones the person added. */
         private String[] keyLabels() {
+            String[] own = ownKeyLabels();
+            String[] all = java.util.Arrays.copyOf(own, own.length + 1);
+            all[own.length] = Ui.tr("Added buttons");
+            return all;
+        }
+
+        /** The name of button `i` (an index of keyIds): the brand's label, or what the person's button was called. */
+        private String keyLabelOf(int i) {
+            return i < Prefs.KEYS.length ? ownKeyLabels()[i] : Prefs.learnedName(keyIds[i]);
+        }
+
+        private String[] ownKeyLabels() {
             if (RemoteKeys.SKYWORTH) return new String[] {Ui.tr("Netflix button"), Ui.tr("YouTube button"),
                     Ui.tr("Prime Video button"), Ui.tr("Disney+ button"), Ui.tr("Settings button")};
             if (RemoteKeys.STEM_NETFLIX) return new String[] {Ui.tr("Netflix button")};
@@ -1202,12 +1597,15 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] keyValues() {
-            String[] v = new String[Prefs.KEYS.length];
-            for (int i = 0; i < v.length; i++) {
-                int at = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[i]));
-                v[i] = at >= 0 ? appLabels.get(at) : Ui.tr("Not installed");
-            }
+            String[] v = new String[Prefs.KEYS.length + 1];
+            for (int i = 0; i < Prefs.KEYS.length; i++) v[i] = appOf(Prefs.KEYS[i]);
+            v[Prefs.KEYS.length] = learnedCount() == 0 ? Ui.tr("None") : String.valueOf(learnedCount());
             return v;
+        }
+
+        private String appOf(int id) {
+            int at = appPkgs.indexOf(Prefs.keyApp(id));
+            return at >= 0 ? appLabels.get(at) : Ui.tr("Not installed");
         }
 
         /** Installed TV apps, by name, after "Nothing": what a remote button can open. */
@@ -1222,10 +1620,13 @@ public class SettingsActivity extends Activity {
             appPkgs.add("");
             // On Sony, "nothing" leaves the key to the TV, which opens its usual app.
             appLabels.add(RemoteKeys.SONY ? Ui.tr("Sony default") : Ui.tr("Nothing"));
-            if (RemoteKeys.SKYWORTH) {      // the gear button: Android's own Settings (the stock launcher's panel is off)
+            if (RemoteKeys.SKYWORTH || Prefs.hasLearned()) {      // the gear button: Android's own Settings (the stock launcher's panel is off)
                 appPkgs.add(Prefs.TV_SETTINGS);
                 appLabels.add(Ui.tr("TV Settings"));
             }
+            // Every button (built-in or added) can also jump straight to Free My TV's own Settings.
+            appPkgs.add(Prefs.FMT_SETTINGS);
+            appLabels.add(Ui.tr("Free My TV Settings"));
             for (String[] f : found) {
                 appPkgs.add(f[0]);
                 appLabels.add(f[1]);
@@ -1236,6 +1637,23 @@ public class SettingsActivity extends Activity {
         private void adjust(int dir) {
             if (screen == HIDDEN) {
                 toggleHidden();
+                return;
+            }
+            if (screen == APPS_OFF) {
+                toggleAppsOff();
+                return;
+            }
+            if (screen == TOR_LANGS) {
+                toggleTorLang();
+                return;
+            }
+            if (screen == TORRENTIO) {
+                if (focus == 1) {
+                    int at = java.util.Arrays.asList(Torrentio.SIZES).indexOf(Prefs.torrentioSize());
+                    Prefs.setTorrentioSize(Torrentio.SIZES[(Math.max(0, at) + dir + Torrentio.SIZES.length) % Torrentio.SIZES.length]);
+                } else if (focus == 0 && dir > 0) {
+                    openTorLangs();
+                }
                 return;
             }
             if (screen == LANGUAGES) {
@@ -1253,11 +1671,18 @@ public class SettingsActivity extends Activity {
                 else if (focus == TMDB_ANIMATION) Prefs.setHideAnimation(!Prefs.hideAnimation());
                 return;
             }
-            if (screen == REMOTE_KEYS) {
+            if (screen == REMOTE_KEYS || screen == ADDED_KEYS) {
+                boolean added = screen == ADDED_KEYS;
+                if (!added && focus >= Prefs.KEYS.length) {       // the "Added buttons" row
+                    if (dir > 0) openAdded(0);
+                    return;
+                }
+                if (added && focus >= learnedCount()) return;       // the "Add a button" row: OK only
+                int id = added ? keyIds[Prefs.KEYS.length + focus] : Prefs.KEYS[focus];
                 int n = appPkgs.size();
-                int at = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[focus]));
+                int at = appPkgs.indexOf(Prefs.keyApp(id));
                 int next = at < 0 ? (dir > 0 ? 0 : n - 1) : (at + dir + n) % n;
-                Prefs.setKeyApp(Prefs.KEYS[focus], appPkgs.get(next));
+                Prefs.setKeyApp(id, appPkgs.get(next));
                 return;
             }
             switch (focus) {
@@ -1295,6 +1720,34 @@ public class SettingsActivity extends Activity {
                     break;
             }
             HomeData.get(getContext()).settingsChanged();
+        }
+
+        /** Lets the person type a name for an added button, in place of the default "Button {n}". */
+        private void askRenameButton(int id) {
+            EditText field = new EditText(activity);
+            field.setSingleLine(true);
+            field.setText(Prefs.learnedName(id));
+            field.setHint(Ui.tr("Name"));
+            field.setImeOptions(EditorInfo.IME_ACTION_DONE);
+            AlertDialog dialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Rename button"))
+                    .setView(field)
+                    .setPositiveButton(Ui.tr("Save"), (d, which) -> renameButton(id, field.getText().toString()))
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .create();
+            field.setOnEditorActionListener((v, action, event) -> {
+                dialog.dismiss();
+                renameButton(id, field.getText().toString());
+                return true;
+            });
+            dialog.show();
+        }
+
+        private void renameButton(int id, String name) {
+            name = name.trim();
+            if (!name.isEmpty()) Prefs.renameLearned(id, name);
+            refreshKeyIds();
+            openAdded(id - Prefs.LEARNED);
         }
 
         private void askCity() {
@@ -1354,11 +1807,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TOR_LANGS;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : screen == TOR_LANGS ? torLangRows.size() : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1489,7 +1942,11 @@ public class SettingsActivity extends Activity {
                 pickCurrent = java.util.Arrays.asList(choices).indexOf(Prefs.language());
             } else {
                 pickLabels.addAll(appLabels);
-                pickCurrent = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[which - 1]));
+                if (which - 1 >= Prefs.KEYS.length) {
+                    pickLabels.add(Ui.tr("Rename this button"));
+                    pickLabels.add(Ui.tr("Remove this button"));
+                }
+                pickCurrent = appPkgs.indexOf(Prefs.keyApp(keyIds[which - 1]));
             }
             int visible = Math.min(PICK_VISIBLE, pickLabels.size());
             int at = Math.max(0, pickCurrent);
@@ -1502,7 +1959,7 @@ public class SettingsActivity extends Activity {
         private void drawPicker(Canvas c) {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             String title = pickFor == PICK_CITY ? Ui.tr("City") : pickFor == PICK_REGION ? Ui.tr("Region")
-                    : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabels()[pickFor - 1];
+                    : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabelOf(pickFor - 1);
             c.drawText(title, LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
@@ -1557,7 +2014,28 @@ public class SettingsActivity extends Activity {
 
         private void activate() {
             Context c = getContext();
-            if (screen == HOME_CHOICE) {
+            if (screen == LEARN) return;        // waiting for a button on the remote
+            if (screen == HOME_CHOICE && focus == 2) {
+                openAppsOff();
+            } else if (screen == APPS_OFF) {
+                toggleAppsOff();
+                invalidate();
+                return;
+            } else if (screen == TOR_LANGS) {
+                toggleTorLang();
+                invalidate();
+                return;
+            } else if (screen == TORRENTIO) {
+                if (focus == 0) {
+                    openTorLangs();
+                } else if (focus == 1) {
+                    adjust(1);
+                    invalidate();
+                    return;
+                } else if (!Torrentio.install(c, Prefs.torrentioLanguages(), Prefs.torrentioSize())) {
+                    HomeMode.notice(c, Ui.trf("Couldn't open {app}.", "app", "Stremio"));
+                }
+            } else if (screen == HOME_CHOICE) {
                 boolean wantFree = focus == 0;
                 boolean already = wantFree ? freeActive() : HomeMode.ORIGINAL.equals(state.optString("mode", HomeMode.ORIGINAL));
                 if (!already && !busy()) {
@@ -1608,9 +2086,22 @@ public class SettingsActivity extends Activity {
                 return;
             } else if (screen == PICKER) {
                 int at = pickScroll + focus;
-                Prefs.setKeyApp(Prefs.KEYS[pickFor - 1], appPkgs.get(at));
-                focus = pickFor - 1;
-                screen = REMOTE_KEYS;
+                boolean added = pickFor - 1 >= Prefs.KEYS.length;
+                if (added && at == appPkgs.size()) {        // "Rename this button"
+                    askRenameButton(keyIds[pickFor - 1]);
+                } else if (added && at == appPkgs.size() + 1) {    // "Remove this button"
+                    Prefs.removeLearned(keyIds[pickFor - 1]);
+                    refreshKeyIds();
+                    openAdded(Math.min(pickFor - 1 - Prefs.KEYS.length, learnedCount()));
+                } else {
+                    Prefs.setKeyApp(keyIds[pickFor - 1], appPkgs.get(at));
+                    if (added) {
+                        openAdded(pickFor - 1 - Prefs.KEYS.length);
+                    } else {
+                        focus = pickFor - 1;
+                        screen = REMOTE_KEYS;
+                    }
+                }
             } else if (screen == SHELF_EDIT) {
                 toggleShelfApp();
                 invalidate();
@@ -1620,8 +2111,17 @@ public class SettingsActivity extends Activity {
                 invalidate();
                 spoken.focusMoved();
                 return;
+            } else if (screen == INTEGRATIONS) {
+                integrationsPressed();
+                invalidate();
+                spoken.focusMoved();
+                return;
             } else if (screen == REMOTE_KEYS) {
-                openPicker(focus + 1);
+                if (focus >= Prefs.KEYS.length) openAdded(0);
+                else openPicker(focus + 1);
+            } else if (screen == ADDED_KEYS) {
+                if (focus < learnedCount()) openPicker(Prefs.KEYS.length + focus + 1);
+                else startLearn();
             } else if (screen == HOME_SETTINGS && focus == 0) {
                 openPicker(PICK_LANGUAGE);
             } else if (screen == HOME_SETTINGS && focus == CITY_ROW) {
@@ -1647,6 +2147,7 @@ public class SettingsActivity extends Activity {
                 openShelfEditor(true);
             } else if (focus == 5) {
                 HomeMode.ensureRemoteService(c, 0);   // the buttons work from inside other apps through this service
+                refreshKeyIds();
                 loadApps();
                 screen = REMOTE_KEYS;
                 focus = 0;
@@ -1660,8 +2161,15 @@ public class SettingsActivity extends Activity {
                 screen = TMDB;
                 focus = 0;
             } else if (focus == STREMIO_ROW) {
-                if (disabledRow(STREMIO_ROW)) return;   // Stremio isn't on the TV: nothing to open
+                if (!stremioOn) {       // Stremio isn't on the TV: install it from its own site
+                    StremioInstall.start(c);
+                    invalidate();
+                    return;
+                }
                 openStremio();
+            } else if (focus == INTEGRATIONS_ROW) {
+                screen = INTEGRATIONS;
+                focus = 0;
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }

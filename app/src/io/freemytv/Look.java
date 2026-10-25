@@ -103,6 +103,15 @@ abstract class Look {
         return false;
     }
 
+    /**
+     * The surface of a toast or notice (`r`: the pill now, `radius` the glass's corner). Returns false when the look has
+     * none of its own, and the screen draws the glass.
+     */
+    boolean toast(Canvas c, RectF r, float radius, float night) { return false; }
+
+    /** The ink of a toast's text and bell, on the surface `toast()` draws (the glass's white when it draws none). */
+    int toastInk(float night) { return 0xF2FFFFFF; }
+
     /** The All Apps tile of the shelf. Returns false when the look draws none of its own (the tile's picture is used). */
     boolean allAppsTile(Canvas c, RectF cell, float radius, String label, float f, float night) { return false; }
 

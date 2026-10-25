@@ -138,7 +138,7 @@ Free, and it takes two minutes: create an account at [themoviedb.org](https://ww
 
 A card in the catalogs, the Trakt rows or the picks opens **the app of the service that streams the title in your region** (`tmdb_region`): a Netflix title in Netflix, and so on. When that app isn't on the TV it opens the app's **Play Store page** (on a TV where Free My TV turned the app off, the page has an *Enable* button); when the title is on no service there, it says "This title is unavailable in your region." A title on several services opens in one you have, then by price (subscription, then free, then rent or buy). While the answer comes (one TMDB request, kept for a day) the card shows three blinking dots, and Back or moving away cancels it; if it takes over 3 seconds it says it couldn't check.
 
-Free My TV → *Stremio* (when Stremio is installed) says which services open in Stremio on the title's page instead of in their own app, and *Use Stremio as fallback OTT* sends it the titles whose app isn't on the TV and the ones that stream nowhere we can check; it is greyed out when Stremio isn't installed. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key. `service_map` is gone: if you had it in `config.properties`, set the Stremio screen once on the TV instead.
+Free My TV → *Stremio* (when Stremio is installed) says which services open in Stremio on the title's page instead of in their own app, and *Use Stremio as fallback OTT* sends it the titles whose app isn't on the TV and the ones that stream nowhere we can check; when Stremio isn't on the TV, that row says *Install*: OK downloads Stremio's Android TV app from Stremio's own site (the link is made from Stremio's download list at api.strem.io, nothing fixed in the app) and Android asks you to confirm (the first time also to allow installs from Free My TV). The *Torrentio addon* row there adds the Torrentio addon to Stremio with the languages and the biggest size you choose (it starts with the TMDB section's languages and 5 GB, and remembers your last choice): Torrentio is a third-party addon that finds streams for Stremio, and Free My TV only hands Stremio its install link; Stremio asks you to confirm. The episodes screen opens the episode in Stremio, and any other app on the show. Where a title streams comes from TMDB, so it needs the TMDB key. `service_map` is gone: if you had it in `config.properties`, set the Stremio screen once on the TV instead.
 
 ### Opening the title's page in its app (optional)
 
@@ -155,6 +155,13 @@ Free Trakt account, Android and Google TV only. Three rows appear first under th
 OK on a show in *Shows you watch* opens its episodes: every episode with its number and air date, watched ones marked, and a bar of four buttons on top: **sort** (number or date, newest or oldest first), **season**, **date** (last 7 or 30 days, this year, a year, not aired yet) and **watched** (all, unwatched, watched). The filters combine, *Clear filters* resets them, and the sort is remembered. It opens on the next episode you haven't seen; ← → jump a season, Channel + and − scroll a page, Back goes up to the buttons and then out; OK opens the episode in Stremio.
 
 Other titles open as described in [Opening a title](#opening-a-title). *Trakt* → *Disconnect* forgets the sign-in. The rows follow what Trakt has: Stremio, for one, adds to your history only when you connect Trakt in its settings.
+
+### Setting these keys from your phone (no rebuild)
+
+Google TV only. If the TMDB key, Watchmode key or Trakt Client ID is missing, *Free My TV* → *Integrations* starts a small web
+address on the TV itself (shown as text and a QR code) and stops it again when you leave the screen. Open that address on your
+phone (same Wi-Fi as the TV) to paste in whichever of the three you have — each field links to where to get it — without typing
+anything on the remote or touching `config.properties`. A key already set shows as dots; leaving a field as it is keeps it.
 
 ## Going back
 
@@ -256,7 +263,7 @@ reference (fix them by hand); the others were machine-made, and corrections from
 
 ## Privacy
 
-No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (for your city, which Android TVs find from the TV's internet address through ipwho.is unless you choose one, and LG and Samsung from your time zone), and Binance only when `show_crypto=true`, Watchmode only when you set a `watchmode_key`, and Trakt only after you connect it (your sign-in stays on your TV). Your settings stay on your computer and your TV.
+No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (for your city, which Android TVs find from the TV's internet address through ipwho.is unless you choose one, and LG and Samsung from your time zone), and Binance only when `show_crypto=true`, Watchmode only when you set a `watchmode_key`, Trakt only after you connect it (your sign-in stays on your TV), YouTube only while a trailer plays in the home screen (and Stremio's site only if you press *Install* for Stremio). Your settings stay on your computer and your TV.
 
 ## Credits
 

@@ -44,17 +44,65 @@ final class RemoteKeys {
         return TCL || STEM_NETFLIX || KTC || SONY || SKYWORTH;
     }
 
+    /** The key service is needed: this brand has buttons of its own, or the person added some (or is adding one now). */
+    static boolean wanted() {
+        return supported() || Prefs.hasLearned() || Prefs.learning();
+    }
+
+    /** Keys the person needs to move around the TV: never added as a button. */
+    static boolean needed(int code) {
+        switch (code) {
+            case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN: case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT: case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_DPAD_UP_LEFT:
+            case KeyEvent.KEYCODE_DPAD_UP_RIGHT: case KeyEvent.KEYCODE_DPAD_DOWN_LEFT: case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
+            case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_NUMPAD_ENTER: case KeyEvent.KEYCODE_BACK: case KeyEvent.KEYCODE_HOME:
+            case KeyEvent.KEYCODE_MENU: case KeyEvent.KEYCODE_ESCAPE: case KeyEvent.KEYCODE_VOLUME_UP:
+            case KeyEvent.KEYCODE_VOLUME_DOWN: case KeyEvent.KEYCODE_VOLUME_MUTE: case KeyEvent.KEYCODE_POWER:
+            case KeyEvent.KEYCODE_SLEEP: case KeyEvent.KEYCODE_WAKEUP: case KeyEvent.KEYCODE_TV_POWER:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** A key the person may add as a button (not one needed to move around, not a game controller's). */
+    static boolean recordable(KeyEvent e) {
+        int source = e.getSource();
+        if ((source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+                || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) return false;
+        if (needed(e.getKeyCode())) return false;
+        return e.getKeyCode() != KeyEvent.KEYCODE_UNKNOWN || e.getScanCode() != 0;
+    }
+
+    /** The release of a button just added is eaten too (the press was). */
+    private static int swallowUp = -1;
+
     private static boolean is(String maker) {
         return maker.equalsIgnoreCase(Build.MANUFACTURER) || maker.equalsIgnoreCase(Build.BRAND);
     }
 
     /** Opens the app for this key on its first press. True if the key is ours and in use (it is then consumed). */
     static boolean onKey(Context c, KeyEvent e) {
-        if (!supported()) return false;
+        if (e.getAction() == KeyEvent.ACTION_UP && e.getKeyCode() == swallowUp) {
+            swallowUp = -1;
+            return true;
+        }
+        boolean learning = Prefs.learning();
+        if (!supported() && !learning && !Prefs.hasLearned()) return false;
         // BUTTON_3 is also a game controller's button: keys from a gamepad or a joystick are left alone.
         int source = e.getSource();
         if ((source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
                 || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) return false;
+        // Waiting for a button to add (Settings > Remote Buttons > Added buttons): the first one that isn't needed to move around.
+        if (learning && e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0 && recordable(e)) {
+            Prefs.writeLearnResult(e.getKeyCode(), e.getScanCode());
+            Prefs.stopLearning();
+            swallowUp = e.getKeyCode();
+            return true;
+        }
+        int added = Prefs.learnedId(e.getKeyCode(), e.getScanCode());
+        if (added >= 0) return open(c, e, Prefs.keyApp(added));
+        if (!supported()) return false;
         int keyCode = e.getKeyCode() == KEY_YOUTUBE_TCL ? Prefs.KEY_YOUTUBE : e.getKeyCode();
         // Sony sends BUTTON_9 for five app buttons (BUTTON_4 for Netflix, BUTTON_8 for Google Play): only the scan code
         // tells them apart.
@@ -70,12 +118,30 @@ final class RemoteKeys {
         boolean ours = false;
         for (int key : Prefs.KEYS) ours |= key == keyCode;
         if (!ours) return false;
-        String pkg = Prefs.keyApp(keyCode);
-        if (pkg.isEmpty()) return false;   // "Nothing": the key goes on as if we weren't here
+        return open(c, e, Prefs.keyApp(keyCode));
+    }
+
+    /** Opens what the button is set to, on its first press. False when it is set to nothing: the key goes on as if we weren't here. */
+    private static boolean open(Context c, KeyEvent e, String pkg) {
+        if (pkg.isEmpty()) return false;
         if (pkg.equals(Prefs.TV_SETTINGS)) {
             if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
                 AppLog.w("remote key " + e.getKeyCode() + " -> TV Settings");
                 c.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            }
+            return true;
+        }
+        if (pkg.equals(Prefs.FMT_SETTINGS)) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                AppLog.w("remote key " + e.getKeyCode() + " -> Free My TV Settings");
+                Intent i = new Intent();
+                i.setClassName(c, "io.freemytv.SettingsActivity");
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    c.startActivity(i);
+                } catch (RuntimeException ex) {
+                    AppLog.w("remote key " + e.getKeyCode() + ": " + ex.getMessage());
+                }
             }
             return true;
         }

@@ -35,15 +35,17 @@ final class MaterialLook extends Look {
     static final int ON_SECONDARY_CONTAINER = 10;
     static final int TERTIARY = 11;
     static final int OUTLINE = 12;
+    static final int INVERSE_SURFACE = 13;
+    static final int ON_INVERSE_SURFACE = 14;
 
     // Deep navy and indigo by night, near-white with pale blue by day (the tokens of the design guide).
     private static final int[][] LIGHT = {
         {0xFFF7F8FF, 0xFFEEF0FF, 0xFFE3E7FF, 0xFF171936, 0xFF626984, 0xFF6875E8, 0xFFFFFFFF,
-                0xFFBEC6FE, 0xFF0B0F2E, 0xFFE3E7FF, 0xFF3B3F8F, 0xFF9B6200, 0xFFD9DDF0}
+                0xFFBEC6FE, 0xFF0B0F2E, 0xFFE3E7FF, 0xFF3B3F8F, 0xFF9B6200, 0xFFD9DDF0, 0xFF2E3050, 0xFFF1F1FB}
     };
     private static final int[][] DARK = {
         {0xFF080D1B, 0xFF171F38, 0xFF252C4A, 0xFFF5F5FC, 0xFFB8BDD2, 0xFFB5BEFF, 0xFF1A1F5C,
-                0xFF9DA5FD, 0xFF0B0F2E, 0xFF252C4A, 0xFFC9B8F5, 0xFFFFC15C, 0xFF303752}
+                0xFF9DA5FD, 0xFF0B0F2E, 0xFF252C4A, 0xFFC9B8F5, 0xFFFFC15C, 0xFF303752, 0xFFE3E7FF, 0xFF171936}
     };
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -273,6 +275,23 @@ final class MaterialLook extends Look {
     @Override void rowFocus(Canvas c, RectF r, float radius, float f, float night) {
         panel(c, r, radius, night, true);
         focused(c, r, radius, f, night);
+    }
+
+    /** A Material snackbar: the inverse surface (dark by day, light at night) with a small shadow, corners rounder than the glass's. */
+    @Override boolean toast(Canvas c, RectF r, float radius, float night) {
+        float corner = Math.min(radius, 20 * k);
+        tmp.set(r);
+        tmp.offset(0, 4 * k);
+        paint.setShader(null);
+        paint.setColor(Ui.alpha(0xFF000000, 0.22f));
+        c.drawRoundRect(tmp, corner, corner, paint);
+        paint.setColor(palette(INVERSE_SURFACE, night));
+        c.drawRoundRect(r, corner, corner, paint);
+        return true;
+    }
+
+    @Override int toastInk(float night) {
+        return palette(ON_INVERSE_SURFACE, night);
     }
 
     @Override boolean saverCard(Canvas c, RectF card, float radius, float night) {

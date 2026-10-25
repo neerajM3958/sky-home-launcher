@@ -61,7 +61,7 @@ final class Trakt {
 
     /** True with a Client ID in config.properties. */
     static boolean configured() {
-        return !Config.TRAKT_CLIENT_ID.trim().isEmpty();
+        return !Prefs.traktClientId().isEmpty();
     }
 
     private final Context context;
@@ -151,7 +151,7 @@ final class Trakt {
 
     private void login(int ticket) {
         try {
-            Reply r = call("POST", "/oauth/device/code", obj("client_id", Config.TRAKT_CLIENT_ID.trim()), null);
+            Reply r = call("POST", "/oauth/device/code", obj("client_id", Prefs.traktClientId()), null);
             if (r.code != 200) {
                 endLogin(ticket, r.code == 401 || r.code == 403 || r.code == 404 ? ERR_REFUSED : ERR_NETWORK);
                 return;
@@ -170,7 +170,7 @@ final class Trakt {
                 if (ticket != loginTicket) return;
                 try {
                     Reply t = call("POST", "/oauth/device/token",
-                            obj("code", device, "client_id", Config.TRAKT_CLIENT_ID.trim()), null);
+                            obj("code", device, "client_id", Prefs.traktClientId()), null);
                     failures = 0;
                     if (t.code == 200) {
                         saveTokens(new JSONObject(t.body));

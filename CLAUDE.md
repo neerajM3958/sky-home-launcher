@@ -204,6 +204,14 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   without a publishing app: `content insert` on `content://android.media.tv/watch_next_program` from the shell (the
   provider records `com.android.shell` as the publisher, and values can't hold a `:`, so write the intent as
   `#Intent;action=...;component=pkg/cls;end` and no art address).
+- *Remote Buttons > Added buttons* lets the person add any button: the screen asks `RemoteKeyService` (the only place that sees
+  keys no app gets) through two small files (`remote-learn.req`, `.res`) for the next key that isn't needed to move around
+  (`RemoteKeys.needed`), saved as `learn=` lines in `remote-keys.txt` by key code and scan code, and works on any brand. The
+  service is on whenever a brand has built-in buttons or a button was added (`RemoteKeys.wanted`); *Original* still turns it off.
+  Besides an app, any button (built-in or added) can open Free My TV's own Settings (`Prefs.FMT_SETTINGS`, handled in
+  `RemoteKeys.open`), alongside the existing `TV_SETTINGS`. An added button's name can be changed from its app picker
+  (*Rename this button*, an `AlertDialog` with an `EditText`, the same pattern as `askCity`); `Prefs.renameLearned` rewrites its
+  `learn=` line without touching its key/scan code or app.
 - The remote's app buttons (`RemoteKeys`, `RemoteKeyService`) use each brand's key codes: they run only on TCL,
   Vestel, KTC (NextStar) and Sony TVs and Formovie projectors, the service is on only in Free My TV mode, and *Original* takes it out of the enabled accessibility
   services. The system waits for the service on every key, so it lives alone in the `:keys` process: what it reads is
@@ -220,6 +228,19 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   the key to the TV. Sony ships its own Apple TV build, `com.apple.atve.sony.appletv`.
   Xiaomi projectors made by Formovie (Fengmi; L1, MediaTek, Google TV 14 tested) send the same `KEYCODE_STEM_1` for
   Netflix (`RemoteKeys.STEM_NETFLIX`); their YouTube button goes to MediaTek's `GlobalKeyReceiver` and stays with the system.
+- Stremio: when it isn't on the TV, Settings > Stremio says *Install* (`StremioInstall`): it reads Stremio's download list
+  (`api.strem.io/downloads/config`, entry `android_tv`), builds the link from the tag, version and the TV's processor (never a
+  fixed address), downloads it, checks the file is `com.stremio.one` and hands it to Android's `PackageInstaller`, which asks the
+  person to confirm. Its receiver runs in `:home` (the statics are shared with the settings screen).
+- Trailers on the catalog screen play in YouTube's embedded player (`TrailerPlayer`), in a window of its own over the video area
+  (this TV decodes video onto a plane under the app's window); the YouTube app opens one only after a long OK press, never on
+  autoplay.
+- Settings > Integrations: when the TMDB key, Watchmode key or Trakt Client ID is missing, OK there starts `IntegrationsServer`
+  (a small raw-socket HTTP server, no library, up only while the screen is open) and shows its LAN address as text and a QR code
+  (`drawQr`, generalized from Trakt's device-login QR). The one page it serves never reads a key back, only whether one is set
+  (shown as a fixed placeholder, cleared on focus); saving only overwrites a field that was actually typed into. The three keys
+  live in `Prefs` (`tmdbKey`, `watchmodeKey`, `traktClientId`), the same one-way override over `config.properties` as every other
+  TV-settable value. Google TV only.
 - After any change, `./build.sh` must end with `Built FreeMyTV.apk`.
 - LG and Samsung (`web/`): plain ES5 JavaScript and CSS without variables, grid or backdrop-filter, since older TVs
   (webOS 3 and 4, Tizen 3) run a Chromium from 2015 to 2017; only transform and opacity animate. `web/tv.js` is the
