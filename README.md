@@ -117,7 +117,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `include_rent_buy` | `true`: picks and catalogs also include titles you can only rent or buy (with `flatrate_only` on) | `false` |
 | `catalogs` | Catalogs below the drawer's weather and quotes (`trending`, `popular_movies`, `popular_shows`, `top_rated`, `now_playing`, `upcoming`, `hindi`); `none` for no rows | `trending,popular_movies,popular_shows,hindi,top_rated` |
 | `language` | `auto` (follows the TV), or a language with a [translation](#translations) (`en`, `pt`, `es`, `de`, `ru`, `fr`, `ja`…) | `auto` |
-| `show_crypto` | Show Binance crypto prices on home and screensaver | `true` |
+| `show_crypto` | Show Binance crypto prices on home and screensaver | `false` |
 | `currency` | Crypto prices in `USD`, `EUR`, `BRL`… | `USD` |
 | `temperature` | `C`, `F` or `auto` | `auto` |
 | `look` | The look the home screen starts with: `material3-expressive` or `glass` (Liquid Glass). *Home Settings* on the TV changes it | `material3-expressive` |

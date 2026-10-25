@@ -267,13 +267,6 @@ final class HomeApps {
         return shortcut(SETTINGS, "settings", Ui.tr("Settings"), "settings");
     }
 
-    /** The drawer holds the inputs; on a TV with none it keeps this one button, so the drawer (weather, quotes, rows) still opens. */
-    static List<Item> drawerFallback() {
-        List<Item> items = new ArrayList<>();
-        items.add(shortcut(ANDROID_SETTINGS, "tv-settings", Ui.tr("TV Settings"), "tv_settings"));
-        return items;
-    }
-
     /** A streaming service's app (the "Watch" button of the featured pick). */
     static Item app(String pkg, String label, String uri) {
         Item it = app(pkg, label);

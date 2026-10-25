@@ -41,7 +41,7 @@ AUTOLOC=false; [ -z "$(prop city '')" ] && [ -z "$(prop latitude '')" ] && [ -z 
 LAT="$(number latitude 40.7128)"
 LON="$(number longitude -74.0060)"
 ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
-CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
+CRYPTO=false; [ "$(prop show_crypto false)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 FLATRATE=true; [ "$(prop flatrate_only true)" = "false" ] && FLATRATE=false
 WATCHNEXT=true; [ "$(prop watch_next true)" = "false" ] && WATCHNEXT=false
