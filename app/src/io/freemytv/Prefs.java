@@ -30,6 +30,8 @@ final class Prefs {
             KEY_SKY_SETTINGS = KeyEvent.KEYCODE_NOTIFICATION;
     /** Not an app: a remote button set to this opens the TV's own Settings. */
     static final String TV_SETTINGS = "android:settings";
+    /** Not an app: a remote button set to this opens Free My TV's own Settings. */
+    static final String FMT_SETTINGS = "io.freemytv:settings";
     /** KTC's (NextStar) Tabii button: BUTTON_8, which the TV hands to its hot-key receiver (its log: "keycode = 195"). */
     static final int KEY_KTC_TABII = KeyEvent.KEYCODE_BUTTON_8;
     /** Sony's app buttons, as SONY_KEY + scan code (read from a BRAVIA's log; the key codes are shared). */
@@ -487,6 +489,17 @@ final class Prefs {
             learned.add(new String[] {String.valueOf(keyCode), String.valueOf(scanCode), name.replace('|', ' ').replace('\n', ' '), ""});
             writeAll(-1, "");
             return LEARNED + learned.size() - 1;
+        }
+    }
+
+    /** Gives a button the person picked a new name (the default is "Button {n}"). */
+    static void renameLearned(int id, String name) {
+        synchronized (keyApps) {
+            loadKeys();
+            if (id < LEARNED || id - LEARNED >= learned.size()) return;
+            String[] l = learned.get(id - LEARNED);
+            l[2] = name.replace('|', ' ').replace('\n', ' ');
+            writeAll(-1, "");
         }
     }
 

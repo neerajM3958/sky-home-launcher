@@ -198,8 +198,9 @@ process `:keys`), and the Remote Buttons screen in `SettingsActivity` (`REMOTE_K
 - **Safety.** Learned buttons run only in Free My TV mode, as the service does; *Original* takes the service out of the enabled
   accessibility services, so the original behaviour comes back untouched. Keys from a gamepad or joystick stay ignored.
 
-**Decided (my call, none was asked for).** An added button opens an app or *TV Settings* (what a built-in button can do); other
-actions can come later. The built-in brand presets stay as they are and the added buttons come on top of them.
+**Decided (my call, none was asked for).** An added button opens an app, *TV Settings*, or (added after the first build, on
+request) *Free My TV Settings*; other actions can come later. The built-in brand presets stay as they are and the added buttons
+come on top of them.
 
 **Built.** *Remote Buttons* has a last row, *Added buttons* (a list of up to 8, then *Add a button*). *Add a button* shows
 *Press the button on your remote* and waits up to 30 s: `RemoteKeyService` (or the screen itself, for a key that reaches it)
@@ -216,6 +217,20 @@ the service here; that check needs a real remote press. The same path serves the
 | The new row | Waiting for a button | A button was recorded | The list | Removing it |
 |---|---|---|---|---|
 | ![](images/minor-improvements/6-remote-buttons-added-row.jpg) | ![](images/minor-improvements/6-press-a-button.jpg) | ![](images/minor-improvements/6-recorded-pick-app.jpg) | ![](images/minor-improvements/6-added-buttons-list.jpg) | ![](images/minor-improvements/6-remove-this-button.jpg) |
+
+**Built (extension, on request): "Free My TV Settings" action and renaming.** Every button's app picker (built-in or added) now
+also offers *Free My TV Settings*, right under *TV Settings*: it launches `SettingsActivity` directly (`Prefs.FMT_SETTINGS`,
+handled in `RemoteKeys.open`), so a button can jump straight into Free My TV's settings instead of the TV's own. An added
+button's picker also gets *Rename this button* above *Remove this button*: it opens a small dialog (the same `EditText` +
+`AlertDialog` pattern as the city search) pre-filled with the button's current name; saving keeps its key code, scan code and
+app, only the name changes (`Prefs.renameLearned`). Tried on the TV: adding F7 and choosing *Free My TV Settings* made F7 open
+our Settings from the home screen (confirmed by the activity on top and the "remote key 137 -> Free My TV Settings" log line);
+renaming "Button F7" to "My Shortcut" updated the Added buttons list immediately, keeping its *Free My TV Settings* assignment.
+The test button was removed afterwards.
+
+| New action in the picker | F7 opens Free My TV Settings | Rename row added | The rename dialog | After renaming |
+|---|---|---|---|---|
+| ![](images/minor-improvements/6-fmt-settings-option.jpg) | ![](images/minor-improvements/6-fmt-settings-launched.jpg) | ![](images/minor-improvements/6-rename-and-remove-rows.jpg) | ![](images/minor-improvements/6-rename-dialog.jpg) | ![](images/minor-improvements/6-renamed-button.jpg) |
 
 ---
 

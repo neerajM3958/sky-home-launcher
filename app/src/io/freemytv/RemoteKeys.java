@@ -131,6 +131,20 @@ final class RemoteKeys {
             }
             return true;
         }
+        if (pkg.equals(Prefs.FMT_SETTINGS)) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                AppLog.w("remote key " + e.getKeyCode() + " -> Free My TV Settings");
+                Intent i = new Intent();
+                i.setClassName(c, "io.freemytv.SettingsActivity");
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    c.startActivity(i);
+                } catch (RuntimeException ex) {
+                    AppLog.w("remote key " + e.getKeyCode() + ": " + ex.getMessage());
+                }
+            }
+            return true;
+        }
         if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
             Intent intent = launchIntent(c.getPackageManager(), pkg);
             AppLog.w("remote key " + e.getKeyCode() + " -> " + pkg + (intent == null ? " (not installed)" : ""));

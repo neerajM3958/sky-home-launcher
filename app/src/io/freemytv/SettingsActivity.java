@@ -1557,6 +1557,9 @@ public class SettingsActivity extends Activity {
                 appPkgs.add(Prefs.TV_SETTINGS);
                 appLabels.add(Ui.tr("TV Settings"));
             }
+            // Every button (built-in or added) can also jump straight to Free My TV's own Settings.
+            appPkgs.add(Prefs.FMT_SETTINGS);
+            appLabels.add(Ui.tr("Free My TV Settings"));
             for (String[] f : found) {
                 appPkgs.add(f[0]);
                 appLabels.add(f[1]);
@@ -1650,6 +1653,34 @@ public class SettingsActivity extends Activity {
                     break;
             }
             HomeData.get(getContext()).settingsChanged();
+        }
+
+        /** Lets the person type a name for an added button, in place of the default "Button {n}". */
+        private void askRenameButton(int id) {
+            EditText field = new EditText(activity);
+            field.setSingleLine(true);
+            field.setText(Prefs.learnedName(id));
+            field.setHint(Ui.tr("Name"));
+            field.setImeOptions(EditorInfo.IME_ACTION_DONE);
+            AlertDialog dialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Rename button"))
+                    .setView(field)
+                    .setPositiveButton(Ui.tr("Save"), (d, which) -> renameButton(id, field.getText().toString()))
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .create();
+            field.setOnEditorActionListener((v, action, event) -> {
+                dialog.dismiss();
+                renameButton(id, field.getText().toString());
+                return true;
+            });
+            dialog.show();
+        }
+
+        private void renameButton(int id, String name) {
+            name = name.trim();
+            if (!name.isEmpty()) Prefs.renameLearned(id, name);
+            refreshKeyIds();
+            openAdded(id - Prefs.LEARNED);
         }
 
         private void askCity() {
@@ -1844,7 +1875,10 @@ public class SettingsActivity extends Activity {
                 pickCurrent = java.util.Arrays.asList(choices).indexOf(Prefs.language());
             } else {
                 pickLabels.addAll(appLabels);
-                if (which - 1 >= Prefs.KEYS.length) pickLabels.add(Ui.tr("Remove this button"));
+                if (which - 1 >= Prefs.KEYS.length) {
+                    pickLabels.add(Ui.tr("Rename this button"));
+                    pickLabels.add(Ui.tr("Remove this button"));
+                }
                 pickCurrent = appPkgs.indexOf(Prefs.keyApp(keyIds[which - 1]));
             }
             int visible = Math.min(PICK_VISIBLE, pickLabels.size());
@@ -1986,7 +2020,9 @@ public class SettingsActivity extends Activity {
             } else if (screen == PICKER) {
                 int at = pickScroll + focus;
                 boolean added = pickFor - 1 >= Prefs.KEYS.length;
-                if (at >= appPkgs.size()) {         // "Remove this button"
+                if (added && at == appPkgs.size()) {        // "Rename this button"
+                    askRenameButton(keyIds[pickFor - 1]);
+                } else if (added && at == appPkgs.size() + 1) {    // "Remove this button"
                     Prefs.removeLearned(keyIds[pickFor - 1]);
                     refreshKeyIds();
                     openAdded(Math.min(pickFor - 1 - Prefs.KEYS.length, learnedCount()));

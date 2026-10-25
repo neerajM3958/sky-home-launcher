@@ -208,6 +208,10 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   keys no app gets) through two small files (`remote-learn.req`, `.res`) for the next key that isn't needed to move around
   (`RemoteKeys.needed`), saved as `learn=` lines in `remote-keys.txt` by key code and scan code, and works on any brand. The
   service is on whenever a brand has built-in buttons or a button was added (`RemoteKeys.wanted`); *Original* still turns it off.
+  Besides an app, any button (built-in or added) can open Free My TV's own Settings (`Prefs.FMT_SETTINGS`, handled in
+  `RemoteKeys.open`), alongside the existing `TV_SETTINGS`. An added button's name can be changed from its app picker
+  (*Rename this button*, an `AlertDialog` with an `EditText`, the same pattern as `askCity`); `Prefs.renameLearned` rewrites its
+  `learn=` line without touching its key/scan code or app.
 - The remote's app buttons (`RemoteKeys`, `RemoteKeyService`) use each brand's key codes: they run only on TCL,
   Vestel, KTC (NextStar) and Sony TVs and Formovie projectors, the service is on only in Free My TV mode, and *Original* takes it out of the enabled accessibility
   services. The system waits for the service on every key, so it lives alone in the `:keys` process: what it reads is
