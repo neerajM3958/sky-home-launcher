@@ -555,7 +555,7 @@ public class SettingsActivity extends Activity {
             String error = recs.optString("error");
             int count = recs.optInt("count");
             if (!hasKey) line = Ui.tr("No TMDB key: set one in Free My TV › Integrations.");
-            else if (!Prefs.picks()) line = Ui.tr("Off: the home screen shows no picks.");
+            else if (!Prefs.picks()) line = Prefs.picksOffForMemory() ? Ui.tr("Off by default: this TV is short of memory.") : Ui.tr("Off: the home screen shows no picks.");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);

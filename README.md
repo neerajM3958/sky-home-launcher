@@ -130,7 +130,7 @@ The first values come from `config.properties`, created by the first build (Goog
 
 Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
 
-Google TV only, on the TV: *Free My TV* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) on; they are off until you do. Off, the tabs are gone and the home screen shows the clock, the weather and the shelf; nothing is fetched for the picks, and the catalogs and Trakt rows stay.
+Google TV only, on the TV: *Free My TV* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) on or off. On a TV short of memory (a 720p UI, a low-RAM flag or under 1.5 GB) they start off, and so do the trailers played inside the home screen and the catalog rows (unless you wrote your own `catalogs=`), because those hold the most memory; each can be turned on there, and a TV with more memory starts with them on. Off, the tabs are gone and the home screen shows the clock, the weather and the shelf; nothing is fetched for the picks, and the catalogs and Trakt rows stay.
 
 Google TV only: the inputs are round buttons now, not a row in the drawer. *Free My TV* → *Top Buttons* can hold *Live TV*, *AV input* and *HDMI input* (a button shows only when the TV has that input). One input opens at once; with several HDMI inputs, OK opens a small list under the button to choose from (a dimmed one has no device on it). An old *HDMI Inputs* button becomes *HDMI input*.
 
