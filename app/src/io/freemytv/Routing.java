@@ -9,8 +9,9 @@ import java.util.List;
  * <pre>
  * 0. The lookup could not be done            -> Stremio if it takes what is missing, else "couldn't check"
  * 5. TMDB answered: on no service            -> Stremio if it takes what is missing, else "unavailable in your region"
- * 1. Pick one service among the ones we can open: ready ones first (its app is on the TV, or it goes to Stremio),
- *    then subscription before free before rent or buy, then TMDB's order.
+ * 1. Pick one service among the ones we can open: subscription before free before rent or buy; among the same kind,
+ *    ready ones first (its app is on the TV, or it goes to Stremio), then TMDB's order. So a missing Netflix is not
+ *    skipped for a rented copy on an app we have: it goes to Stremio or the Play Store, as the card says.
  * 3. the service goes to Stremio             -> Stremio
  * 4. its app is on the TV                    -> that app
  *    missing: Stremio if it takes what is missing, else its Play Store page
@@ -92,8 +93,7 @@ final class Routing {
             String[] row = env.service(o.name);
             boolean sent = stremio && env.toStremio(row == null ? OTHER : row[1]);
             if (row == null && !sent) continue;      // a service we can't open
-            boolean ready = sent || env.installed(row[2]);
-            int rank = (ready ? 0 : 1000) + o.tier * 100 + Math.min(i, 99);
+            int rank = rank(o, i, sent || env.installed(row[2]));
             if (rank < bestRank) {
                 bestRank = rank;
                 bestPkg = sent ? null : row[2];
@@ -103,6 +103,21 @@ final class Routing {
         if (bestPkg == null) return app(STREMIO);
         if (env.installed(bestPkg)) return app(bestPkg);
         return missing ? app(STREMIO) : new Target(STORE, 0, bestPkg, null, null);
+    }
+
+    /**
+     * Lower wins: subscription before free before rent or buy, so the best service is the one the card shows even when its
+     * app is missing (that goes to Stremio or the Play Store); among the same kind, a service we can open now first, then
+     * TMDB's order.
+     */
+    static int rank(Offer o, int index, boolean ready) {
+        return o.tier * 1000 + (ready ? 0 : 100) + Math.min(index, 99);
+    }
+
+    /** Its app is on the TV, or the person sends it to Stremio (which is on the TV). */
+    static boolean ready(Offer o, Env env) {
+        String[] row = env.service(o.name);
+        return (env.stremio() && env.toStremio(row == null ? OTHER : row[1])) || (row != null && env.installed(row[2]));
     }
 
     static Target app(String pkg) {

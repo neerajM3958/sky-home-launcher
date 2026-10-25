@@ -2395,9 +2395,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             browseOverviewText.draw(c);
             c.restore();
         }
-        if (browseInfo != null && !browseInfo.logo.isEmpty()) {
+        String service = browseShown == null ? null : catalogService(browseShown, true);      // the same service OK opens it in
+        if (service != null && !service.isEmpty()) {
             int px = Math.round(64 * k);
-            Bitmap badge = ServiceBadge.get(getContext(), browseInfo.logo, px, badgesReady);
+            Bitmap badge = ServiceBadge.get(getContext(), service, px, badgesReady);
             if (badge != null) c.drawBitmap(badge, w - MARGIN * k - px, stage.top, null);
         }
         drawTrailerHint(c);
@@ -2979,13 +2980,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
-            if (Recs.ROUTED.equals(p.pkg)) {
-                click.open();
-                openPick(p, heroButton);
-                return;
-            }
-            it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
-            r = heroButton;
+            click.open();
+            openPick(p, heroButton);
+            return;
         } else if (zone == Z_STATUS) {
             if (statusItems.isEmpty()) return;
             it = statusItems.get(statusIndex);
@@ -3004,13 +3001,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardAt(cardIndex);
             if (p == null || p.pkg == null) return;
-            if (Recs.ROUTED.equals(p.pkg)) {
-                click.open();
-                openPick(p, cardRects[cardIndex]);
-                return;
-            }
-            it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
-            r = cardRects[cardIndex];
+            click.open();
+            openPick(p, cardRects[cardIndex]);
+            return;
         } else if (zone == Z_BROWSE) {
             Catalogs.Item listed = browseItem();
             if (listed == null) return;
@@ -3086,7 +3079,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-    /** A pick from anything popular: no dots on it, but the answer is usually already there (Recs looks it up ahead). */
+    /** A pick, like a catalog or Trakt title: no dots on it, but the answer is usually already there (Recs looks it up ahead). */
     private void openPick(Recs.Pick p, RectF r) {
         final RectF from = new RectF(r);
         opening = Launcher.get(activity).open(p.kind, p.id, null, target -> {

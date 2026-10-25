@@ -27,13 +27,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * What the browse screen shows about the focused title: description, genres, runtime, rating, its backdrop and the
- * service it streams on. One TMDB request per title (kept for a week), one backdrop picture; both load in the
+ * What the browse screen shows about the focused title: description, genres, runtime, rating, its backdrop and its
+ * trailers. One TMDB request per title (kept for a week), one backdrop picture; both load in the
  * background and the listeners are told on the main thread.
  */
 final class Details {
     static final class Info {
-        String tagline = "", overview = "", genres = "", facts = "", backdrop = "", logo = "", trailer = "", trailers = "";      // trailers: the YouTube ids worth trying, best first, comma apart; trailer: the first
+        String tagline = "", overview = "", genres = "", facts = "", backdrop = "", trailer = "", trailers = "";      // trailers: the YouTube ids worth trying, best first, comma apart; trailer: the first
         long at;
     }
 
@@ -120,7 +120,7 @@ final class Details {
     }
 
     private Info fetch(String kind, int id) throws Exception {
-        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang() + "&append_to_response=watch/providers,videos&include_video_language="
+        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang() + "&append_to_response=videos&include_video_language="
                 + Ui.language.replaceAll("-.*", "") + ",en,null");
         Info info = new Info();
         info.at = System.currentTimeMillis();
@@ -144,7 +144,6 @@ final class Details {
         double rating = o.optDouble("vote_average", 0);
         if (rating > 0 && o.optInt("vote_count") >= 10) facts.add(String.format(Ui.locale(), "★ %.1f", rating));
         info.facts = String.join(" · ", facts);
-        info.logo = logo(o.optJSONObject("watch/providers"));
         info.trailers = trailers(o.optJSONObject("videos"));
         info.trailer = info.trailers.split(",")[0];
         return info;
@@ -174,21 +173,6 @@ final class Details {
         List<String> keys = new ArrayList<>();
         for (int i = 0; i < found.size() && i < TRAILERS; i++) keys.add(found.get(i)[1]);
         return String.join(",", keys);
-    }
-
-    /** The logo of the best service it streams on (subscription first), or "". */
-    private static String logo(JSONObject providers) {
-        JSONObject results = providers == null ? null : providers.optJSONObject("results");
-        JSONObject region = results == null ? null : results.optJSONObject(Recs.region());
-        String[] types = {"flatrate", "free", "ads", "rent", "buy"};
-        for (String type : types) {
-            JSONArray list = region == null ? null : region.optJSONArray(type);
-            for (int i = 0; list != null && i < list.length(); i++) {
-                String logo = list.optJSONObject(i) == null ? "" : list.optJSONObject(i).optString("logo_path");
-                if (!logo.isEmpty()) return logo;
-            }
-        }
-        return "";
     }
 
     /** The backdrop picture of the title (decoded, kept for the last few), or null while it loads (the listeners are told). */
@@ -270,7 +254,6 @@ final class Details {
             info.genres = o.optString("genres");
             info.facts = o.optString("facts");
             info.backdrop = o.optString("backdrop");
-            info.logo = o.optString("logo");
             info.trailer = o.optString("trailer");
             info.trailers = o.optString("trailers");
             return info;
@@ -283,7 +266,7 @@ final class Details {
         try {
             String text = new JSONObject().put("v", VERSION).put("at", info.at).put("tagline", info.tagline)
                     .put("overview", info.overview).put("genres", info.genres).put("facts", info.facts)
-                    .put("backdrop", info.backdrop).put("logo", info.logo).put("trailer", info.trailer).put("trailers", info.trailers).toString();
+                    .put("backdrop", info.backdrop).put("trailer", info.trailer).put("trailers", info.trailers).toString();
             //noinspection ResultOfMethodCallIgnored
             f.getParentFile().mkdirs();
             File part = new File(f.getPath() + ".part");
