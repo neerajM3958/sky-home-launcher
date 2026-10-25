@@ -4,7 +4,7 @@ A running list of small changes. Each item is its own section (`## N. Title`); a
 Each section says: what is wanted, where it lives in the code, how to do it, and what is still to decide.
 
 Status (2026-10-25): all items go in **one** pull request, branch `minor-improvements` (off `main` after the catalog screen
-merged). Built so far: items 1 to 4. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
+merged). Built so far: items 1 to 5. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
 taken on the TV); a finished item has a *Built* line and its screenshots.
 
 ---
@@ -149,9 +149,22 @@ filter, for example
 - Needs Stremio on the TV, so it follows item 4: with Stremio missing, the section offers the install first.
 
 **Decided.** It goes in the public build, with the README saying plainly what Torrentio is (a third-party addon) and the person
-choosing to install it. The last choice is remembered; first defaults are 5 GB and the TMDB language. **To decide.** The list
-of languages and sizes to offer (copy Torrentio's own configure page), and how a TMDB language code (`hi`, `pt-BR`) maps to
-Torrentio's names (`hindi`, `portuguese`).
+choosing to install it. The last choice is remembered; first defaults are 5 GB and the TMDB language. The languages are
+Torrentio's own list (41, read from its configure page; English is its default and isn't listed), shown by name in the TV's
+language; the sizes are no limit, 1, 2, 3, 5, 10, 15, 20 and 30 GB. A TMDB code maps by its language (`hi` to `hindi`, `pt-BR` to
+`portuguese`, `zh-TW` to `taiwanese`, `es-419` to `latino`; `en` has none).
+
+**Built.** *Stremio > Torrentio addon* (a new row under the fallback one): a screen with *Language* (a list with checks; none
+means every language), *Size limit* (OK or the arrows step through the sizes) and *Add to Stremio*, which opens
+`stremio://torrentio.strem.fun/language=…%7Csizefilter=…/manifest.json` in Stremio (`Torrentio` builds it; `Prefs` keeps the
+choice). The first time, the languages are the TMDB section's and the size is 5 GB; this TV has no TMDB languages, so it showed
+*All languages · 5 GB*. Tried on the TV: with Japanese and Hindi picked, Stremio opened the addon's own page with the URL
+`https://torrentio.strem.fun/language=japanese,hindi%7Csizefilter=5GB/manifest.json`; I did not press its Install button, and I put
+the choices back afterwards. The README says what Torrentio is.
+
+| Stremio screen | The Torrentio screen | Languages | What Stremio shows |
+|---|---|---|---|
+| ![](images/minor-improvements/5-stremio-torrentio-row.jpg) | ![](images/minor-improvements/5-torrentio-screen.jpg) | ![](images/minor-improvements/5-torrentio-languages.jpg) | ![](images/minor-improvements/5-stremio-addon-page.jpg) |
 
 ---
 
