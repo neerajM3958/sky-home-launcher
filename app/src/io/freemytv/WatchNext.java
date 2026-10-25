@@ -148,7 +148,7 @@ final class WatchNext {
                 e.episodeTitle = text(q, "episode_title");
                 e.type = (int) number(q, "type");
                 e.movie = e.type == TYPE_MOVIE;
-                String key = normalize(e.title) + (e.movie ? "|m" : "|t") + (includeWatchlist ? "|" + kind : "");
+                String key = normalize(e.title) + "|" + e.year + (e.movie ? "|m" : "|t") + (includeWatchlist ? "|" + kind : "");
                 Entry old = latest.get(key);
                 if (old == null || e.at > old.at) latest.put(key, e);       // one per show: the latest
             }

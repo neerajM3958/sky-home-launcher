@@ -251,7 +251,7 @@ final class Trakt {
         long now = System.currentTimeMillis() / 1000;
         if (now < sp.getLong("expires", 0) - 3600) return sp.getString("access", "");
         Reply r = call("POST", "/oauth/token", obj("refresh_token", sp.getString("refresh", ""),
-                "client_id", Config.TRAKT_CLIENT_ID.trim(), "grant_type", "refresh_token"), null);
+                "client_id", Prefs.traktClientId(), "grant_type", "refresh_token"), null);
         if (r.code == 200) {
             try {
                 saveTokens(new JSONObject(r.body));
@@ -692,7 +692,7 @@ final class Trakt {
             c.setReadTimeout(20000);
             c.setRequestProperty("Content-Type", "application/json");
             c.setRequestProperty("trakt-api-version", "2");
-            c.setRequestProperty("trakt-api-key", Config.TRAKT_CLIENT_ID.trim());
+            c.setRequestProperty("trakt-api-key", Prefs.traktClientId());
             c.setRequestProperty("User-Agent", "FreeMyTV");
             if (token != null) c.setRequestProperty("Authorization", "Bearer " + token);
             if (body != null) {
