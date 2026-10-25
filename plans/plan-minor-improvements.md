@@ -4,7 +4,7 @@ A running list of small changes. Each item is its own section (`## N. Title`); a
 Each section says: what is wanted, where it lives in the code, how to do it, and what is still to decide.
 
 Status (2026-10-25): all items go in **one** pull request, branch `minor-improvements` (off `main` after the catalog screen
-merged). Built so far: items 1, 2 and 3. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
+merged). Built so far: items 1 to 4. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
 taken on the TV); a finished item has a *Built* line and its screenshots.
 
 ---
@@ -109,9 +109,23 @@ privacy answer and `CLAUDE.md` (a new network request).
 5. In Settings, with Stremio missing, the row says *Install Stremio* (one OK press starts the steps above), then the normal
    Stremio screen opens when it is installed. Errors (offline, no matching ABI, install refused) say what happened.
 
-**To decide.** `PackageInstaller` (standard, needs "install unknown apps" allowed) or the TV's own ADB (no extra prompt, needs
-debugging allowed); whether other places that send people to the Play Store for Stremio (the open-in routing) change too.
-Checking the download: the API gives no checksum, so only the HTTPS source protects it.
+**Decided.** `PackageInstaller` (Android's standard installer), because it doesn't depend on the TV's debugging. The API gives no
+checksum, so the download is only checked to be the package `com.stremio.one` before it goes to the installer (a different file is
+refused). The open-in routing (Play Store pages for other apps) is not changed.
+
+**Built.** `StremioInstall`: reads `api.strem.io/downloads/config` (entry `android_tv`), builds the link from the tag, version and
+the TV's processor (`Build.SUPPORTED_ABIS`), downloads it with a progress line, checks the package, and hands it to
+`PackageInstaller`; its receiver (`:home`) opens Android's confirmation. In Settings the *Stremio* row, when Stremio isn't on the
+TV, says *Install* and shows *Downloading n%*, *Installing…* and *Confirm on the TV*; a cancelled or refused install leaves a
+notice. The README, the site's privacy answer (English and Portuguese) and `CLAUDE.md` mention it. Tried on the TV with a
+temporary build that pretended Stremio was missing (the TV has Stremio 1.6.12 and I did not upgrade it): the link built to
+`…/v1.11.3-androidTV/com.stremio.one-1.11.3-41048579-armeabi-v7a.apk` (this TV is 32-bit ARM) and answered 200, the download ran
+and passed the package check, and Android's prompt came up (*your TV currently isn't allowed to install unknown apps from this
+source*, with *Settings* and *Cancel*); I chose Cancel, so nothing on the TV changed.
+
+| The row says Install | Downloading | Confirm on the TV | Android asks (first time) | After Cancel |
+|---|---|---|---|---|
+| ![](images/minor-improvements/4-stremio-install-row.jpg) | ![](images/minor-improvements/4-stremio-downloading.jpg) | ![](images/minor-improvements/4-stremio-confirm-on-tv.jpg) | ![](images/minor-improvements/4-stremio-android-prompt.jpg) | ![](images/minor-improvements/4-stremio-cancelled.jpg) |
 
 ---
 

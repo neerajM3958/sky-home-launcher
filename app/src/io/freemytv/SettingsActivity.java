@@ -189,7 +189,7 @@ public class SettingsActivity extends Activity {
                 }
                 wasBusy = nowBusy;
                 invalidate();
-                handler.postDelayed(this, busy() ? 500 : 2000);
+                handler.postDelayed(this, busy() || StremioInstall.busy() ? 500 : 2000);
             }
         };
 
@@ -227,8 +227,7 @@ public class SettingsActivity extends Activity {
         private boolean disabledRow(int row) {
             if (screen == STREMIO) return pickScroll + row < stremioRows.size() && stremioOff(pickScroll + row);
             if (screen == TMDB) return row == RENT_BUY_ROW && !Prefs.flatrateOnly();     // everything is included then
-            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext()))
-                    || (row == STREMIO_ROW && !stremioOn));
+            return screen == MAIN && ((row == TRAKT_ROW && !Trakt.configured()) || (row == TMDB_ROW && !Recs.hasKey(getContext())));
         }
 
         @Override public AccessibilityNodeProvider getAccessibilityNodeProvider() {
@@ -1122,7 +1121,7 @@ public class SettingsActivity extends Activity {
 
         /** The main menu's value: whether Stremio is there, and whether anything is sent to it. */
         private String stremioStatus() {
-            if (!stremioOn) return Ui.tr("Not installed");
+            if (!stremioOn) return StremioInstall.status();      // "Install", or how the install is going
             boolean any = Prefs.stremioForMissing();
             for (String[] s : Recs.serviceNames()) any |= Prefs.toStremio(s[0]);
             return onOff(any || Prefs.toStremio(Routing.OTHER));
@@ -1733,7 +1732,11 @@ public class SettingsActivity extends Activity {
                 screen = TMDB;
                 focus = 0;
             } else if (focus == STREMIO_ROW) {
-                if (disabledRow(STREMIO_ROW)) return;   // Stremio isn't on the TV: nothing to open
+                if (!stremioOn) {       // Stremio isn't on the TV: install it from its own site
+                    StremioInstall.start(c);
+                    invalidate();
+                    return;
+                }
                 openStremio();
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

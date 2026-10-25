@@ -220,6 +220,13 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   the key to the TV. Sony ships its own Apple TV build, `com.apple.atve.sony.appletv`.
   Xiaomi projectors made by Formovie (Fengmi; L1, MediaTek, Google TV 14 tested) send the same `KEYCODE_STEM_1` for
   Netflix (`RemoteKeys.STEM_NETFLIX`); their YouTube button goes to MediaTek's `GlobalKeyReceiver` and stays with the system.
+- Stremio: when it isn't on the TV, Settings > Stremio says *Install* (`StremioInstall`): it reads Stremio's download list
+  (`api.strem.io/downloads/config`, entry `android_tv`), builds the link from the tag, version and the TV's processor (never a
+  fixed address), downloads it, checks the file is `com.stremio.one` and hands it to Android's `PackageInstaller`, which asks the
+  person to confirm. Its receiver runs in `:home` (the statics are shared with the settings screen).
+- Trailers on the catalog screen play in YouTube's embedded player (`TrailerPlayer`), in a window of its own over the video area
+  (this TV decodes video onto a plane under the app's window); the YouTube app opens one only after a long OK press, never on
+  autoplay.
 - After any change, `./build.sh` must end with `Built FreeMyTV.apk`.
 - LG and Samsung (`web/`): plain ES5 JavaScript and CSS without variables, grid or backdrop-filter, since older TVs
   (webOS 3 and 4, Tizen 3) run a Chromium from 2015 to 2017; only transform and opacity animate. `web/tv.js` is the
