@@ -2089,7 +2089,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 posterRect(r, i, cardRect);
                 if (cardRect.right < 0 || cardRect.left > w) continue;
                 Catalogs.Item it = row.items.get(i);
-                drawPoster(c, cardRect, it, zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0, y0);
+                drawPoster(c, cardRect, it, zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0, y0, true);
             }
         }
     }
@@ -2139,8 +2139,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (b != null) c.drawBitmap(b, r.left + 10 * k, r.top + 10 * k, null);
     }
 
-    /** One poster of a row (Trakt's under the drawer, TMDB's on the browse screen) with its badge, bar, loader and captions; `y0` is the row's top. */
-    private void drawPoster(Canvas c, RectF cardRect, Catalogs.Item it, float f, float y0) {
+    /** One poster of a row (Trakt's under the drawer, TMDB's on the browse screen) with its badge (`badge`), bar, loader and captions; `y0` is the row's top. */
+    private void drawPoster(Canvas c, RectF cardRect, Catalogs.Item it, float f, float y0, boolean badge) {
         Bitmap poster = catalogs.poster(it, Math.round(CAT_POSTER_W * k * 1.25f));
         if (poster == null) {
             fill.setShader(null);
@@ -2148,7 +2148,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
         }
         drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
-        if (poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
+        if (badge && poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
         if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
             barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
             fill.setShader(null);
@@ -2318,7 +2318,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = first; i <= last; i++) {
                 browseRect(r, i, browseCell);
                 if (browseCell.right < 0 || browseCell.left > w) continue;
-                drawPoster(c, browseCell, row.items.get(i), zone == Z_BROWSE && r == browseRowIndex && i == browseCol[r] ? Ui.clamp(browseFocus.value) : 0, y0);
+                drawPoster(c, browseCell, row.items.get(i), zone == Z_BROWSE && r == browseRowIndex && i == browseCol[r] ? Ui.clamp(browseFocus.value) : 0, y0, false);      // no badge: the details card above shows the service
             }
         }
         c.restore();
@@ -2651,8 +2651,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float toastTop = 64 * k - (1 - a) * 16 * k;
         tmp.set((w - tw) / 2f - padX, toastTop, (w + tw) / 2f + padX, toastTop + th + 2 * padY);
         int save = c.saveLayerAlpha(tmp.left - 4, tmp.top - 4, tmp.right + 4, tmp.bottom + 4, Math.round(255 * a));
-        scene.glass(c, tmp, Math.min(tmp.height() / 2, 32 * k), SMOKE, 0.55f, 0, 0, 0.02f, 1);
-        Symbols.draw(getContext(), c, "bell", tmp.left + padX + iconW / 2, tmp.centerY(), icon, 0xEBFFFFFF);
+        float radius = Math.min(tmp.height() / 2, 32 * k);
+        if (!look.toast(c, tmp, radius, dark())) scene.glass(c, tmp, radius, SMOKE, 0.55f, 0, 0, 0.02f, 1);
+        toastPaint.setColor(look.toastInk(dark()));
+        Symbols.draw(getContext(), c, "bell", tmp.left + padX + iconW / 2, tmp.centerY(), icon, toastPaint.getColor());
         c.translate(tmp.left + padX + iconW + 16 * k, tmp.top + padY);
         toast.draw(c);
         c.restoreToCount(save);
