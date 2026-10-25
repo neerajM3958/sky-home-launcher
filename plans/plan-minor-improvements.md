@@ -4,7 +4,7 @@ A running list of small changes. Each item is its own section (`## N. Title`); a
 Each section says: what is wanted, where it lives in the code, how to do it, and what is still to decide.
 
 Status (2026-10-25): all items go in **one** pull request, branch `minor-improvements` (off `main` after the catalog screen
-merged). Built so far: items 1 and 2. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
+merged). Built so far: items 1, 2 and 3. Screenshots of what was built sit under each item (`plans/images/minor-improvements/`,
 taken on the TV); a finished item has a *Built* line and its screenshots.
 
 ---
@@ -75,6 +75,16 @@ choice; a new screen in `SettingsActivity` (it already has list screens, like Hi
 
 **Decided.** Changes apply immediately; the settings screen is enough (no `keep_apps=` line in `config.properties`, so drop it
 from *Where* and from `build.sh`).
+
+**Built.** *Home Screen* now has a third row, *Apps turned off*, with a list of the `DEBLOAT` apps this TV has (never the
+protected, core or factory ones): OK keeps one on or lets the switch turn it off again. `HomeMode.setKeepOn` saves the choice in
+the state file (`keepOn`) and a new job (`ModeJob.KEEP`) applies it at once: a kept app that is off is turned on, an app no longer
+kept is turned off again by the verify pass. The switch and the verify pass skip kept apps. Tried on the TV: keeping YouTube
+Music on turned it on within seconds ("Kept on: …" notice), and un-keeping turned it off again.
+
+| Home Screen: the new row | Apps turned off | A kept app |
+|---|---|---|
+| ![](images/minor-improvements/3-home-screen-choice.jpg) | ![](images/minor-improvements/3-apps-turned-off.jpg) | ![](images/minor-improvements/3-app-kept-on.jpg) |
 
 ---
 

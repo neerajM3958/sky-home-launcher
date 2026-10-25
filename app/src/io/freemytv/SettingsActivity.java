@@ -122,7 +122,7 @@ public class SettingsActivity extends Activity {
     }
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
-        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10;
+        private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8;
         private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
@@ -156,6 +156,8 @@ public class SettingsActivity extends Activity {
         private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
         private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
         private final List<String[]> hiddenRows = new ArrayList<>();     // the Hidden services screen: {key, name}
+        private final List<String[]> appsOffRows = new ArrayList<>();    // Apps turned off: {package, name}
+        private final java.util.Set<String> appsKept = new java.util.HashSet<>();   // ... and the ones the person keeps on
         private final java.util.Set<String> stremioInstalled = new java.util.HashSet<>();   // services whose app is on the TV (read when the screen opens)
         private final List<String[]> stremioRows = new ArrayList<>();     // the Stremio screen: {key, name}, "missing" first
         private int screen = MAIN, focus;
@@ -259,6 +261,10 @@ public class SettingsActivity extends Activity {
                     int at = pickScroll + row;
                     return at < hiddenRows.size() ? hiddenRows.get(at)[1] + (hiddenChecked(at) ? Ui.tr(", hidden") : "") : "";
                 }
+                case APPS_OFF: {
+                    int at = pickScroll + row;
+                    return at < appsOffRows.size() ? appsOffRows.get(at)[1] + ", " + appsOffValue(at) : "";
+                }
                 case LANGUAGES: {
                     int at = pickScroll + row;
                     return at < langRows.size() ? langRows.get(at)[1] + (langChecked(at) ? Ui.tr(", selected") : "") : "";
@@ -268,10 +274,11 @@ public class SettingsActivity extends Activity {
                     return at < stremioRows.size() ? stremioRows.get(at)[1] + ", " + stremioValue(at) : "";
                 }
                 case HOME_CHOICE: {
+                    if (row == 2) return Ui.tr("Apps turned off") + ", " + Ui.tr("Keep the apps you want on");
                     String name = row == 0 ? "Free My TV, " + Ui.tr("no ads, with the new screensaver")
                             : "Original, " + Ui.tr("the TV's factory home screen");
                     boolean inUse = (row == 0) == freeActive();
-                    return name + (inUse ? Ui.tr(". In use") : "") + ", " + Ui.trf("{i} of {n}", "i", row + 1, "n", 2);
+                    return name + (inUse ? Ui.tr(". In use") : "") + ", " + Ui.trf("{i} of {n}", "i", row + 1, "n", 3);
                 }
                 case HOME_SETTINGS:
                 case REMOTE_KEYS: {
@@ -397,7 +404,8 @@ public class SettingsActivity extends Activity {
                 case STREMIO: return Math.min(PICK_VISIBLE, stremioRows.size());
                 case LANGUAGES: return Math.min(PICK_VISIBLE, langRows.size());
                 case HIDDEN: return Math.min(PICK_VISIBLE, hiddenRows.size());
-                case HOME_CHOICE: return 2;
+                case APPS_OFF: return Math.min(PICK_VISIBLE, appsOffRows.size());
+                case HOME_CHOICE: return 3;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
                 case SHELF_EDIT: return Math.min(PICK_VISIBLE, shelfRows.size());
@@ -441,7 +449,7 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else drawList(c);
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else drawList(c);
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -593,7 +601,8 @@ public class SettingsActivity extends Activity {
             String[][] options = {{"Free My TV", Ui.tr("No ads, with the new screensaver")},
                     {Ui.tr("Original"), Ui.tr("The TV's factory home screen")}};
             int current = freeActive() ? 0 : 1;
-            for (int i = 0; i < 2; i++) {
+            options = new String[][] {options[0], options[1], {Ui.tr("Apps turned off"), Ui.tr("Keep the apps you want on")}};
+            for (int i = 0; i < 3; i++) {
                 float y = (LIST_TOP + 20 + i * (CHOICE_H + ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + CHOICE_H * k);
                 float f = drawRowBackground(c, i);
@@ -601,14 +610,17 @@ public class SettingsActivity extends Activity {
                 rowSub.setColor(blend(0x8CFFFFFF, 0x991C1C1E, f));
                 c.drawText(options[i][0], rowRect.left + 30 * k, rowRect.top + 44 * k, rowLabel);
                 c.drawText(options[i][1], rowRect.left + 30 * k, rowRect.top + 80 * k, rowSub);
-                if (i == current) {
+                if (i == 2) {
+                    float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
+                    Symbols.draw(getContext(), c, "chevron_right", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 22 * k, blend(0x99FFFFFF, INK, f));
+                } else if (i == current) {
                     float cw = Symbols.width(getContext(), "check", 26 * k);
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("Switching takes a few seconds; the screen blinks while it measures."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + 2 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
+                    (LIST_TOP + 20 + 3 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
         }
 
         private int blend(int a, int b, float f) {
@@ -668,7 +680,7 @@ public class SettingsActivity extends Activity {
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == TMDB || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                         invalidate();
                     }
@@ -719,6 +731,9 @@ public class SettingsActivity extends Activity {
                             } else if (screen == HIDDEN) {
                                 focus = TMDB_HIDDEN;
                                 screen = TMDB;
+                            } else if (screen == APPS_OFF) {
+                                focus = 2;
+                                screen = HOME_CHOICE;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
@@ -1005,6 +1020,54 @@ public class SettingsActivity extends Activity {
                     (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
         }
 
+        // MARK: - Apps turned off (Free My TV > Home Screen)
+
+        private String appsOffValue(int at) {
+            return appsKept.contains(appsOffRows.get(at)[0]) ? Ui.tr("Kept on") : Ui.tr("Turned off");
+        }
+
+        private void openAppsOff() {
+            appsOffRows.clear();
+            appsOffRows.addAll(HomeMode.debloatApps(getContext()));
+            appsKept.clear();
+            for (String[] row : appsOffRows) if (HomeMode.keepsOn(getContext(), row[0])) appsKept.add(row[0]);
+            pickScroll = 0;
+            focus = 0;
+            screen = APPS_OFF;
+            for (Spring s : pop) s.snap(0);
+        }
+
+        private void toggleAppsOff() {
+            int at = pickScroll + focus;
+            if (at >= appsOffRows.size()) return;
+            String pkg = appsOffRows.get(at)[0];
+            boolean keep = appsKept.add(pkg);
+            if (!keep) appsKept.remove(pkg);
+            HomeMode.setKeepOn(getContext(), pkg, keep);       // applied at once, in the background
+        }
+
+        private void drawAppsOff(Canvas c) {
+            Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
+            c.drawText(Ui.tr("Apps turned off"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
+                float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
+                float f = drawRowBackground(c, i);
+                boolean kept = appsKept.contains(appsOffRows.get(at)[0]);
+                rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
+                float base = rowRect.centerY() + Ui.halfCap(rowLabel);
+                c.drawText(appsOffRows.get(at)[1], rowRect.left + 30 * k, base, rowLabel);
+                rowValue.setColor(blend(kept ? 0xF2FFFFFF : 0x8CFFFFFF, kept ? INK : 0x991C1C1E, f));
+                c.drawText(appsOffValue(at), rowRect.right - 30 * k, base, rowValue);
+            }
+            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
+            String text = appsOffRows.isEmpty() ? Ui.tr("No apps to turn off on this TV.")
+                    : Ui.tr("OK keeps an app on, or lets Free My TV turn it off.");
+            c.drawText(text, LIST_X * k + 30 * k, (LIST_TOP + 20 + Math.max(1, rows) * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+        }
+
         // MARK: - Hidden services (Free My TV > TMDB)
 
         private String hiddenValue() {
@@ -1238,6 +1301,10 @@ public class SettingsActivity extends Activity {
                 toggleHidden();
                 return;
             }
+            if (screen == APPS_OFF) {
+                toggleAppsOff();
+                return;
+            }
             if (screen == LANGUAGES) {
                 toggleLanguage();
                 return;
@@ -1354,11 +1421,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1557,7 +1624,13 @@ public class SettingsActivity extends Activity {
 
         private void activate() {
             Context c = getContext();
-            if (screen == HOME_CHOICE) {
+            if (screen == HOME_CHOICE && focus == 2) {
+                openAppsOff();
+            } else if (screen == APPS_OFF) {
+                toggleAppsOff();
+                invalidate();
+                return;
+            } else if (screen == HOME_CHOICE) {
                 boolean wantFree = focus == 0;
                 boolean already = wantFree ? freeActive() : HomeMode.ORIGINAL.equals(state.optString("mode", HomeMode.ORIGINAL));
                 if (!already && !busy()) {

@@ -186,6 +186,75 @@ final class HomeMode {
         ModeJob.schedule(c, ModeJob.APPLY, mode, 0);
     }
 
+    // MARK: - Apps the person keeps on (Settings > Home Screen > Apps turned off)
+
+    /** The apps of DEBLOAT that this TV has, as {package, name}, in the order of the list. */
+    static List<String[]> debloatApps(Context c) {
+        List<String[]> out = new ArrayList<>();
+        android.content.pm.PackageManager pm = c.getPackageManager();
+        for (String pkg : DEBLOAT) {
+            if (!mayTurnOff(pkg)) continue;
+            try {
+                android.content.pm.ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
+                out.add(new String[] {pkg, String.valueOf(info.loadLabel(pm))});
+            } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+                // not on this TV
+            }
+        }
+        return out;
+    }
+
+    static boolean keepsOn(Context c, String pkg) {
+        return stringList(state(c), "keepOn").contains(pkg);
+    }
+
+    /**
+     * Keeps `pkg` on (or lets the switch turn it off again) and applies it at once. Called from the settings screen
+     * (:home); the main process does the work, in a job (ModeJob.KEEP).
+     */
+    static void setKeepOn(Context c, String pkg, boolean keep) {
+        if (!pkg.matches("[\\w.]+") || !Arrays.asList(DEBLOAT).contains(pkg)) return;
+        synchronized (FILE_LOCK) {
+            JSONObject s = state(c);
+            Set<String> set = new HashSet<>(stringList(s, "keepOn"));
+            if (keep ? !set.add(pkg) : !set.remove(pkg)) return;
+            try { s.put("keepOn", new JSONArray(sorted(set))); } catch (JSONException e) { return; }
+            save(c, s);
+        }
+        ModeJob.schedule(c, ModeJob.KEEP, null, 0);
+    }
+
+    /** Brings back the apps the person keeps on that Free My TV had turned off, then turns off the ones that are no longer kept. */
+    static void keepAppsNow(Context app) {
+        synchronized (RUN) {
+            JSONObject s = state(app);
+            if (!FREE.equals(s.optString("mode"))) return;
+            Set<String> keep = new HashSet<>(stringList(s, "keepOn"));
+            Set<String> disabled = new HashSet<>(stringList(s, "disabled"));
+            List<String> back = new ArrayList<>();
+            try (Adb adb = Adb.connect(app, 10_000, null)) {
+                Set<String> off = packages(adb, "-d");
+                for (String pkg : sorted(keep)) {
+                    if (!off.contains(pkg)) continue;       // already on (turned off by us or by the TV before: the person wants it on)
+                    if (adb.shell("pm enable " + pkg).contains("new state: enabled")) {
+                        disabled.remove(pkg);
+                        back.add(pkg);
+                    }
+                }
+                JSONObject now = state(app);
+                now.put("disabled", new JSONArray(sorted(disabled)));
+                save(app, now);
+                record(adb, disabled);
+            } catch (IOException | JSONException e) {
+                AppLog.w("keeping apps on: " + e.getMessage());
+                notice(app, Ui.trf("Couldn't change the apps: {error}", "error", String.valueOf(e.getMessage())));
+                return;
+            }
+            if (!back.isEmpty()) notice(app, Ui.trf("Kept on: {list}.", "list", String.join(", ", back)));
+        }
+        verifyNow(app);        // the ones no longer kept go off again
+    }
+
     /** Our home screen crashed 3 times in 5 minutes: give the home screen back to the TV's own (asked by :home). */
     static void requestRevertHome(Context c) {
         ModeJob.schedule(c, ModeJob.REVERT, null, 0);
@@ -328,8 +397,9 @@ final class HomeMode {
             JSONObject before = state(c);
             before.put("keptOff", new JSONArray(sorted(keptOff)));
             save(c, before);
+            Set<String> keepOn = new HashSet<>(stringList(state(c), "keepOn"));      // the person keeps these on (Settings > Home Screen > Apps turned off)
             Set<String> candidates = new HashSet<>();
-            for (String pkg : targets) if (present.contains(pkg) && mayTurnOff(pkg)) candidates.add(pkg);
+            for (String pkg : targets) if (present.contains(pkg) && mayTurnOff(pkg) && !keepOn.contains(pkg)) candidates.add(pkg);
             Set<String> needed = neededByTv(adb, candidates);
             if (needed == null) {
                 AppLog.w("couldn't check what the TV's inputs need: nothing goes off this time");
@@ -341,7 +411,7 @@ final class HomeMode {
             for (String pkg : targets) {
                 done++;
                 busy(c, Ui.trf("Turning off apps ({done}/{total})…", "done", done, "total", targets.size()));
-                if (!candidates.contains(pkg) || needed.contains(pkg) || owners.contains(pkg) || keptOff.contains(pkg)) continue;
+                if (!candidates.contains(pkg) || needed.contains(pkg) || owners.contains(pkg) || keptOff.contains(pkg) || keepOn.contains(pkg)) continue;
                 // The TV's home screen only once Google TV's setup app is off: its recovery screen would take Home.
                 if (pkg.equals(homePkg) && setupOn) {
                     AppLog.w("kept the TV's home screen on: Google TV's setup app is still on");
@@ -597,8 +667,9 @@ final class HomeMode {
                 if (!back.isEmpty()) notice(app, Ui.trf("Turned back on {list}: the TV's inputs or remote need it.", "list", String.join(", ", back)));
                 boolean setupOn = present.contains(GOOGLE_SETUP) && !disabledNow.contains(GOOGLE_SETUP)
                         && s.optBoolean("setupHome", true);
+                Set<String> keepOn = new HashSet<>(stringList(s, "keepOn"));
                 for (String pkg : order) {
-                    if (!mayTurnOff(pkg) || !present.contains(pkg) || owners.contains(pkg) || wait.contains(pkg)) continue;
+                    if (!mayTurnOff(pkg) || !present.contains(pkg) || owners.contains(pkg) || wait.contains(pkg) || keepOn.contains(pkg)) continue;
                     if (disabledNow.contains(pkg)) {
                         if (!keptOff.contains(pkg)) disabled.add(pkg);
                         continue;
