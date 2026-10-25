@@ -645,9 +645,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("Switching takes a few seconds; the screen blinks while it measures."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + 3 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
+                    (LIST_TOP + 20 + 3 * (CHOICE_H + ROW_GAP) + 40) * k, notice);
         }
 
         private int blend(int a, int b, float f) {
@@ -1125,9 +1124,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("The language a title was made in. OK picks or drops one."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Added buttons (Free My TV > Remote Buttons): the person presses a button and chooses what it opens
@@ -1328,9 +1326,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("OK picks a language. With none picked, every language is used."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Apps turned off (Free My TV > Home Screen)
@@ -1375,10 +1372,9 @@ public class SettingsActivity extends Activity {
                 rowValue.setColor(blend(kept ? 0xF2FFFFFF : 0x8CFFFFFF, kept ? INK : 0x991C1C1E, f));
                 c.drawText(appsOffValue(at), rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             String text = appsOffRows.isEmpty() ? Ui.tr("No apps to turn off on this TV.")
                     : Ui.tr("OK keeps an app on, or lets Free My TV turn it off.");
-            c.drawText(text, LIST_X * k + 30 * k, (LIST_TOP + 20 + Math.max(1, rows) * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+            c.drawText(text, LIST_X * k + 30 * k, (LIST_TOP + 20 + Math.max(1, rows) * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Hidden services (Free My TV > TMDB)
@@ -1426,9 +1422,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("OK hides or shows a service. Hidden ones are never used."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Stremio
@@ -1914,12 +1909,11 @@ public class SettingsActivity extends Activity {
                 c.drawText(TextUtils.ellipsize(app[1], new TextPaint(rowLabel), 520 * k, TextUtils.TruncateAt.END).toString(), rowRect.left + 30 * k, base, rowLabel);
                 c.drawText(place >= 0 ? "#" + (place + 1) : Ui.tr("shelf|Off"), rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
             c.drawText(editingRows ? Ui.tr("OK turns a row on or off. ← → change the order.")
                     : editingTop ? Ui.tr("OK adds or removes a button. ← → change the order.")
                     : Ui.trf("OK adds or removes (up to {n}). ← → change the order.", "n", HomeApps.MAX_SHELF),
-                    LIST_X * k + 30 * k, hy, hint);
+                    LIST_X * k + 30 * k, hy, notice);
         }
 
         private void openPicker(int which) {
@@ -1977,10 +1971,9 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
             c.drawText((pickScroll + focus + 1) + " / " + pickLabels.size() + "  ·  " + Ui.tr("OK picks, Back cancels."),
-                    LIST_X * k + 30 * k, hy, hint);
+                    LIST_X * k + 30 * k, hy, notice);
         }
 
         private void drawList(Canvas c) {
@@ -2004,16 +1997,15 @@ public class SettingsActivity extends Activity {
                 c.drawText(labels[at], rowRect.left + 30 * k, base, rowLabel);
                 c.drawText(values[at], rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
-            c.drawText(Ui.tr("OK or the arrows change the value."), LIST_X * k + 30 * k, hy, hint);
+            c.drawText(Ui.tr("OK or the arrows change the value."), LIST_X * k + 30 * k, hy, notice);
             if (keys && !RemoteKeys.SKYWORTH) {
                 c.drawText(RemoteKeys.VESTEL ? Ui.tr("YouTube, Prime Video and Google Play: the TV itself controls those buttons.")
                         : RemoteKeys.KTC ? Ui.tr("Netflix, YouTube and Prime Video: the TV itself controls those buttons.")
                         : RemoteKeys.SONY ? Ui.tr("Sony default: the button opens what it always did.")
                         : RemoteKeys.FORMOVIE ? Ui.tr("The other buttons: the TV itself controls them.")
                         : RemoteKeys.supported() ? Ui.tr("Disney and Globoplay: the TV itself controls those buttons.")
-                        : Ui.tr("TCL remote buttons: on this TV they work as always."), LIST_X * k + 30 * k, hy + 38 * k, hint);
+                        : Ui.tr("TCL remote buttons: on this TV they work as always."), LIST_X * k + 30 * k, hy + 38 * k, notice);
             }
         }
 
