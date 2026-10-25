@@ -93,7 +93,8 @@ final class Catalogs {
     };
     private final Set<String> pending = new HashSet<>();
     private volatile List<Row> rows = new ArrayList<>();      // TMDB's
-    private volatile List<Row> shown = new ArrayList<>();     // Trakt's rows (when connected), then TMDB's
+    private volatile List<Row> shown = new ArrayList<>();     // Trakt's rows (when connected) and Continue Watching
+    private volatile List<Row> browse = new ArrayList<>();    // TMDB's rows
     private volatile String shownFor = "";                   // what wanted() was when `shown` was built
     private volatile boolean fetching;
     private volatile long at, failedAt;
@@ -132,17 +133,24 @@ final class Catalogs {
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
     void removeListener(Listener l) { listeners.remove(l); }
 
-    /** The rows to show: Trakt's when connected, then TMDB's (they need its key and "catalogs=" not empty). A card opens through Launcher. */
+    /** The rows under the drawer: Trakt's when connected, with Continue Watching (TMDB's are in browseRows). A card opens through Launcher. */
     List<Row> rows() {
         return shown;
+    }
+
+    /** TMDB's catalogs, for the browse screen under Trakt's rows: one row at a time, the details of the focused title above it. */
+    List<Row> browseRows() {
+        return browse;
     }
 
     /** A new list each time the rows change: the home screen compares it by reference. TMDB's follow the order the person set, and a row turned off goes at once. */
     private void rebuild() {
         List<Row> all = withWatchNext(new ArrayList<>(Trakt.get(context).rows()));
+        List<Row> tmdb = new ArrayList<>();
         if (Recs.hasKey(context)) {
-            for (String k : keys()) for (Row r : rows) if (r.key.equals(k)) all.add(r);
+            for (String k : keys()) for (Row r : rows) if (r.key.equals(k)) tmdb.add(r);
         }
+        browse = tmdb;
         shown = all;
         shownFor = wanted();
     }

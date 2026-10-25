@@ -61,7 +61,7 @@ import java.util.function.Consumer;
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
-final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Catalogs.Listener {
+final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Catalogs.Listener, Details.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
@@ -88,7 +88,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8, BROWSE = 9;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
@@ -99,7 +99,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static String[] tabs;
     private static int tabsGeneration = -1;
     private static final String[] TAB_KIND = {null, "movie", "tv"};
-    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6, Z_BROWSE = 10;
     // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
     // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
     private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 440, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
@@ -232,6 +232,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int catRowIndex;
     private boolean catDirty, catWasMoving;
     private Paint lCatTitle, lCatLabel;
+    // The browse screen (TMDB's catalogs, under Trakt's rows): the focused title's details above, one catalog row below.
+    // Up and down change the catalog, left and right the title.
+    private final Layer browseLayer;
+    private final Details details;
+    private final Spring browseIn = new Spring(0.5f, 0.92f, 0), browsePos = new Spring(0.42f, 0.92f, 0),
+            browseFocus = new Spring(0.3f, 0.82f, 0), browseSwap = new Spring(0.5f, 0.95f, 1);
+    private List<Catalogs.Row> browseRows = new ArrayList<>();
+    private Spring[] browseShift = new Spring[0];
+    private int[] browseCol = new int[0];
+    private int browseRowIndex;
+    private boolean browseDirty, browseWasMoving;
+    private Catalogs.Item browseShown;
+    private Details.Info browseInfo;
+    private Bitmap browseBack, browsePrev;     // the backdrop shown and the one it replaces (cross-fade)
+    private StaticLayout browseTitleText, browseOverviewText;
+    private String browseFacts = "";
+    private int browseTextGen = -1;
+    private TextPaint lBrowseTitle, lBrowseText;
+    private Paint lBrowseFacts;
+    private final RectF stage = new RectF(), browseCell = new RectF();
     private final RectF cardRect = new RectF(), barRect = new RectF();
     private int drawerIndex;
 
@@ -340,6 +360,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case TILES: drawTiles(c); break;
                 case DRAWER: drawDrawer(c); break;
                 case CATALOG: drawCatalog(c); break;
+                case BROWSE: drawBrowse(c); break;
                 case SHEET: drawSheet(c); break;
                 default: drawToast(c); break;
             }
@@ -417,21 +438,24 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tiles = new Layer(a, TILES);
         drawerLayer = new Layer(a, DRAWER);
         catalogLayer = new Layer(a, CATALOG);
+        browseLayer = new Layer(a, BROWSE);
         catalogs = Catalogs.get(a);
+        details = Details.get(a);
         sheetLayer = new Layer(a, SHEET);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, catalogLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, sheetLayer, toastLayer}) {
+        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
         setContentDescription("Free My TV");
         drawerLayer.setVisibility(INVISIBLE);
         catalogLayer.setVisibility(INVISIBLE);
+        browseLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < topFocus.length; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
@@ -468,6 +492,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.addListener(this);
         recs.addListener(this);
         catalogs.addListener(this);
+        details.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
         catalogs.refreshWatchNext(false);
@@ -494,6 +519,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cancelReorder(true);
         handler.removeCallbacks(holdStart);
         okHeld = holdArmed = false;
+        cancelAutoTrailer();
+        stopTrailer();
+        if (trailer != null) {      // the WebView's memory goes back while the home screen is away
+            trailer.release();
+            trailer = null;
+        }
         Choreographer.getInstance().removeFrameCallback(this);
         handler.removeCallbacks(tick);
         handler.removeCallbacks(drift);
@@ -502,6 +533,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.removeListener(this);
         recs.removeListener(this);
         catalogs.removeListener(this);
+        details.removeListener(this);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
@@ -524,11 +556,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             drawer.target = 0;
             catIn.target = 0;
             catRow.target = 0;
+            browseIn.target = 0;
         } else {
             sheet.snap(0);
             drawer.snap(0);
             catIn.snap(0);
             catRow.snap(0);
+            browseIn.snap(0);
         }
         if (pickIndex != 0 && !picks.isEmpty()) {
             pickIndex = 0;
@@ -594,6 +628,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(tiles, width, Math.round(270 * kk));
         measure(drawerLayer, width, Math.round(600 * kk));
         measure(catalogLayer, width, height);
+        measure(browseLayer, width, height);
         measure(sheetLayer, width, height);
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
@@ -613,6 +648,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         place(tiles, 0, Math.round(790 * kk));
         place(drawerLayer, 0, Math.round(470 * kk));
         catalogLayer.layout(0, 0, width, height);
+        browseLayer.layout(0, 0, width, height);
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
@@ -666,6 +702,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
         lCatTitle = Ui.text(look.typeface(Ui.semibold), 32 * k, L_INK);
         lCatLabel = Ui.text(look.typeface(Ui.medium), 25 * k, L_INK);
+        lBrowseTitle = new TextPaint(Ui.text(look.typeface(Ui.semibold), 60 * k, 0xFFFFFFFF));
+        lBrowseFacts = Ui.text(look.typeface(Ui.medium), 27 * k, 0xE6FFFFFF);
+        lBrowseText = new TextPaint(Ui.text(look.typeface(Ui.medium), 26 * k, 0xD9FFFFFF));
+        browseTextGen = -1;
         lTip = Ui.text(look.typeface(Ui.semibold), 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
         lDate = Ui.text(look.typeface(Ui.semibold), 34 * k, L_DIM);
@@ -736,6 +776,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt);
         boolean catMoving = catIn.step(dt) | catRow.step(dt) | catFocus.step(dt) | step(catShift, dt);
+        boolean browseMoving = browseIn.step(dt) | browsePos.step(dt) | browseFocus.step(dt) | browseSwap.step(dt) | step(browseShift, dt);
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
         heroMoving |= tickCards(up);
@@ -743,7 +784,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
-        if (drawerMoving || sheetMoving || catMoving || motionDirty) updateMotion();
+        if (drawerMoving || sheetMoving || catMoving || browseMoving || motionDirty) updateMotion();
         // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
         // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
         // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
@@ -753,14 +794,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
-        if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) catDirty = true;     // the waiting dots move
+        if ((openingItem != null && up - openingAt >= OPEN_LOADER_MS) || (trailerOn && trailer.loading())) catDirty = browseDirty = true;     // the waiting dots and the trailer's spinner move
         if (catMoving || catDirty) catalogLayer.invalidate();
-        if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving))) sky.invalidate();
+        if (browseMoving || browseDirty) browseLayer.invalidate();
+        if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
         if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
         drawerWasMoving = drawerMoving;
         if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
         catWasMoving = catMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = false;
+        browseWasMoving = browseMoving;
+        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = browseDirty = false;
         if (updateClock()) {
             layoutStatus();
             status.invalidate();
@@ -773,7 +816,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || sheetMoving || catMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
+                || sheetMoving || catMoving || browseMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
                 || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
@@ -797,7 +840,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Drawer and sheet: the layers' positions and opacity (without redrawing their content). */
     private void updateMotion() {
         float d = drawer.value, dc = Ui.clamp(d), s = Ui.clamp(sheet.value);
-        float home = 1 - s, top = home * (1 - smoothstep(0, 0.32f, dc));
+        float b = smoothstep(0, 0.5f, Ui.clamp(browseIn.value));      // the browse screen takes the whole screen
+        float home = (1 - s) * (1 - b), top = home * (1 - smoothstep(0, 0.32f, dc));
         float shift = SHIFT * k;
         float catLift = (catIn.value * catLift() + catRow.value * CAT_PITCH) * k;     // the poster rows pull everything further up
         float lift = -d * shift - catLift;
@@ -812,6 +856,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float ca = home * smoothstep(0, 0.35f, Ui.clamp(catIn.value));
         catalogLayer.setAlpha(ca);
         catalogLayer.setVisibility(ca > 0.002f ? VISIBLE : INVISIBLE);
+        browseLayer.setAlpha(b);
+        browseLayer.setTranslationY((1 - Ui.clamp(browseIn.value)) * 60 * k);
+        browseLayer.setVisibility(b > 0.002f ? VISIBLE : INVISIBLE);
         sheetLayer.setVisibility(s > 0.001f || sheetOpen ? VISIBLE : INVISIBLE);
         sheetLayer.setAlpha(s);
         float scale = 1.04f - 0.04f * s;
@@ -1561,14 +1608,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void openDrawer() {
         catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
         syncRows();
+        syncBrowse();
         if (drawerItems.isEmpty()) {
-            // No inputs (a streamer): the drawer opens on the poster rows; with none either, one button keeps it open.
-            if (catRows.isEmpty()) setDrawerItems(HomeApps.drawerFallback());
+            // No inputs (a streamer): the drawer opens on the poster rows (Trakt's, else TMDB's catalogs); with none either,
+            // one button keeps it open.
+            if (catRows.isEmpty() && browseRows.isEmpty()) setDrawerItems(HomeApps.drawerFallback());
             else {
                 drawerOpen = true;
                 drawer.target = 1;
                 drawerDirty = true;
-                enterCatalog();
+                if (!enterCatalog()) enterBrowse();
                 return;
             }
         }
@@ -1906,6 +1955,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Poster rows (under the drawer's weather and quotes; Down from the drawer's buttons)
 
     private static final int CAT_VISIBLE = 8;
+    private static final float CAT_ROW_FOOT = 400, CAT_BOTTOM = 1040;      // a row ends 400 below its top; the screen 40 short of 1080
 
     /** The quotes card is the only card left in the drawer; without it the rows start where the cards would, and higher up. */
     private boolean cardsOn() {
@@ -1923,7 +1973,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     @Override public void onCatalogs() {
         wake();
         syncRows();
-        catDirty = true;
+        syncBrowse();
+        catDirty = browseDirty = true;
+    }
+
+    @Override public void onDetails() {
+        if (browseShown == null) return;
+        browseInfo = details.info(browseShown.kind, browseShown.id);
+        browseTextGen = -1;
+        browseDirty = true;
+        scheduleAutoTrailer();
+        wake();
     }
 
     /** Takes the catalog's current rows (a new list after a fetch), keeping the focus where it was when it can. */
@@ -1939,6 +1999,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
         catRowIndex = Math.min(catRowIndex, Math.max(0, rows.size() - 1));
         if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
+        else if (zone == Z_CATALOG) catRow.target = catScrollTarget();
+    }
+
+    /**
+     * How far the rows have scrolled (in rows) with the focus on row `catRowIndex`: the focused row rises with each press,
+     * but never past the point where the last row's foot reaches the bottom of the screen, so a few rows don't leave it empty.
+     */
+    private float catScrollTarget() {
+        float firstTop = catY0() - catLift();
+        float lastFoot = firstTop + (catRows.size() - 1) * CAT_PITCH + CAT_ROW_FOOT;
+        float most = Math.max(0, lastFoot - CAT_BOTTOM) / CAT_PITCH;
+        return Math.min(catRowIndex, most);
     }
 
     private boolean enterCatalog() {
@@ -1985,11 +2057,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return true;
             }
             catRowIndex--;
-            catRow.target = catRowIndex;
+            catRow.target = catScrollTarget();
         } else {
-            if (r >= catRows.size() - 1) return false;
+            if (r >= catRows.size() - 1) return enterBrowse();      // past the last row: TMDB's catalogs
             catRowIndex++;
-            catRow.target = catRowIndex;
+            catRow.target = catScrollTarget();
         }
         popCatalogFocus();
         return true;
@@ -2017,37 +2089,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 posterRect(r, i, cardRect);
                 if (cardRect.right < 0 || cardRect.left > w) continue;
                 Catalogs.Item it = row.items.get(i);
-                Bitmap poster = catalogs.poster(it, Math.round(CAT_POSTER_W * k * 1.25f));
-                float f = zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0;
-                if (poster == null) {
-                    fill.setShader(null);
-                    fill.setColor(look.color(Look.PLACEHOLDER, dark()));
-                    c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
-                }
-                drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
-                if (poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
-                if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
-                    barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
-                    fill.setShader(null);
-                    fill.setColor(0x73FFFFFF);
-                    c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
-                    barRect.right = barRect.left + barRect.width() * Math.min(1f, it.progress);
-                    fill.setColor(0xFFFFFFFF);
-                    c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
-                }
-                if (it == openingItem && SystemClock.uptimeMillis() - openingAt >= OPEN_LOADER_MS) {
-                    // Waiting for where it streams: the poster dims a little and three dots pulse over it.
-                    fill.setShader(null);
-                    fill.setColor(0x80000000);
-                    c.drawRoundRect(cell, 14 * k, 14 * k, fill);
-                    fill.setColor(0xFFFFFFFF);
-                    Ui.dots(c, cell.centerX(), cell.centerY(), 7 * k, (SystemClock.uptimeMillis() - openingAt) / 1000f, fill);
-                }
-                fitPaint.set(lCatLabel);
-                c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
-                        cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
-                String meta = it.sub != null ? it.sub : it.stars;
-                if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
+                drawPoster(c, cardRect, it, zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0, y0);
             }
         }
     }
@@ -2064,7 +2106,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             it.serviceAsked = fetch ? 2 : 1;
             Launcher.get(activity).service(it.kind, it.id, fetch, pkg -> {
                 it.servicePkg = pkg;
-                invalidateAll();
+                markBadges();
             });
         }
         return it.servicePkg;
@@ -2077,18 +2119,498 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             p.serviceAsked = true;
             Launcher.get(activity).service(p.kind, p.id, true, pkg -> {
                 p.servicePkg = pkg;
-                invalidateAll();
+                markBadges();
             });
         }
         return p.servicePkg;
+    }
+
+    /** A badge arrived: the layers that draw them are drawn again. */
+    private void markBadges() {
+        catDirty = browseDirty = heroDirty = true;
+        wake();
     }
 
     /** The service's round icon in the corner of a card or poster (`r`, as drawn now). */
     private void drawBadge(Canvas c, RectF r, String pkg) {
         if (pkg == null || pkg.isEmpty()) return;
         int px = Math.round(34 * k);
-        Bitmap b = ServiceBadge.get(getContext(), pkg, px, () -> post(this::invalidateAll));
+        Bitmap b = ServiceBadge.get(getContext(), pkg, px, badgesReady);
         if (b != null) c.drawBitmap(b, r.left + 10 * k, r.top + 10 * k, null);
+    }
+
+    /** One poster of a row (Trakt's under the drawer, TMDB's on the browse screen) with its badge, bar, loader and captions; `y0` is the row's top. */
+    private void drawPoster(Canvas c, RectF cardRect, Catalogs.Item it, float f, float y0) {
+        Bitmap poster = catalogs.poster(it, Math.round(CAT_POSTER_W * k * 1.25f));
+        if (poster == null) {
+            fill.setShader(null);
+            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
+            c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
+        }
+        drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
+        if (poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
+        if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
+            barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
+            fill.setShader(null);
+            fill.setColor(0x73FFFFFF);
+            c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
+            barRect.right = barRect.left + barRect.width() * Math.min(1f, it.progress);
+            fill.setColor(0xFFFFFFFF);
+            c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
+        }
+        if (it == openingItem && SystemClock.uptimeMillis() - openingAt >= OPEN_LOADER_MS) {
+            // Waiting for where it streams: the poster dims a little and three dots pulse over it.
+            fill.setShader(null);
+            fill.setColor(0x80000000);
+            c.drawRoundRect(cell, 14 * k, 14 * k, fill);
+            fill.setColor(0xFFFFFFFF);
+            Ui.dots(c, cell.centerX(), cell.centerY(), 7 * k, (SystemClock.uptimeMillis() - openingAt) / 1000f, fill);
+        }
+        fitPaint.set(lCatLabel);
+        c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
+                cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
+        String meta = it.sub != null ? it.sub : it.stars;
+        if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
+    }
+
+    // MARK: - Browse screen (TMDB's catalogs): the focused title's details above, one catalog row below
+
+    private static final float BROWSE_Y0 = 640, BROWSE_PITCH = 460;
+
+    /** A badge picture is ready: the layers that show badges are drawn again (once; the picture then stays). */
+    private final Runnable markBadgesRun = this::markBadges;
+    private final Runnable badgesReady = () -> post(markBadgesRun);
+
+    /** Takes TMDB's current rows (a new list after a fetch), keeping the focus where it was when it can. */
+    private void syncBrowse() {
+        List<Catalogs.Row> rows = catalogs.browseRows();
+        if (rows == browseRows) return;
+        browseRows = rows;
+        browseShift = new Spring[rows.size()];
+        for (int i = 0; i < browseShift.length; i++) browseShift[i] = new Spring(0.34f, 1f, 0);
+        int[] cols = new int[rows.size()];
+        for (int i = 0; i < cols.length && i < browseCol.length; i++) cols[i] = Math.min(browseCol[i], Math.max(0, rows.get(i).items.size() - 1));
+        browseCol = cols;
+        for (int i = 0; i < cols.length; i++) browseShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
+        browseRowIndex = Math.min(browseRowIndex, Math.max(0, rows.size() - 1));
+        browsePos.snap(browseRowIndex);
+        if (zone == Z_BROWSE) {
+            if (rows.isEmpty()) leaveBrowse();
+            else touchBrowse();
+        }
+        browseDirty = true;
+    }
+
+    /** Down from the last of Trakt's rows (or from the drawer's buttons when there are none): the catalogs. */
+    private boolean enterBrowse() {
+        syncBrowse();
+        if (browseRows.isEmpty()) return false;
+        zone = Z_BROWSE;
+        browseIn.target = 1;
+        browsePos.snap(browseRowIndex);
+        browseFocus.snap(0);
+        browseFocus.target = 1;
+        touchBrowse();
+        return true;
+    }
+
+    private void leaveBrowse() {
+        browseTouched = "";
+        cancelAutoTrailer();
+        stopTrailer();
+        browseIn.target = 0;
+        if (!catRows.isEmpty()) zone = Z_CATALOG;
+        else if (drawerItems.isEmpty()) closeDrawer();
+        else zone = Z_DRAWER;
+        browseDirty = true;
+        wake();
+    }
+
+    /** Left and right change the title, up and down the catalog (up from the first goes back to Trakt's rows). */
+    private boolean moveBrowse(int dx, int dy) {
+        if (browseRows.isEmpty()) return false;
+        int r = browseRowIndex;
+        if (dx != 0) {
+            int next = Math.max(0, Math.min(browseRows.get(r).items.size() - 1, browseCol[r] + dx));
+            if (next == browseCol[r]) return false;
+            browseCol[r] = next;
+            float first = browseShift[r].target;
+            if (next < first) first = next;
+            else if (next > first + CAT_VISIBLE - 1) first = next - CAT_VISIBLE + 1;
+            browseShift[r].target = first;
+        } else if (dy < 0) {
+            if (r == 0) {
+                leaveBrowse();
+                return true;
+            }
+            browseRowIndex--;
+            browsePos.target = browseRowIndex;
+        } else {
+            if (r >= browseRows.size() - 1) return false;
+            browseRowIndex++;
+            browsePos.target = browseRowIndex;
+        }
+        browseFocus.snap(0);
+        browseFocus.target = 1;
+        touchBrowse();
+        return true;
+    }
+
+    private Catalogs.Item browseItem() {
+        if (browseRows.isEmpty()) return null;
+        List<Catalogs.Item> items = browseRows.get(browseRowIndex).items;
+        int c = Math.min(browseCol[browseRowIndex], items.size() - 1);
+        return c < 0 ? null : items.get(c);
+    }
+
+    /** The focused title changed: ask for its details (and its neighbours', so the next press is quick) and remake the text. */
+    private void touchBrowse() {
+        Catalogs.Item it = browseItem();
+        browseShown = it;
+        browseInfo = it == null ? null : details.info(it.kind, it.id);
+        if (it != null) {
+            List<Catalogs.Item> items = browseRows.get(browseRowIndex).items;
+            int c = browseCol[browseRowIndex];
+            for (int d = -1; d <= 1; d += 2) {
+                if (c + d >= 0 && c + d < items.size()) details.info(items.get(c + d).kind, items.get(c + d).id);
+            }
+        }
+        if (browseInfo != null && browseInfo.backdrop.isEmpty() && browseBack != null) {      // no picture for this one: the old one goes
+            browsePrev = browseBack;
+            browseBack = null;
+            browseSwap.snap(0);
+            browseSwap.target = 1;
+        }
+        browseTextGen = -1;
+        browseDirty = true;
+        String key = it == null ? "" : it.kind + it.id;
+        if (!key.equals(browseTouched)) {      // another title (not just the lists made again): its trailer may start by itself
+            browseTouched = key;
+            trailerSpent = false;
+            cancelAutoTrailer();
+        }
+        scheduleAutoTrailer();
+        wake();
+    }
+
+    /** Where poster `i` of row `r` is on the browse screen now. */
+    private void browseRect(int r, int i, RectF out) {
+        float y0 = (BROWSE_Y0 + (r - browsePos.value) * BROWSE_PITCH) * k;
+        float x = MARGIN * k + (i - browseShift[r].value) * (CAT_POSTER_W + CAT_GAP) * k;
+        out.set(x, y0 + 50 * k, x + CAT_POSTER_W * k, y0 + (50 + CAT_POSTER_H) * k);
+    }
+
+    private void drawBrowse(Canvas c) {
+        if (browseRows.isEmpty() || browseIn.value < 0.002f || lBrowseTitle == null) return;
+        drawBrowseDetails(c);
+        lCatTitle.setColor(look.color(Look.TITLE, dark()));
+        lCatLabel.setColor(look.color(Look.TITLE, dark()));
+        lCardMeta.setColor(look.color(Look.META, dark()));
+        c.save();
+        c.clipRect(0, (BROWSE_Y0 - 20) * k, w, h);        // the row sliding out never reaches the details
+        for (int r = 0; r < browseRows.size(); r++) {
+            float d = r - browsePos.value;
+            if (Math.abs(d) >= 1) continue;
+            float y0 = (BROWSE_Y0 + d * BROWSE_PITCH) * k;
+            Catalogs.Row row = browseRows.get(r);
+            c.drawText(row.title, MARGIN * k + 4 * k, y0 + 30 * k, lCatTitle);
+            int first = Math.max(0, (int) Math.floor(browseShift[r].value)), last = Math.min(row.items.size() - 1, first + CAT_VISIBLE + 1);
+            for (int i = first; i <= last; i++) {
+                browseRect(r, i, browseCell);
+                if (browseCell.right < 0 || browseCell.left > w) continue;
+                drawPoster(c, browseCell, row.items.get(i), zone == Z_BROWSE && r == browseRowIndex && i == browseCol[r] ? Ui.clamp(browseFocus.value) : 0, y0);
+            }
+        }
+        c.restore();
+    }
+
+    /** The video window on the left of the top card (16:9): the backdrop shows in it until the trailer plays. */
+    private void browseStage(RectF out) {
+        float left = MARGIN * k, height = 440 * k;
+        out.set(left, 90 * k, left + height * 16 / 9, 90 * k + height);
+    }
+
+    /** The focused title: its backdrop in the video window (cross-fading from the last one), the description beside it. */
+    private void drawBrowseDetails(Canvas c) {
+        browseStage(stage);
+        float r = 12 * k;
+        if (browseInfo != null) {
+            Bitmap want = details.backdrop(browseInfo);
+            if (want != null && want != browseBack) {
+                browsePrev = browseBack;
+                browseBack = want;
+                browseSwap.snap(0);
+                browseSwap.target = 1;
+                wake();
+            }
+        }
+        float swap = Ui.clamp(browseSwap.value);
+        if (swap > 0.999f) browsePrev = null;
+        tmp.set(stage);
+        tmp.offset(0, 10 * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f)));
+        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        if (browseBack == null && browsePrev == null) {
+            fill.setShader(null);
+            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
+            c.drawRoundRect(stage, r, r, fill);
+        } else {
+            if (browsePrev != null) roundImage(c, browsePrev, stage, r);
+            if (browseBack != null) {
+                int alpha = browsePrev == null ? 255 : Math.round(255 * swap);
+                bitmapPaint.setAlpha(alpha);
+                imageFill.setAlpha(alpha);
+                roundImage(c, browseBack, stage, r);
+                bitmapPaint.setAlpha(255);
+                imageFill.setAlpha(255);
+            }
+        }
+        if (trailerOn && trailer.loading()) {      // asked for, not showing yet: the picture dims and a spinner turns on it
+            fill.setShader(null);
+            fill.setColor(0x73000000);
+            c.drawRoundRect(stage, r, r, fill);
+            spin.setStrokeWidth(6 * k);
+            Ui.spinner(c, stage.centerX(), stage.centerY(), 34 * k, SystemClock.uptimeMillis() / 1000f, spin);
+        }
+        if (browseTextGen != Ui.generation) buildBrowseText();
+        lBrowseTitle.setColor(look.color(Look.TITLE, dark()));
+        lBrowseFacts.setColor(look.color(Look.META, dark()));
+        lBrowseText.setColor(look.color(Look.META, dark()));
+        float x = stage.right + 56 * k, y = stage.top;
+        if (browseTitleText != null) {
+            c.save();
+            c.translate(x, y);
+            browseTitleText.draw(c);
+            c.restore();
+            y += browseTitleText.getHeight();
+        }
+        if (!browseFacts.isEmpty()) {
+            float base = y + 18 * k - lBrowseFacts.ascent();
+            c.drawText(browseFacts, x, base, lBrowseFacts);
+            y = base + lBrowseFacts.descent();
+        }
+        if (browseOverviewText != null) {
+            c.save();
+            c.translate(x, y + 24 * k);
+            browseOverviewText.draw(c);
+            c.restore();
+        }
+        if (browseInfo != null && !browseInfo.logo.isEmpty()) {
+            int px = Math.round(64 * k);
+            Bitmap badge = ServiceBadge.get(getContext(), browseInfo.logo, px, badgesReady);
+            if (badge != null) c.drawBitmap(badge, w - MARGIN * k - px, stage.top, null);
+        }
+        drawTrailerHint(c);
+    }
+
+    private void buildBrowseText() {
+        browseTextGen = Ui.generation;
+        browseTitleText = null;
+        browseOverviewText = null;
+        browseFacts = "";
+        Catalogs.Item it = browseShown;
+        if (it == null) return;
+        int width = Math.max(1, Math.round(w - MARGIN * k - (stage.right + 56 * k) - 90 * k));
+        browseTitleText = StaticLayout.Builder.obtain(it.title, 0, it.title.length(), lBrowseTitle, width)
+                .setMaxLines(2)
+                .setEllipsize(TextUtils.TruncateAt.END)
+                .setLineSpacing(0, 0.94f)
+                .setIncludePad(false)
+                .build();
+        List<String> facts = new ArrayList<>();
+        String overview = "";
+        Details.Info info = browseInfo;
+        if (info != null) {
+            if (!info.facts.isEmpty()) facts.add(info.facts);
+            if (!info.genres.isEmpty()) facts.add(info.genres);
+            overview = !info.overview.isEmpty() ? info.overview : info.tagline;
+        } else if (it.stars != null) {
+            facts.add(it.stars);
+        }
+        browseFacts = String.join("  ·  ", facts);
+        if (!overview.isEmpty()) {
+            browseOverviewText = StaticLayout.Builder.obtain(overview, 0, overview.length(), lBrowseText, width)
+                    .setMaxLines(6)
+                    .setEllipsize(TextUtils.TruncateAt.END)
+                    .setLineSpacing(0, 1.05f)
+                    .setIncludePad(false)
+                    .build();
+        }
+    }
+
+    // MARK: - Trailer of the focused title: in the backdrop card (YouTube's embedded player), or in the YouTube app
+
+    private TrailerPlayer trailer;
+    private boolean trailerOn;
+    /** The running trailer started by itself (after the wait on a title): if it can't play, nothing opens. */
+    private boolean trailerAuto;
+    private static final long AUTO_TRAILER_MS = 3000;
+    /** This title's trailer has played or been stopped: no new automatic start until the focus moves to another title. */
+    private boolean trailerSpent, autoPending;
+    private final Runnable autoTrailer = () -> {
+        autoPending = false;
+        if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer(true);
+    };
+    private String trailerId = "";
+    /** Titles whose every trailer the embedded player refused (this run): no hint and no autoplay for them. */
+    private final java.util.Set<String> trailerBlocked = new java.util.HashSet<>();
+    private String browseTouched = "";      // the title focused last: kind + id
+    private String[] trailerIds = new String[0];     // this title's candidates, best first, and which one plays
+    private int trailerAt;
+    private final RectF pill = new RectF();
+    private final Paint spin = new Paint(Paint.ANTI_ALIAS_FLAG);
+    {
+        spin.setStyle(Paint.Style.STROKE);
+        spin.setStrokeCap(Paint.Cap.ROUND);
+        spin.setColor(0xFFFFFFFF);
+    }
+    private final Path playArrow = new Path();
+    private final TrailerPlayer.Listener trailerListener = new TrailerPlayer.Listener() {
+        @Override public void onPlaying() {
+            browseDirty = true;
+        }
+
+        @Override public void onEnded() {
+            stopTrailer();
+        }
+
+        @Override public void onFailed() {
+            if (trailerOn && trailerAt + 1 < trailerIds.length) {      // blocked here or not embeddable: the next trailer of the title
+                trailerAt++;
+                playTrailerAt();
+                return;
+            }
+            boolean auto = trailerAuto;
+            if (browseShown != null) trailerBlocked.add(browseShown.kind + browseShown.id);
+            stopTrailer();
+            if (!auto) showToast(Ui.tr("This trailer isn't available in your region."));      // asked for with a long press: say why nothing plays       // asked for with a long press, and the embedded player won't play it: the YouTube app will
+        }
+    };
+
+    /** Resting on a title starts its trailer after a few seconds, when trailers are on the home screen and the player can run. */
+    private boolean autoTrailerOk() {
+        return Prefs.trailers() && TrailerPlayer.available() && playableTrailer();
+    }
+
+    /** The focused title has a trailer and the embedded player hasn't refused them all. */
+    private boolean playableTrailer() {
+        return browseInfo != null && !browseInfo.trailer.isEmpty() && browseShown != null
+                && !trailerBlocked.contains(browseShown.kind + browseShown.id);
+    }
+
+    private void scheduleAutoTrailer() {
+        if (autoPending || trailerSpent || trailerOn || zone != Z_BROWSE || !autoTrailerOk()) return;
+        autoPending = true;
+        handler.postDelayed(autoTrailer, AUTO_TRAILER_MS);
+    }
+
+    private void cancelAutoTrailer() {
+        autoPending = false;
+        handler.removeCallbacks(autoTrailer);
+    }
+
+    /** Long press on OK or the remote's Play/Pause: starts the trailer, or pauses or resumes the one playing. */
+    private void trailerKey() {
+        if (trailerOn) trailer.togglePause();
+        else startTrailer(false);
+    }
+
+    /** `auto`: started by the wait on a title, so it only ever plays in the card (YouTube opens only on a long press). */
+    private void startTrailer(boolean auto) {
+        if (zone != Z_BROWSE) return;
+        cancelAutoTrailer();
+        trailerSpent = true;
+        trailerAuto = auto;
+        if (!auto && browseShown != null && trailerBlocked.contains(browseShown.kind + browseShown.id)) {      // refused before: don't try again
+            showToast(Ui.tr("This trailer isn't available in your region."));
+            return;
+        }
+        trailerIds = browseInfo == null || browseInfo.trailers.isEmpty() ? new String[0] : browseInfo.trailers.split(",");
+        trailerAt = 0;
+        trailerId = trailerIds.length > 0 ? trailerIds[0] : "";
+        if (trailerId.isEmpty()) {
+            if (!auto) showToast(Ui.tr("This title has no trailer."));
+            return;
+        }
+        if (!Prefs.trailers() || !TrailerPlayer.available()) {
+            if (!auto) openYoutube(trailerId);
+            return;
+        }
+        if (trailer == null) trailer = new TrailerPlayer(getContext(), trailerListener);
+        trailerOn = true;
+        playTrailerAt();
+    }
+
+    /** Plays the candidate `trailerAt` in the video window. */
+    private void playTrailerAt() {
+        browseStage(stage);
+        trailerId = trailerIds[trailerAt];
+        trailer.play(trailerId, Math.round(stage.left), Math.round(stage.top), Math.round(stage.width()), Math.round(stage.height()));
+        browseDirty = true;
+    }
+
+    private void stopTrailer() {
+        if (!trailerOn) return;
+        trailerSpent = true;
+        trailerOn = false;
+        trailer.stop();
+        browseDirty = true;
+        wake();
+    }
+
+    /**
+     * Opens the trailer where the person prefers: the official YouTube TV app, else another YouTube client (SmartTube and
+     * the like: the apps that answer a "vnd.youtube:" link, which only YouTube clients do), else a browser (the first app
+     * that opens the link, not Android's placeholder). Always with a plain watch link (some clients don't read the
+     * "vnd.youtube:" form), and always for one chosen app, so no chooser comes up.
+     */
+    private void openYoutube(String id) {
+        android.content.pm.PackageManager pm = getContext().getPackageManager();
+        android.content.Intent watch = new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://www.youtube.com/watch?v=" + id));
+        String official = null, client = null, browser = null;
+        try {
+            android.content.Intent clients = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id));
+            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(clients, 0)) {
+                if (client == null) client = r.activityInfo.packageName;
+            }
+            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(watch, 0)) {
+                String pkg = r.activityInfo.packageName;
+                if (pkg.equals("com.google.android.youtube.tv")) official = pkg;
+                else if (browser == null && !pkg.equals(client) && !pkg.equals("android") && !pkg.endsWith("frameworkpackagestubs")) browser = pkg;
+            }
+        } catch (RuntimeException e) {
+            AppLog.w("trailer apps: " + e.getMessage());
+        }
+        String pick = official != null ? official : client != null ? client : browser;
+        if (pick != null) watch.setPackage(pick);
+        try {
+            activity.startActivity(watch);
+        } catch (RuntimeException e) {
+            AppLog.w("trailer " + pick + ": " + e.getMessage());
+            showToast(Ui.tr("Couldn't open YouTube."));
+        }
+    }
+
+    /** The small "Hold OK for the trailer" pill at the video window's foot, while there is a trailer and it isn't playing. */
+    private void drawTrailerHint(Canvas c) {
+        if (zone != Z_BROWSE || trailerOn || !playableTrailer()) return;
+        String text = Ui.tr("Hold OK for the trailer");
+        float pad = 24 * k, arrow = 18 * k, gap = 14 * k, hh = 54 * k;
+        float x = stage.left + 24 * k, y = stage.bottom - 24 * k - hh;
+        pill.set(x, y, x + pad + arrow + gap + lBrowseFacts.measureText(text) + pad, y + hh);
+        fill.setShader(null);
+        fill.setColor(0x99000000);
+        c.drawRoundRect(pill, hh / 2, hh / 2, fill);
+        playArrow.reset();
+        playArrow.moveTo(pill.left + pad, y + hh / 2 - arrow / 2);
+        playArrow.lineTo(pill.left + pad + arrow, y + hh / 2);
+        playArrow.lineTo(pill.left + pad, y + hh / 2 + arrow / 2);
+        playArrow.close();
+        fill.setColor(0xFFFFFFFF);
+        c.drawPath(playArrow, fill);
+        lBrowseFacts.setColor(0xFFFFFFFF);
+        c.drawText(text, pill.left + pad + arrow + gap, y + hh / 2 + Ui.halfCap(lBrowseFacts), lBrowseFacts);
     }
 
     // MARK: - Toasts
@@ -2251,7 +2773,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : canReorder();
+                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : zone == Z_BROWSE || canReorder();
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
                         hold();
@@ -2262,6 +2784,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (okDown && !okHeld && !e.isCanceled() && spoken.keyClick()) activate();
                     okDown = okHeld = false;
                 }
+                return true;
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (zone != Z_BROWSE || sheetOpen) return false;
+                if (down && e.getRepeatCount() == 0) trailerKey();
                 return true;
             case KeyEvent.KEYCODE_BACK:
                 if (opening != null) {      // Back only cancels the open that is waiting for its answer
@@ -2284,6 +2812,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void back() {
         if (sheetOpen) {
             closeSheet();
+        } else if (trailerOn) {      // Back stops the trailer first
+            stopTrailer();
+        } else if (zone == Z_BROWSE) {
+            leaveBrowse();
+            retarget(false);
         } else if (zone == Z_CATALOG) {
             leaveCatalog();
             retarget(false);
@@ -2300,6 +2833,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void move(int dx, int dy) {
+        stopTrailer();      // an arrow ends the trailer, and moves on
         if (sheetOpen) {
             moveGrid(dx, dy);
             return;
@@ -2354,6 +2888,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_CATALOG:
                 if (!moveCatalog(dx, dy)) return;
                 break;
+            case Z_BROWSE:
+                if (!moveBrowse(dx, dy)) return;
+                break;
             case WIDGETS: {
                 List<Integer> on = widgets();
                 int at = on.indexOf(widgetIndex);
@@ -2375,6 +2912,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     closeDrawer();
                 } else if (enterCatalog()) {
                     // Down from the drawer's buttons: the poster rows come in below the weather and quotes
+                } else if (enterBrowse()) {
+                    // No Trakt rows to land on: straight into TMDB's catalogs
                 } else if (talkBack() && !widgets().isEmpty()) {
                     // Only with TalkBack: the widgets are there to be read, and this is how it gets to them.
                     zone = WIDGETS;
@@ -2470,6 +3009,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
             r = cardRects[cardIndex];
+        } else if (zone == Z_BROWSE) {
+            Catalogs.Item listed = browseItem();
+            if (listed == null) return;
+            stopTrailer();      // OK opens the title, even while its trailer plays
+            click.open();
+            browseRect(browseRowIndex, browseCol[browseRowIndex], cardRect);
+            openTitle(listed, cardRect);
+            return;
         } else if (zone == Z_CATALOG) {
             if (catRows.isEmpty()) return;
             Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
@@ -2479,7 +3026,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             } else if (listed.episodes) {      // a show you watch: its episodes, not the app
                 activity.startActivity(EpisodesActivity.intent(activity, listed));
             } else {
-                openTitle(listed);
+                posterRect(catRowIndex, catCol[catRowIndex], cardRect);
+                openTitle(listed, cardRect);
             }
             return;
         } else {
@@ -2513,16 +3061,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Catalogs.Item openingItem;
     private long openingAt;
 
-    private void openTitle(Catalogs.Item item) {
-        final RectF from = new RectF();
-        posterRect(catRowIndex, catCol[catRowIndex], from);
+    private void openTitle(Catalogs.Item item, RectF poster) {
+        final RectF from = new RectF(poster);
         openingItem = item;
         openingAt = SystemClock.uptimeMillis();
-        catDirty = true;
+        catDirty = browseDirty = true;
         opening = Launcher.get(activity).open(item.kind, item.id, item.imdb, target -> {
             opening = null;
             openingItem = null;
-            catDirty = true;
+            catDirty = browseDirty = true;
             show(target, from);
         });
     }
@@ -2575,6 +3122,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Holding OK: All Apps puts the app on the shelf or takes it off; on the shelf, the app is lifted to move
 
     private void hold() {
+        if (!sheetOpen && zone == Z_BROWSE) {       // the trailer of the focused title
+            handler.removeCallbacks(holdStart);
+            holdArmed = false;
+            okHeld = true;
+            trailerKey();        // held OK: starts the trailer, or pauses and resumes the one playing
+            return;
+        }
         if (sheetOpen) toggleShelf(); else startReorder();
     }
 
