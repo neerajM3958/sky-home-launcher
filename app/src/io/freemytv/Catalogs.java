@@ -42,7 +42,6 @@ final class Catalogs {
         String kind;        // "movie" or "tv"
         String title, poster;
         double rating;
-        String link;        // the title's page in its app, once found
         String imdb;        // Trakt's rows know it already: Stremio's page needs no TMDB request
         int traktId;        // Trakt's own id, for its episode list
         boolean episodes;   // OK opens the show's episodes (the "Shows you watch" row) instead of the title's page
@@ -375,10 +374,6 @@ final class Catalogs {
                     if (!row.items.isEmpty()) next.add(row);
                 }
                 if (next.isEmpty()) throw new IOException("TMDB returned no titles");
-                // A title found before keeps its link.
-                for (Row row : next) for (Item it : row.items) {
-                    for (Row old : rows) for (Item o : old.items) if (o.link != null && o.id == it.id && o.kind.equals(it.kind)) it.link = o.link;
-                }
                 rows = next;
                 rebuild();
                 at = System.currentTimeMillis();
@@ -431,7 +426,7 @@ final class Catalogs {
                 JSONArray items = new JSONArray();
                 for (Item it : row.items) {
                     items.put(new JSONObject().put("id", it.id).put("kind", it.kind).put("title", it.title).put("poster", it.poster)
-                            .put("rating", it.rating).put("link", it.link == null ? "" : it.link));
+                            .put("rating", it.rating));
                 }
                 a.put(new JSONObject().put("key", row.key).put("items", items));
             }
@@ -459,7 +454,6 @@ final class Catalogs {
                 it.title = p.optString("title");
                 it.poster = p.optString("poster");
                 it.rating = p.optDouble("rating", 0);
-                it.link = p.optString("link").isEmpty() ? null : p.optString("link");
                 it.stars = it.rating > 0 ? String.format(Ui.locale(), "★ %.1f", it.rating) : null;
                 row.items.add(it);
             }

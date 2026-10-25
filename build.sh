@@ -49,7 +49,9 @@ RENTBUY=false; [ "$(prop include_rent_buy false)" = "true" ] && RENTBUY=true
 # The look and the color scheme the TV starts with (what the person changes on the TV wins over these).
 LOOK="$(prop look material3-expressive)"; case "$LOOK" in glass|material3-expressive) ;; *) LOOK=material3-expressive ;; esac
 THEME="$(prop theme auto)"; case "$THEME" in auto|light|dark) ;; *) THEME=auto ;; esac
-CATALOGS="$(prop catalogs "trending,popular_movies,popular_shows,hindi,top_rated")"
+DEFAULT_CATALOGS="trending,popular_movies,popular_shows,hindi,top_rated"
+CATALOGS="$(prop catalogs "$DEFAULT_CATALOGS")"
+CATALOGS_CUSTOM=false; [ "$CATALOGS" != "$DEFAULT_CATALOGS" ] && CATALOGS_CUSTOM=true
 # Whole numbers in a range; anything else is the default.
 whole() { local v; v="$(prop "$1" "$2")"; [[ "$v" =~ ^[0-9]+$ ]] || v="$2"; (( v < $3 )) && v=$3; (( v > $4 )) && v=$4; printf '%s' "$v"; }
 PICKS="$(whole pick_count 3 3 12)"
@@ -85,6 +87,7 @@ final class Config {
     static final boolean WATCH_NEXT = $WATCHNEXT;
     static final boolean AUTO_LOCATION = $AUTOLOC;
     static final String CATALOGS = "$CATALOGS";
+    static final boolean CATALOGS_CUSTOM = $CATALOGS_CUSTOM;
     static final int PICK_COUNT = $PICKS;
     static final int PICK_ROTATE_SECONDS = $ROTATE;
 }

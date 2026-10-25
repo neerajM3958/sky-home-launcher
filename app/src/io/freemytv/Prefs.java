@@ -185,14 +185,31 @@ final class Prefs {
 
     static void setRegion(String v) { put("region", v); }
 
+    /**
+     * The picks carousel (the cards under the tabs): on unless the TV is short of memory (shortOfMemory) and the person
+     * hasn't chosen. Off, none are fetched or shown; the tabs go and the shelf and catalogs stay.
+     */
+    static boolean picks() {
+        if (app == null) return false;
+        SharedPreferences s = sp();
+        return s.contains("picks") ? s.getBoolean("picks", true) : !shortOfMemory();
+    }
+    static void setPicks(boolean on) { put("picks", on); }
+
+    /** The picks are off only because the TV is short of memory: the person hasn't chosen. */
+    static boolean picksOffForMemory() { return app != null && !sp().contains("picks") && shortOfMemory(); }
+
     /** Leave cartoons and anime out of the picks and the poster rows. */
     static boolean hideAnimation() { return app == null ? Config.HIDE_ANIMATION : sp().getBoolean("hideAnimation", Config.HIDE_ANIMATION); }
     static void setHideAnimation(boolean on) { put("hideAnimation", on); }
 
-    /** The poster rows that are on, in order (Catalogs' keys); the config's catalogs= until the person edits them. */
+    /**
+     * The poster rows that are on, in order (Catalogs' keys); the config's catalogs= until the person edits them. A TV short
+     * of memory starts with none when the config still has the rows it ships with (a list you wrote there is used as written).
+     */
     static List<String> catalogRows() {
         String v = app == null ? null : sp().getString("catalogRows", null);
-        if (v == null) v = Config.CATALOGS;
+        if (v == null) v = app != null && !Config.CATALOGS_CUSTOM && shortOfMemory() ? "none" : Config.CATALOGS;
         List<String> out = new ArrayList<>();
         for (String p : v.split(",")) {
             p = p.trim().toLowerCase(Locale.ROOT);
@@ -266,14 +283,30 @@ final class Prefs {
 
     /**
      * Trailers play inside the home screen (an embedded YouTube player); off, the YouTube app opens them. On unless the TV is
-     * short of memory (a low-RAM device or a 720p UI) and the person hasn't chosen.
+     * short of memory (shortOfMemory) and the person hasn't chosen.
      */
     static boolean trailers() { return sp().contains("trailers") ? sp().getBoolean("trailers", true) : !shortOfMemory(); }
     static void setTrailers(boolean on) { put("trailers", on); }
 
-    private static boolean shortOfMemory() {
-        android.app.ActivityManager am = (android.app.ActivityManager) app.getSystemService(Context.ACTIVITY_SERVICE);
-        return Backdrop.W <= 1280 || (am != null && am.isLowRamDevice());
+    private static Boolean shortMemory;
+
+    /**
+     * A TV short of memory: a 720p UI, a low-RAM flag, or under 1.5 GB in all. The features that hold the most (the picks'
+     * pictures, the trailer player, the poster rows) start off there, and the person can turn each on. Asked once.
+     */
+    static boolean shortOfMemory() {
+        Boolean known = shortMemory;
+        if (known == null) {
+            boolean low = Backdrop.W <= 1280;
+            android.app.ActivityManager am = (android.app.ActivityManager) app.getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                android.app.ActivityManager.MemoryInfo info = new android.app.ActivityManager.MemoryInfo();
+                am.getMemoryInfo(info);
+                low |= am.isLowRamDevice() || info.totalMem < 1536L * 1024 * 1024;
+            }
+            shortMemory = known = low;
+        }
+        return known;
     }
 
     /** The TV has been asked once for the permission to read it (the home screen doesn't ask again). */

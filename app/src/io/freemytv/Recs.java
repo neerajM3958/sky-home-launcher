@@ -47,7 +47,6 @@ final class Recs {
         String kind;            // "movie" or "tv"
         String title, backdrop, meta = "", app, pkg;
         long shownAt;           // when its picture was first drawn (UI thread): the picture fades in from then
-        String link;            // opens the title in its app (looked up with Watchmode), or null: the app's home
         boolean detailed;
         String servicePkg;      // routed picks: the app it opens in, for the card's icon (null not known yet, "" none; UI thread)
         boolean serviceAsked;
@@ -180,7 +179,7 @@ final class Recs {
 
     /** There is nothing to show and nothing coming: no TMDB key, or the last fetch failed or found no titles. */
     boolean noPicks() {
-        return !hasKey(context) || (picks.isEmpty() && !error.isEmpty());
+        return !hasKey(context) || !Prefs.picks() || (picks.isEmpty() && !error.isEmpty());
     }
 
     static String periodLabel() {
@@ -203,7 +202,7 @@ final class Recs {
     /** This hour's picks (pick_count, 3 by default), movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
     List<Pick> now(String kind) {
         List<Pick> list = new ArrayList<>();
-        if (!hasKey(context)) return list;    // no TMDB key: no recommendations
+        if (!hasKey(context) || !Prefs.picks()) return list;    // no TMDB key, or the picks are turned off: no recommendations
         Map<String, Boolean> have = new HashMap<>();   // one look per app, not per title (this runs every 15 s)
         for (Pick p : picks) {
             if ((kind == null || kind.equals(p.kind))
@@ -266,7 +265,7 @@ final class Recs {
 
     /** With a key: fetches the list if stale or the time of day (morning/afternoon/night) changed; then the details. */
     void refreshIfStale() {
-        if (!hasKey(context) || fetching) return;
+        if (!hasKey(context) || !Prefs.picks() || fetching) return;
         long now = System.currentTimeMillis();
         long stamp = sourceStamp();   // a new key, country, animation choice or installed streaming-app set refetches
         boolean newKey = stamp != keyStamp;
@@ -276,7 +275,7 @@ final class Recs {
         boolean stale = newKey || p != period || now - listAt > LIST_EVERY || now < listAt || picks.isEmpty()
                 || !listLanguage.equals(Ui.language);
         boolean missing = false;
-        for (Pick pick : wanted()) missing |= !pick.detailed || !hasImage(pick) || needsLink(pick);
+        for (Pick pick : wanted()) missing |= !pick.detailed || !hasImage(pick);
         if (!stale && !missing) return;
         keyStamp = stamp;
         fetching = true;
@@ -295,8 +294,7 @@ final class Recs {
                         failures++;
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
                     }
-                    findLink(pick);
-                    if (ROUTED.equals(pick.pkg)) Launcher.get(context).prefetch(pick.kind, pick.id);   // so OK opens it at once
+                    Launcher.get(context).prefetch(pick.kind, pick.id);   // so OK opens it at once
                 }
                 save();
                 if (tried > 0 && failures == tried) throw new IOException(last);
@@ -473,7 +471,6 @@ final class Recs {
                 q.meta = o.meta;
                 q.app = o.app;
                 q.pkg = o.pkg;
-                q.link = o.link;
                 q.detailed = true;
             }
         }
@@ -658,7 +655,6 @@ final class Recs {
         for (Pick q : list) {       // a title still in the list keeps the IMDb id it already found
             Pick o = old.get(key(q));
             if (o != null) {
-                q.link = o.link;
                 if (o.detailed) {       // its best backdrop was already chosen
                     q.backdrop = o.backdrop;
                     q.detailed = true;
@@ -886,55 +882,70 @@ final class Recs {
 
     // MARK: - Watchmode (the title's own page in its app; the free plan's web addresses are what the apps open)
 
-    private static String linkKey(Pick p) {
-        return "wm:" + p.kind + p.id + p.app;
-    }
-
-    private boolean needsLink(Pick p) {
-        return linksOn() && p.pkg != null && p.link == null
-                && cache.getString(linkKey(p), null) == null && System.currentTimeMillis() >= linkRetryAt;
-    }
-
     /** A key is set and Watchmode hasn't refused it (a refused key isn't tried again until it changes). */
     private boolean linksOn() {
         String key = Prefs.watchmodeKey();
-        return !listOnly() && !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
+        return !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
     }
 
-    /** Sets p.link from what was looked up before, or looks it up (2 requests of the free plan's 2,500 a month). */
-    private void findLink(Pick p) {
-        if (!linksOn() || p.pkg == null || p.link != null) return;
-        String saved = cache.getString(linkKey(p), null);
-        if (saved != null) {
-            p.link = saved.isEmpty() ? null : saved;
-            return;
+    /** The service's own kind of offer, best first: subscription, free, rent, buy (Watchmode's "type"). */
+    private static int sourceRank(String type) {
+        switch (type) {
+            case "sub": return 0;
+            case "free": return 1;
+            case "rent": return 2;
+            case "buy": return 3;
+            default: return -1;
         }
-        if (System.currentTimeMillis() < linkRetryAt) return;
+    }
+
+    /**
+     * The title's own page in a service's app (Watchmode's web address for it; `serviceKey` is a SERVICES key), kept after the
+     * first look (2 requests of the free plan's 2,500 a month, made when OK is pressed). Null with no key, when Watchmode doesn't
+     * know the title there, or when it can't be reached now (not again for 10 minutes). Waits on the network: not on the main thread.
+     */
+    String watchLink(String kind, int id, String serviceKey) {
+        if (!linksOn() || serviceKey == null) return null;
+        String saved = cache.getString("wm:" + kind + id + serviceKey, null);
+        if (saved != null) return saved.isEmpty() ? null : saved;
+        if (System.currentTimeMillis() < linkRetryAt) return null;
         try {
             String link = "";
-            JSONArray found = new JSONObject(watchmode("/search/?search_field=tmdb_" + p.kind + "_id&search_value=" + p.id))
+            JSONArray found = new JSONObject(watchmode("/search/?search_field=tmdb_" + kind + "_id&search_value=" + id))
                     .optJSONArray("title_results");
             if (found != null && found.length() > 0) {
                 JSONArray sources = new JSONArray(watchmode("/title/" + found.getJSONObject(0).getInt("id") + "/sources/?regions=" + region()));
                 String[] service = null;
-                for (String[] s : SERVICES) if (s[1].equals(p.app)) service = s;
-                for (int i = 0; service != null && i < sources.length() && link.isEmpty(); i++) {
+                for (String[] s : SERVICES) if (s[1].equals(serviceKey)) service = s;
+                int best = Integer.MAX_VALUE;
+                for (int i = 0; service != null && i < sources.length(); i++) {
                     JSONObject s = sources.getJSONObject(i);
                     String name = s.optString("name").toLowerCase(Locale.ROOT).replace(" ", "");
                     String want = service[0].replace(" ", "");
                     boolean same = want.equals("max") ? name.equals("max") : name.contains(want);
-                    if (same && s.optString("type").equals("sub") && s.optString("web_url").startsWith("https://")) link = s.optString("web_url");
+                    int rank = sourceRank(s.optString("type"));
+                    if (same && rank >= 0 && rank < best && s.optString("web_url").startsWith("https://")) {
+                        best = rank;
+                        link = s.optString("web_url");
+                    }
                 }
             }
-            cache.edit().putString(linkKey(p), link).apply();
-            p.link = link.isEmpty() ? null : link;
+            cache.edit().putString("wm:" + kind + id + serviceKey, link).apply();
+            return link.isEmpty() ? null : link;
         } catch (Exception e) {
             if ("Watchmode returned HTTP 401".equals(e.getMessage())) {
                 cache.edit().putInt("wm:refused", Prefs.watchmodeKey().hashCode()).apply();
             }
             linkRetryAt = System.currentTimeMillis() + 10 * 60_000L;   // quota or network: not again right away
             AppLog.w("watchmode: " + e.getMessage());
+            return null;
         }
+    }
+
+    /** The SERVICES key of the app with this package, or null. */
+    static String serviceKeyOf(String pkg) {
+        for (String[] s : SERVICES) if (s[2].equals(pkg)) return s[1];
+        return null;
     }
 
     private static String watchmode(String path) throws IOException {
@@ -1067,17 +1078,17 @@ final class Recs {
         try {
             JSONArray a = new JSONArray();
             for (Pick p : picks) {
-                a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop).put("link", p.link == null ? "" : p.link)
+                a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop)
                         .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
                         .put("detailed", p.detailed));
             }
             SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
                     .putString("language", listLanguage)
                     .putLong("keyStamp", keyStamp).putInt("version", CACHE_VERSION);
-            // Watchmode links of titles no longer in the list go (the refused-key mark stays).
-            Set<String> keep = new HashSet<>();
-            for (Pick p : picks) keep.add(linkKey(p));
-            for (String k : cache.getAll().keySet()) if (k.startsWith("wm:") && !k.equals("wm:refused") && !keep.contains(k)) e.remove(k);
+            // Watchmode links of every title opened are kept; past 600 they start over (the refused-key mark stays).
+            List<String> links = new ArrayList<>();
+            for (String k : cache.getAll().keySet()) if (k.startsWith("wm:") && !k.equals("wm:refused")) links.add(k);
+            if (links.size() > 600) for (String k : links) e.remove(k);
             e.apply();
         } catch (Exception ignored) {
         }
@@ -1093,7 +1104,6 @@ final class Recs {
             p.kind = o.optString("kind");
             p.title = o.optString("title");
             p.backdrop = o.optString("backdrop");
-            p.link = o.optString("link").isEmpty() ? null : o.optString("link");
             p.meta = o.optString("meta");
             p.app = o.optString("app").isEmpty() ? null : o.optString("app");
             p.pkg = o.optString("pkg").isEmpty() ? null : o.optString("pkg");

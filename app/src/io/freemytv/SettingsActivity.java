@@ -124,7 +124,7 @@ public class SettingsActivity extends Activity {
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15, INTEGRATIONS = 16;
         private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9;
-        private static final int TMDB_FROM = 1, TMDB_STREAM = 2, RENT_BUY_ROW = 3, TMDB_LANGS = 4, TMDB_HIDDEN = 5, TMDB_ANIMATION = 6, TMDB_CATALOGS = 7;   // the TMDB screen's rows after Region   // the main menu's rows that open them
+        private static final int TMDB_PICKS = 1, TMDB_FROM = 2, TMDB_STREAM = 3, RENT_BUY_ROW = 4, TMDB_LANGS = 5, TMDB_HIDDEN = 6, TMDB_ANIMATION = 7, TMDB_CATALOGS = 8;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -137,7 +137,7 @@ public class SettingsActivity extends Activity {
         private final Scene scene = new Scene();
         private final Look look = Themes.create(Prefs.look(), scene);
         private final Handler handler = new Handler(Looper.getMainLooper());
-        private final Spring[] pop = new Spring[16];     // one per row of the longest list (Home Settings: 14 with the Dollar row)
+        private final Spring[] pop = new Spring[16];     // one per row of the longest unscrolled list (MAIN: 11 rows)
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
         // The list picker (the app of a remote button): what it shows, which one is in use, where we are.
         private final List<String> pickLabels = new ArrayList<>();
@@ -304,7 +304,8 @@ public class SettingsActivity extends Activity {
                 case REMOTE_KEYS: {
                     boolean keys = screen == REMOTE_KEYS;
                     String[] labels = keys ? keyLabels() : settingLabels(), values = keys ? keyValues() : settingValues();
-                    return row < labels.length ? labels[row] + ", " + values[row] : "";
+                    int at = pickScroll + row;
+                    return at < labels.length ? labels[at] + ", " + values[at] : "";
                 }
                 case PICKER: {
                     int at = pickScroll + row;
@@ -432,7 +433,7 @@ public class SettingsActivity extends Activity {
                 case LEARN: return 1;
                 case TOR_LANGS: return Math.min(PICK_VISIBLE, torLangRows.size());
                 case HOME_CHOICE: return 3;
-                case HOME_SETTINGS: return settingLabels().length;
+                case HOME_SETTINGS: return Math.min(PICK_VISIBLE, settingLabels().length);
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
                 case SHELF_EDIT: return Math.min(PICK_VISIBLE, shelfRows.size());
                 default: return Prefs.KEYS.length + 1;      // the remote buttons, then "Added buttons"
@@ -554,6 +555,7 @@ public class SettingsActivity extends Activity {
             String error = recs.optString("error");
             int count = recs.optInt("count");
             if (!hasKey) line = Ui.tr("No TMDB key: set one in Free My TV › Integrations.");
+            else if (!Prefs.picks()) line = Prefs.picksOffForMemory() ? Ui.tr("Off by default: this TV is short of memory.") : Ui.tr("Off: the home screen shows no picks.");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
@@ -563,11 +565,11 @@ public class SettingsActivity extends Activity {
             c.drawText(TextUtils.ellipsize(line, notice, 790 * k, TextUtils.TruncateAt.END).toString(), x, y + 42 * k, notice);
             version.setTextAlign(Paint.Align.LEFT);
             c.drawText(Ui.tr("This product uses the TMDB API but is not endorsed or certified by TMDB."), x, y + 78 * k, version);
-            if (!Config.WATCHMODE_KEY.trim().isEmpty()) {
+            if (!Prefs.watchmodeKey().isEmpty()) {
                 c.drawText(Ui.tr("Links to the titles by Watchmode."), x, y + 108 * k, version);
             }
             version.setTextAlign(Paint.Align.CENTER);
-            return y + (Config.WATCHMODE_KEY.trim().isEmpty() ? 78 : 108) * k;
+            return y + (Prefs.watchmodeKey().isEmpty() ? 78 : 108) * k;
         }
 
         /** List row: no background; focused, white with a shadow (the Apple TV focus). Returns how focused it is. */
@@ -644,9 +646,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("Switching takes a few seconds; the screen blinks while it measures."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + 3 * (CHOICE_H + ROW_GAP) + 40) * k, hint);
+                    (LIST_TOP + 20 + 3 * (CHOICE_H + ROW_GAP) + 40) * k, notice);
         }
 
         private int blend(int a, int b, float f) {
@@ -782,6 +783,7 @@ public class SettingsActivity extends Activity {
                                 focus = 0;
                                 screen = TORRENTIO;
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
+                                pickScroll = 0;
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 screen = HOME_SETTINGS;
                             } else if (screen == PICKER) {
@@ -1014,14 +1016,14 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] tmdbLabels() {
-            return new String[] {Ui.tr("Region"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
+            return new String[] {Ui.tr("Region"), Ui.tr("Picks carousel"), Ui.tr("Recommend from"), Ui.tr("Only titles I can stream"), Ui.tr("Include rent or buy"),
                     Ui.tr("Languages"), Ui.tr("Hidden services"), Ui.tr("Hide cartoons and anime"), Ui.tr("Catalogs")};
         }
 
         private String[] tmdbValues() {
             int on = 0;
             for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
-            return new String[] {regionValue(), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
+            return new String[] {regionValue(), onOff(Prefs.picks()), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
                     onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()), languagesValue(), hiddenValue(),
                     onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
         }
@@ -1123,9 +1125,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("The language a title was made in. OK picks or drops one."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Added buttons (Free My TV > Remote Buttons): the person presses a button and chooses what it opens
@@ -1326,9 +1327,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("OK picks a language. With none picked, every language is used."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Apps turned off (Free My TV > Home Screen)
@@ -1373,10 +1373,9 @@ public class SettingsActivity extends Activity {
                 rowValue.setColor(blend(kept ? 0xF2FFFFFF : 0x8CFFFFFF, kept ? INK : 0x991C1C1E, f));
                 c.drawText(appsOffValue(at), rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             String text = appsOffRows.isEmpty() ? Ui.tr("No apps to turn off on this TV.")
                     : Ui.tr("OK keeps an app on, or lets Free My TV turn it off.");
-            c.drawText(text, LIST_X * k + 30 * k, (LIST_TOP + 20 + Math.max(1, rows) * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+            c.drawText(text, LIST_X * k + 30 * k, (LIST_TOP + 20 + Math.max(1, rows) * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Hidden services (Free My TV > TMDB)
@@ -1424,9 +1423,8 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             c.drawText(Ui.tr("OK hides or shows a service. Hidden ones are never used."), LIST_X * k + 30 * k,
-                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, hint);
+                    (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k, notice);
         }
 
         // MARK: - Stremio
@@ -1665,7 +1663,8 @@ public class SettingsActivity extends Activity {
                 return;
             }
             if (screen == TMDB) {
-                if (focus == TMDB_FROM) Prefs.setRecommendFromApps(!Prefs.recommendFromApps());
+                if (focus == TMDB_PICKS) Prefs.setPicks(!Prefs.picks());
+                else if (focus == TMDB_FROM) Prefs.setRecommendFromApps(!Prefs.recommendFromApps());
                 else if (focus == TMDB_STREAM) Prefs.setFlatrateOnly(!Prefs.flatrateOnly());
                 else if (focus == RENT_BUY_ROW && !disabledRow(RENT_BUY_ROW)) Prefs.setIncludeRentBuy(!Prefs.includeRentBuy());
                 else if (focus == TMDB_ANIMATION) Prefs.setHideAnimation(!Prefs.hideAnimation());
@@ -1685,7 +1684,8 @@ public class SettingsActivity extends Activity {
                 Prefs.setKeyApp(id, appPkgs.get(next));
                 return;
             }
-            switch (focus) {
+            int row = pickScroll + focus;
+            switch (row) {
                 case 0: break;   // OK opens the language picker.
                 case 1: {
                     int at = java.util.Arrays.asList(UNITS).indexOf(Prefs.temperature());
@@ -1716,7 +1716,7 @@ public class SettingsActivity extends Activity {
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
-                    Prefs.setCoin(focus - COIN_ROWS, !Prefs.coin(focus - COIN_ROWS));
+                    Prefs.setCoin(row - COIN_ROWS, !Prefs.coin(row - COIN_ROWS));
                     break;
             }
             HomeData.get(getContext()).settingsChanged();
@@ -1807,11 +1807,11 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TOR_LANGS;
+            return screen == PICKER || screen == SHELF_EDIT || screen == STREMIO || screen == LANGUAGES || screen == HIDDEN || screen == APPS_OFF || screen == TOR_LANGS || screen == HOME_SETTINGS;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : screen == TOR_LANGS ? torLangRows.size() : pickLabels.size();
+            return screen == SHELF_EDIT ? shelfRows.size() : screen == STREMIO ? stremioRows.size() : screen == LANGUAGES ? langRows.size() : screen == HIDDEN ? hiddenRows.size() : screen == APPS_OFF ? appsOffRows.size() : screen == TOR_LANGS ? torLangRows.size() : screen == HOME_SETTINGS ? settingLabels().length : pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1822,7 +1822,7 @@ public class SettingsActivity extends Activity {
             shelfOrder.clear();
             if (top) {
                 shelfOrder.addAll(HomeApps.topButtonKeys());
-                rebuildShelfRows(HomeApps.topCandidates());
+                rebuildShelfRows(HomeApps.topCandidates(getContext()));
             } else {
                 // Only the apps the shelf shows: one that was uninstalled would hold a place (and count toward the
                 // limit) without a row to take it off.
@@ -1911,12 +1911,11 @@ public class SettingsActivity extends Activity {
                 c.drawText(TextUtils.ellipsize(app[1], new TextPaint(rowLabel), 520 * k, TextUtils.TruncateAt.END).toString(), rowRect.left + 30 * k, base, rowLabel);
                 c.drawText(place >= 0 ? "#" + (place + 1) : Ui.tr("shelf|Off"), rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
             c.drawText(editingRows ? Ui.tr("OK turns a row on or off. ← → change the order.")
                     : editingTop ? Ui.tr("OK adds or removes a button. ← → change the order.")
                     : Ui.trf("OK adds or removes (up to {n}). ← → change the order.", "n", HomeApps.MAX_SHELF),
-                    LIST_X * k + 30 * k, hy, hint);
+                    LIST_X * k + 30 * k, hy, notice);
         }
 
         private void openPicker(int which) {
@@ -1974,10 +1973,9 @@ public class SettingsActivity extends Activity {
                     Symbols.draw(getContext(), c, "check", rowRect.right - 30 * k - cw / 2, rowRect.centerY(), 26 * k, blend(0xFFFFFFFF, INK, f));
                 }
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
             c.drawText((pickScroll + focus + 1) + " / " + pickLabels.size() + "  ·  " + Ui.tr("OK picks, Back cancels."),
-                    LIST_X * k + 30 * k, hy, hint);
+                    LIST_X * k + 30 * k, hy, notice);
         }
 
         private void drawList(Canvas c) {
@@ -1987,28 +1985,29 @@ public class SettingsActivity extends Activity {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
             c.drawText(keys ? Ui.tr("Remote Buttons") : Ui.tr("Home Settings"),
                     LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
-            for (int i = 0; i < labels.length; i++) {
+            int rows = rowCount();
+            for (int i = 0; i < rows; i++) {
+                int at = pickScroll + i;
                 float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
                 float f = drawRowBackground(c, i);
                 rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
-                boolean locked = !keys && i >= COIN_ROWS && !Prefs.quotes();
+                boolean locked = !keys && at >= COIN_ROWS && !Prefs.quotes();
                 rowValue.setColor(blend(locked ? 0x59FFFFFF : 0xB3FFFFFF, locked ? 0x591C1C1E : 0xB31C1C1E, f));
                 if (locked) rowLabel.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
-                c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
-                c.drawText(values[i], rowRect.right - 30 * k, base, rowValue);
+                c.drawText(labels[at], rowRect.left + 30 * k, base, rowLabel);
+                c.drawText(values[at], rowRect.right - 30 * k, base, rowValue);
             }
-            Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
-            float hy = (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
-            c.drawText(Ui.tr("OK or the arrows change the value."), LIST_X * k + 30 * k, hy, hint);
+            float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
+            c.drawText(Ui.tr("OK or the arrows change the value."), LIST_X * k + 30 * k, hy, notice);
             if (keys && !RemoteKeys.SKYWORTH) {
                 c.drawText(RemoteKeys.VESTEL ? Ui.tr("YouTube, Prime Video and Google Play: the TV itself controls those buttons.")
                         : RemoteKeys.KTC ? Ui.tr("Netflix, YouTube and Prime Video: the TV itself controls those buttons.")
                         : RemoteKeys.SONY ? Ui.tr("Sony default: the button opens what it always did.")
                         : RemoteKeys.FORMOVIE ? Ui.tr("The other buttons: the TV itself controls them.")
                         : RemoteKeys.supported() ? Ui.tr("Disney and Globoplay: the TV itself controls those buttons.")
-                        : Ui.tr("TCL remote buttons: on this TV they work as always."), LIST_X * k + 30 * k, hy + 38 * k, hint);
+                        : Ui.tr("TCL remote buttons: on this TV they work as always."), LIST_X * k + 30 * k, hy + 38 * k, notice);
             }
         }
 
@@ -2048,10 +2047,12 @@ public class SettingsActivity extends Activity {
                 String[] city = cities.get(pickScroll + focus);
                 Prefs.setCity(city[1], city[2], city[3]);
                 HomeData.get(c).settingsChanged();
+                pickScroll = 0;
                 focus = CITY_ROW;
                 screen = HOME_SETTINGS;
             } else if (screen == PICKER && pickFor == PICK_LANGUAGE) {
                 Prefs.setLanguage(languageChoices()[pickScroll + focus]);
+                pickScroll = 0;
                 focus = 0;
                 screen = HOME_SETTINGS;
             } else if (screen == PICKER && pickFor == PICK_REGION) {
@@ -2122,9 +2123,9 @@ public class SettingsActivity extends Activity {
             } else if (screen == ADDED_KEYS) {
                 if (focus < learnedCount()) openPicker(Prefs.KEYS.length + focus + 1);
                 else startLearn();
-            } else if (screen == HOME_SETTINGS && focus == 0) {
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == 0) {
                 openPicker(PICK_LANGUAGE);
-            } else if (screen == HOME_SETTINGS && focus == CITY_ROW) {
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == CITY_ROW) {
                 askCity();
                 return;
             } else if (screen == HOME_SETTINGS) {
@@ -2140,6 +2141,7 @@ public class SettingsActivity extends Activity {
                 activity.showPreview();
             } else if (focus == 2) {
                 screen = HOME_SETTINGS;
+                pickScroll = 0;
                 focus = 0;
             } else if (focus == 3) {
                 openShelfEditor(false);

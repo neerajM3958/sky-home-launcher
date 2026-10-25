@@ -36,6 +36,8 @@ final class Launcher {
         private final AtomicBoolean finished = new AtomicBoolean();
         private Runnable giveUp;
         private Handler main;
+        /** Where it opens without the title's own page, once known: what the wait gives up on if Watchmode is slow. */
+        private volatile Routing.Target plain;
 
         private boolean finish() {
             if (!finished.compareAndSet(false, true)) return false;
@@ -140,7 +142,9 @@ final class Launcher {
         Handle h = new Handle();
         h.main = main;
         h.giveUp = () -> {
-            if (h.finish()) done.onTarget(target(null, kind, imdb));
+            if (!h.finish()) return;
+            Routing.Target known = h.plain;
+            done.onTarget(known != null ? known : target(null, kind, imdb));
         };
         main.postDelayed(h.giveUp, GIVE_UP_MS);
         net.execute(() -> {
@@ -152,10 +156,12 @@ final class Launcher {
                     AppLog.w("where it streams: " + e.getMessage());
                 }
             }
-            final Info found = info;
+            final Routing.Target plain = target(info, kind, imdb);
+            h.plain = plain;
+            final Routing.Target page = withPage(plain, kind, tmdbId);
             main.post(() -> {
                 if (!h.finish()) return;
-                done.onTarget(target(found, kind, imdb));
+                done.onTarget(page);
             });
         });
         return h;
@@ -175,6 +181,13 @@ final class Launcher {
 
     private Routing.Target target(Info info, String kind, String imdb) {
         return withPage(Routing.decide(info == null ? null : info.offers, env), kind, imdb, info);
+    }
+
+    /** A service's app opens the title's own page when Watchmode has its address (Stremio has its own, below). */
+    private Routing.Target withPage(Routing.Target t, String kind, int tmdbId) {
+        if (t.kind != Routing.APP || Recs.STREMIO.equals(t.pkg) || tmdbId <= 0) return t;
+        String link = recs.watchLink(kind, tmdbId, Recs.serviceKeyOf(t.pkg));
+        return link == null ? t : t.withUri(link);
     }
 
     /** Stremio opens the title's own page from its IMDb id. */
@@ -203,9 +216,12 @@ final class Launcher {
             if (info == null) return;
             // The best place it streams, whether the TV has its app or not: its own logo.
             Routing.Offer best = null;
+            int bestRank = Integer.MAX_VALUE, at = 0;
             for (Routing.Offer o : info.offers) {
-                if (o.logo.isEmpty() || env.hidden(o.name)) continue;
-                if (best == null || o.tier < best.tier) best = o;
+                int rank = Routing.rank(o, at++, Routing.ready(o, env));
+                if (o.logo.isEmpty() || env.hidden(o.name) || rank >= bestRank) continue;
+                best = o;
+                bestRank = rank;
             }
             String logo = best == null ? "" : best.logo;
             main.post(() -> done.accept(logo));

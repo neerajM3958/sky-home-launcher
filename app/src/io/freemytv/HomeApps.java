@@ -55,8 +55,8 @@ final class HomeApps {
     private HomeApps() {}
 
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5;
-    /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
-    static final int INPUTS = 7;
+    /** The "HDMI input" and "AV input" buttons: one input opens at once, several open a popover to choose (the home screen handles it). */
+    static final int INPUT_GROUP = 7;
     /** The "Screensaver" button: shows our screensaver full screen (the settings app's preview), any arrow, OK or Back ends it. */
     static final int SCREENSAVER = 8;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
@@ -190,9 +190,9 @@ final class HomeApps {
 
     // MARK: - Top buttons (the round ones at the top right)
 
-    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings", TOP_SAVER = "screensaver", TOP_HOME = "homesettings";
+    static final String TOP_LIVE = "live", TOP_AV = "av", TOP_HDMI = "hdmi", TOP_SETTINGS = "settings", TOP_SAVER = "screensaver", TOP_HOME = "homesettings";
     /** Everything the top buttons can show. */
-    static final List<String> TOP_ALL = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SAVER, TOP_HOME, TOP_SETTINGS));
+    static final List<String> TOP_ALL = Collections.unmodifiableList(java.util.Arrays.asList(TOP_SAVER, TOP_HOME, TOP_SETTINGS, TOP_LIVE, TOP_AV, TOP_HDMI));
     static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_SAVER, TOP_HOME, TOP_SETTINGS));
     static final int MAX_TOP = TOP_ALL.size();
 
@@ -201,31 +201,39 @@ final class HomeApps {
         List<String> saved = Prefs.topButtons();
         if (saved == null) return TOP_DEFAULT;
         List<String> keys = new ArrayList<>();
-        for (String key : saved) if (TOP_ALL.contains(key) && !keys.contains(key)) keys.add(key);
+        for (String key : saved) {
+            if (key.equals("inputs")) key = TOP_HDMI;       // the old "HDMI Inputs" button, which opened the drawer's inputs
+            if (TOP_ALL.contains(key) && !keys.contains(key)) keys.add(key);
+        }
         return keys;
     }
 
-    /** The top buttons, ready to draw (0 to 3 of them). */
-    static List<Item> topButtons() {
+    /** The top buttons, ready to draw: an input button only on a TV that has such an input. */
+    static List<Item> topButtons(Context c) {
         List<Item> items = new ArrayList<>();
-        for (String key : topButtonKeys()) items.add(topButton(key));
+        for (String key : topButtonKeys()) if (hasTop(c, key)) items.add(topButton(key));
         return items;
+    }
+
+    private static boolean hasTop(Context c, String key) {
+        return !key.equals(TOP_AV) && !key.equals(TOP_HDMI) || !inputGroup(c, key).isEmpty();
     }
 
     private static Item topButton(String key) {
         switch (key) {
             case TOP_LIVE: return action(LIVE_TV, TOP_LIVE, Ui.tr("light|Live TV"), "live_tv");
-            case TOP_INPUTS: return action(INPUTS, TOP_INPUTS, Ui.tr("HDMI Inputs"), "hdmi");
+            case TOP_AV: return action(INPUT_GROUP, TOP_AV, Ui.tr("AV input"), "av");
+            case TOP_HDMI: return action(INPUT_GROUP, TOP_HDMI, Ui.tr("HDMI input"), "hdmi");
             case TOP_SAVER: return action(SCREENSAVER, TOP_SAVER, Ui.tr("Screensaver"), "bedtime");
             case TOP_HOME: return action(SETTINGS, TOP_HOME, Ui.tr("Home Settings"), "sparkles");
             default: return action(ANDROID_SETTINGS, TOP_SETTINGS, Ui.tr("light|Settings"), "settings");   // the TV's own; Home Settings is in the drawer
         }
     }
 
-    /** What can go in the top buttons, as {key, name}. */
-    static List<String[]> topCandidates() {
+    /** What can go in the top buttons on this TV, as {key, name}. */
+    static List<String[]> topCandidates(Context c) {
         List<String[]> out = new ArrayList<>();
-        for (String key : TOP_ALL) out.add(new String[] {key, topButton(key).label});
+        for (String key : TOP_ALL) if (hasTop(c, key)) out.add(new String[] {key, topButton(key).label});
         return out;
     }
 
@@ -282,12 +290,47 @@ final class HomeApps {
         return it;
     }
 
-    /** For the bottom drawer: live TV and every HDMI input (the ones with no device are shown dimmed). */
-    static List<Item> allInputs(Context c) {
-        List<Item> items = new ArrayList<>();
-        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("Live TV"), "tv"));
-        items.addAll(inputs(c, true));
-        return items;
+    /** The inputs a top button stands for (TOP_HDMI or TOP_AV): all of them, the ones with no device dimmed. */
+    static List<Item> inputGroup(Context c, String key) {
+        return key.equals(TOP_AV) ? avInputs(c) : inputs(c, true);
+    }
+
+    /** The analog video inputs (AV, component, S-Video, SCART), in the order the TV lists them. */
+    private static List<Item> avInputs(Context c) {
+        List<Item> out = new ArrayList<>();
+        TvInputManager tim = (TvInputManager) c.getSystemService(Context.TV_INPUT_SERVICE);
+        if (tim == null) return out;
+        List<TvInputInfo> list = new ArrayList<>();
+        try {
+            for (TvInputInfo info : tim.getTvInputList()) {
+                int type = info.getType();
+                if (type == TvInputInfo.TYPE_COMPOSITE || type == TvInputInfo.TYPE_COMPONENT || type == TvInputInfo.TYPE_SVIDEO
+                        || type == TvInputInfo.TYPE_SCART) list.add(info);
+            }
+        } catch (RuntimeException e) {
+            return out;
+        }
+        Collections.sort(list, (a, b) -> a.getId().compareTo(b.getId()));
+        for (int i = 0; i < list.size(); i++) {
+            TvInputInfo info = list.get(i);
+            int state = TvInputManager.INPUT_STATE_DISCONNECTED;
+            try {
+                state = tim.getInputState(info.getId());
+            } catch (RuntimeException ignored) {
+            }
+            CharSequence custom = null;
+            try {
+                custom = info.loadCustomLabel(c);
+            } catch (RuntimeException ignored) {
+            }
+            String named = custom != null && custom.length() > 0 ? custom.toString() : String.valueOf(info.loadLabel(c)).trim();
+            Item it = shortcut(INPUT, "av" + (i + 1), named.isEmpty() ? "AV " + (i + 1) : named, "av");
+            it.inputId = info.getId();
+            it.number = String.valueOf(i + 1);
+            it.connected = state == TvInputManager.INPUT_STATE_CONNECTED;
+            out.add(it);
+        }
+        return out;
     }
 
     private static List<Item> inputs(Context c) {
