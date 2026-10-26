@@ -522,9 +522,12 @@ public class SettingsActivity extends Activity {
                 c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
                 float right = rowRect.right - 30 * k;
                 if (off) {
-                    // Nothing to open: no chevron, and the reason where the value goes.
+                    // Nothing to open: no chevron, and the reason where the value goes (ellipsized so a long
+                    // reason, e.g. "Needs Sky Home Launcher mode…", never runs into the row's label).
                     rowValue.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
-                    c.drawText(values[i], right, base, rowValue);
+                    float maxWidth = right - (rowRect.left + 30 * k) - rowLabel.measureText(labels[i]) - 20 * k;
+                    CharSequence shownOff = TextUtils.ellipsize(values[i], new TextPaint(rowValue), Math.max(0, maxWidth), TextUtils.TruncateAt.END);
+                    c.drawText(shownOff, 0, shownOff.length(), right, base, rowValue);
                 } else if (i >= 2) {
                     float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
                     Symbols.draw(getContext(), c, "chevron_right", right - cw / 2, rowRect.centerY(), 22 * k, blend(0x66FFFFFF, 0x991C1C1E, f));
@@ -611,11 +614,11 @@ public class SettingsActivity extends Activity {
         }
 
         private float drawComparison(Canvas c, float y) {
-            float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k;
+            float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k, gap = 16 * k;
             c.drawText(Ui.tr("COMPARISON"), x, y, header);
             cellValue.setColor(look.inkAlpha(0x73FFFFFF, currentNight));
-            c.drawText(Ui.tr("Original"), colA, y, cellValue);
-            c.drawText("Sky Home Launcher", colB, y, cellValue);
+            drawEllipsizedRight(c, Ui.tr("Original"), colA, y, colA - x - gap, cellValue);
+            drawEllipsizedRight(c, "Sky Home Launcher", colB, y, colB - colA - gap, cellValue);
             cellValue.setColor(look.ink(0xD9FFFFFF, currentNight));
             JSONObject metrics = state.optJSONObject("metrics");
             JSONObject a = metrics == null ? null : metrics.optJSONObject(HomeMode.ORIGINAL);
@@ -629,6 +632,12 @@ public class SettingsActivity extends Activity {
                 c.drawText(metric(b, rows[i][1]), colB, base, cellValue);
             }
             return y + (46 + 40 * rows.length) * k;
+        }
+
+        /** Right-aligned text, shortened with an ellipsis if it wouldn't fit in maxWidth (so two columns never overlap). */
+        private static void drawEllipsizedRight(Canvas c, String text, float right, float y, float maxWidth, Paint p) {
+            CharSequence out = TextUtils.ellipsize(text, new TextPaint(p), maxWidth, TextUtils.TruncateAt.END);
+            c.drawText(out, 0, out.length(), right, y, p);
         }
 
         private void drawNotices(Canvas c, float y) {

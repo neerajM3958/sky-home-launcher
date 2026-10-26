@@ -145,7 +145,7 @@ TV, in *Sky Home Launcher* → *Home Settings*, and the TV's choice wins:
 | `pick_count` | How many picks the home screen rotates through, 3 to 12. At 3 it shows this hour's three; with more, left and right slide through them in a circle | 3 |
 | `pick_rotate_seconds` | If above 0, the picks move by themselves this often while focus is not on them | 0 |
 
-Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
+Changed something? Run `./build.sh` and install again. Keep `skyhome.keystore`: updates are signed with it.
 
 *Sky Home Launcher* → *TMDB* → *Picks carousel* turns the picks (the cards under the tabs) on or off. On a TV short
 of memory (a 720p UI, a low-RAM flag or under 1.5 GB) they start off, and so do the trailers played inside the home

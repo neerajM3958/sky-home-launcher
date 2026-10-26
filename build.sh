@@ -102,7 +102,7 @@ VERSION="${SKYHOME_VERSION:-local-$(date +%Y%m%d%H%M%S)}"
 "$BT/aapt2" compile --dir app/res -o out/res.zip
 # Fonts uncompressed: Android reads them straight from the APK.
 "$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip \
-  --min-sdk-version 26 --target-sdk-version 33 --version-name "$VERSION" -A app/assets -0 ttf
+  --min-sdk-version 26 --target-sdk-version 33 --version-name "$VERSION" --replace-version -A app/assets -0 ttf
 # Windows aapt2 packs assets with backslash separators ("assets/symbols\x.png") and Android
 # cannot find them: the home screen loses its icons and fonts. Rename the zip entries to "/".
 case "$(uname -s 2>/dev/null)" in
@@ -154,10 +154,10 @@ if command -v zip >/dev/null; then (cd out && zip -qj base.apk classes.dex)
 else "${JAVA_HOME:+$JAVA_HOME/bin/}jar" -u -M -f out/base.apk -C out classes.dex; fi # Git Bash has no zip
 "$BT/zipalign" -f -p 4 out/base.apk out/aligned.apk
 
-# --- Sign with your own key (created once; updates need the same key, so keep freemytv.keystore)
-if [ ! -f freemytv.keystore ]; then
-  "$KEYTOOL" -genkeypair -keystore freemytv.keystore -alias freemytv -keyalg RSA -keysize 2048 -validity 20000 \
+# --- Sign with your own key (created once; updates need the same key, so keep skyhome.keystore)
+if [ ! -f skyhome.keystore ]; then
+  "$KEYTOOL" -genkeypair -keystore skyhome.keystore -alias freemytv -keyalg RSA -keysize 2048 -validity 20000 \
     -storepass freemytv -keypass freemytv -dname "CN=Sky Home Launcher" >/dev/null 2>&1
 fi
-"$BT/apksigner$BAT" sign --ks freemytv.keystore --ks-pass pass:freemytv --key-pass pass:freemytv --out SkyHomeLauncher.apk out/aligned.apk
+"$BT/apksigner$BAT" sign --ks skyhome.keystore --ks-pass pass:freemytv --key-pass pass:freemytv --out SkyHomeLauncher.apk out/aligned.apk
 echo "Built SkyHomeLauncher.apk ($(du -h SkyHomeLauncher.apk | cut -f1), version $VERSION). Install: adb install -r SkyHomeLauncher.apk"

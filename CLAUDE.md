@@ -29,7 +29,7 @@ before you do it, and let them do the taps on the TV.
    it. If they paste it in the chat anyway, put it only in `config.properties`.
    Without a key everything works except the picks and the screensaver photos.
    The same goes for the optional `watchmode_key` (free, watchmode.com; makes titles open their own page in the app): theirs, secret, only in `config.properties`.
-5. **Build:** `./build.sh` → `SkyHomeLauncher.apk`. Keep `freemytv.keystore`: updates must be signed with the same key.
+5. **Build:** `./build.sh` → `SkyHomeLauncher.apk`. Keep `skyhome.keystore`: updates must be signed with the same key.
 6. **Install:** `adb connect <IP>:5555`. The TV asks *Allow USB debugging?*: tell them to accept and tick *Always
    allow*. Then `adb install -r SkyHomeLauncher.apk`. On TCL, also `adb shell "appops set com.skyhome.launcher AUTO_START allow || appops set com.skyhome.launcher APP_AUTO_START allow"`
    (some firmware calls the operation `APP_AUTO_START`; this tries both):
@@ -57,7 +57,7 @@ before you do it, and let them do the taps on the TV.
 
 A release build is the generic `SkyHomeLauncher.apk` (no `config.properties` in the repo, so `build.sh` makes a
 keyless one: picks off, city from the TV's time zone), signed with the project's own key
-(`FREEMYTV_KEYSTORE_BASE64`, a repo secret) and published by hand from the Actions tab
+(`SKYHOME_KEYSTORE_BASE64`, a repo secret) and published by hand from the Actions tab
 (`.github/workflows/release.yml`, `workflow_dispatch`). The release tag becomes the version shown in Settings
 (`SKYHOME_VERSION` in `build.sh`); a plain local build instead shows its own `local-<timestamp>`.
 

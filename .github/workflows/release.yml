@@ -46,7 +46,7 @@ jobs:
       # place over whatever people already installed. Added once as a repo secret: see CONTRIBUTING or ask the
       # maintainer. Without it, build.sh would generate a throwaway key and break updates for everyone.
       - name: Restore the signing key
-        run: echo "${{ secrets.FREEMYTV_KEYSTORE_BASE64 }}" | base64 -d > freemytv.keystore
+        run: echo "${{ secrets.SKYHOME_KEYSTORE_BASE64 }}" | base64 -d > skyhome.keystore
 
       # No config.properties in the repo (it's gitignored and never committed): build.sh creates a keyless one, the
       # same generic build every release has shipped (picks off, city from the TV's time zone). The release tag
