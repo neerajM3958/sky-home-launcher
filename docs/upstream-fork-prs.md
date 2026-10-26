@@ -73,7 +73,7 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [190](https://github.com/simbasjungles/free-my-tv/pull/190) | Samsung: Prime Video on 2020 TVs reaches the shelf | 2026-10-23 | web | Rejected | web/ only — platform dropped |
 | [194](https://github.com/simbasjungles/free-my-tv/pull/194) | Protect the onn 4K Streaming Box's system pieces | 2026-10-23 | app | Ready | Device protection list addition (`HomeMode.PROTECTED`); low risk, likely a clean merge |
 | [205](https://github.com/simbasjungles/free-my-tv/pull/205) | Screensaver: read the settings again when it starts | 2026-10-23 | app | Ready | Prefs.reload() with MODE_MULTI_PROCESS for ScreensaverAlone (Android 11); small, self-contained, no conflicts found |
-| [208](https://github.com/simbasjungles/free-my-tv/pull/208) | Xiaomi TVs: the Mi button opens Free My TV, not PatchWall | 2026-10-23 | app | Pending | Brand remote-key fix; trivial rename needed ("Free My TV" text) if ported |
+| [208](https://github.com/simbasjungles/free-my-tv/pull/208) | Xiaomi TVs: the Mi button opens Free My TV, not PatchWall | 2026-10-23 | app | Superseded | We already debloat (turn off) Xiaomi's PatchWall, and the Mi button (a global key) can already be recorded via our remote-button *learning* feature for a custom action — no Xiaomi-specific code needed |
 | [209](https://github.com/simbasjungles/free-my-tv/pull/209) | Picks: skip "… Amazon Channel" providers; Apple TV only as TMDB provider 350 | 2026-10-23 | app | Pending | Picks/routing logic fix; check against our picks-carousel and routing changes |
 | [210](https://github.com/simbasjungles/free-my-tv/pull/210) | LG and Samsung: shelf logos lifted off the TV's icons, filling the tile | 2026-10-23 | web | Rejected | web/ only — platform dropped |
 | [213](https://github.com/simbasjungles/free-my-tv/pull/213) | HY300 projectors: Keystone and Screen Mirroring shortcuts, HDMI that opens | 2026-10-23 | app + tools (+ docs) | Pending | New device support (HY300/Amlogic projector shortcuts); check against our top-buttons/inputs rework since fork |
@@ -114,5 +114,6 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [297](https://github.com/simbasjungles/free-my-tv/pull/297) | Optimized Traditional Chinese language support | 2026-10-25 | app | Pending | Translation refinement; likely low risk, review with #240 |
 | [298](https://github.com/simbasjungles/free-my-tv/pull/298) | LG and Samsung: About this TV in Home Settings (#265) | 2026-10-25 | app + web (mixed) | Pending | Mostly LG/Samsung by title, but touches `app/` too — check what the Android part actually is before rejecting outright |
 
-**Totals.** 48 PRs in this snapshot: 10 `Rejected` (9 web/webos/tizen-only, 1 moot doc/CI), 9 `Ready` (#102, #124,
-#163, #167, #175, #178, #194, #205, #227 — #102/#178/#227 to be planned together), 29 `Pending`.
+**Totals.** 48 PRs in this snapshot: 10 `Rejected` (9 web/webos/tizen-only, 1 moot doc/CI), 1 `Superseded` (#208 —
+already covered by our PatchWall debloat + remote-button learning), 9 `Ready` (#102, #124, #163, #167, #175, #178,
+#194, #205, #227 — #102/#178/#227 to be planned together), 28 `Pending`.
