@@ -49,7 +49,7 @@ final class Trakt {
     private static final long CHECK_EVERY = 30 * 60_000L;      // one small request tells whether anything changed
     private static final long RETRY_AFTER_FAILURE = 10 * 60_000L;
     // VERSION clears everything, the sign-in too; ROWS_VERSION only the saved rows (when a row is added or changes shape).
-    private static final int VERSION = 1, ROWS_VERSION = 4, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
+    private static final int VERSION = 1, ROWS_VERSION = 5, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
     private static final long YEAR = 365L * 24 * 3600_000L;
 
     private static Trakt instance;
@@ -114,6 +114,26 @@ final class Trakt {
     }
 
     boolean connected() { return !sp.getString("refresh", "").isEmpty(); }
+
+    /** Resolves a TMDB show id to Trakt for watched marks. */
+    void resolveTmdb(int tmdbId, java.util.function.Consumer<Integer> done) {
+        if (!connected() || tmdbId <= 0) { main.post(() -> done.accept(0)); return; }
+        episodesNet.execute(() -> {
+            int id = 0;
+            try {
+                JSONArray results = new JSONArray(get("/search/tmdb/" + tmdbId + "?type=show"));
+                if (results.length() > 0) {
+                    JSONObject show = results.getJSONObject(0).optJSONObject("show");
+                    JSONObject ids = show == null ? null : show.optJSONObject("ids");
+                    if (ids != null) id = ids.optInt("trakt");
+                }
+            } catch (Exception e) {
+                AppLog.w("Trakt TMDB lookup: " + e.getMessage());
+            }
+            int answer = id;
+            main.post(() -> done.accept(answer));
+        });
+    }
 
     /** The sign-in ran out (Trakt refused to renew it): the person has to connect again. */
     boolean needsReconnect() { return sp.getBoolean("reconnect", false) && !connected(); }
@@ -231,7 +251,7 @@ final class Trakt {
         long now = System.currentTimeMillis() / 1000;
         if (now < sp.getLong("expires", 0) - 3600) return sp.getString("access", "");
         Reply r = call("POST", "/oauth/token", obj("refresh_token", sp.getString("refresh", ""),
-                "client_id", Config.TRAKT_CLIENT_ID.trim(), "grant_type", "refresh_token"), null);
+                "client_id", Prefs.traktClientId(), "grant_type", "refresh_token"), null);
         if (r.code == 200) {
             try {
                 saveTokens(new JSONObject(r.body));
@@ -382,6 +402,7 @@ final class Trakt {
             Catalogs.Item it = item(show, "tv", showPoster(id));
             if (it == null) continue;
             it.episodes = true;
+            try { it.at = java.time.Instant.parse(all.get(i).time).toEpochMilli(); } catch (Exception ignored) {}
             row.items.add(it);
         }
         return row;
@@ -671,7 +692,7 @@ final class Trakt {
             c.setReadTimeout(20000);
             c.setRequestProperty("Content-Type", "application/json");
             c.setRequestProperty("trakt-api-version", "2");
-            c.setRequestProperty("trakt-api-key", Config.TRAKT_CLIENT_ID.trim());
+            c.setRequestProperty("trakt-api-key", Prefs.traktClientId());
             c.setRequestProperty("User-Agent", "FreeMyTV");
             if (token != null) c.setRequestProperty("Authorization", "Bearer " + token);
             if (body != null) {

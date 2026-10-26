@@ -42,7 +42,9 @@ public class EpisodesActivity extends Activity {
     static Intent intent(Context c, Catalogs.Item item) {
         return new Intent(c, EpisodesActivity.class).putExtra("id", item.traktId).putExtra("title", item.title)
                 .putExtra("imdb", item.imdb == null ? "" : item.imdb).putExtra("poster", item.poster)
-                .putExtra("posterUrl", item.posterUrl == null ? "" : item.posterUrl).putExtra("tmdb", item.id);
+                .putExtra("posterUrl", item.posterUrl == null ? "" : item.posterUrl).putExtra("tmdb", item.id)
+                .putExtra("season",item.season).putExtra("episode",item.episode).putExtra("episodeTitle",item.episodeTitle)
+                .putExtra("resume",item.launch==null?"":item.launch.toUri(0)).putExtra("app",item.appPkg==null?"":item.appPkg).putExtra("wnKind",item.wnKind);
     }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -74,7 +76,7 @@ public class EpisodesActivity extends Activity {
         // Measured on a 1920 wide screen (k scales them): the left column, the bar, the count line and the list.
         private static final float POSTER_X = 100, POSTER_Y = 110, POSTER_W = 320, POSTER_H = 480;
         private static final float LIST_X = 600, LIST_R = 1840, BAR_Y = 64, BAR_H = 88, BTN_GAP = 14;
-        private static final float[] BTN_WIDTHS = {300, 230, 230, 230};      // sort, season, date, watched; "clear filters" takes the rest
+        private static final float[] BTN_WIDTHS = {300, 230, 230, 230};
         private static final float COUNT_Y = 202, LIST_TOP = 232, ROW_H = 66, PITCH = 72, CHOICE_H = 58, CHOICE_VISIBLE = 9;
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
 
@@ -84,9 +86,16 @@ public class EpisodesActivity extends Activity {
         private final Scene scene = new Scene();
         private final Look look = Themes.create(Prefs.look(), scene);
         private final Spoken spoken;
-        private final int traktId;
-        private final String title, imdb;
+        private int traktId;
+        private final String title;
+        private String imdb;
         private final int tmdbId;
+        private final TmdbEpisodes tmdbEpisodes;
+        private final boolean hasResume;
+        private final int resumeSeason,resumeEpisode,resumeKind;
+        private final String resumeTitle,resumeApp;
+        private Intent resumeIntent;
+        private boolean hasMarks,resolvingTrakt;
         // Where OK opens an episode (Launcher: the show's own app, its Play Store page, the "*" app, or nothing), looked
         // up once when the screen opens so a press is instant; `waiting` is a press that came before the answer.
         private Routing.Target target;
@@ -100,6 +109,7 @@ public class EpisodesActivity extends Activity {
         private boolean[] fresh = new boolean[0], unaired = new boolean[0];
         private String summary = "";
         private boolean loaded, failed, running;
+        private boolean waitingImdb;
 
         private int zone = LIST, bar, sel, top;
         private final Spring scroll = new Spring(0.34f, 1f, 0), pop = new Spring(0.28f, 0.85f, 0);
@@ -135,11 +145,18 @@ public class EpisodesActivity extends Activity {
             super(a);
             activity = a;
             trakt = Trakt.get(a);
+            tmdbEpisodes = new TmdbEpisodes(a);
             catalogs = Catalogs.get(a);
             traktId = intent.getIntExtra("id", 0);
+            hasMarks = traktId > 0;
             title = intent.getStringExtra("title") == null ? "" : intent.getStringExtra("title");
             imdb = intent.getStringExtra("imdb") == null ? "" : intent.getStringExtra("imdb");
             tmdbId = intent.getIntExtra("tmdb", 0);
+            resumeSeason=intent.getIntExtra("season",0); resumeEpisode=intent.getIntExtra("episode",0); resumeKind=intent.getIntExtra("wnKind",0);
+            resumeTitle=intent.getStringExtra("episodeTitle")==null?"":intent.getStringExtra("episodeTitle");
+            String pkg=intent.getStringExtra("app"); resumeApp=Launcher.get(a).appName(pkg==null?"":pkg);
+            String uri=intent.getStringExtra("resume"); hasResume=uri!=null&&!uri.isEmpty();
+            if(hasResume)try{resumeIntent=Intent.parseUri(uri,0);}catch(Exception ignored){}
             posterItem.poster = intent.getStringExtra("poster") == null ? "" : intent.getStringExtra("poster");
             String url = intent.getStringExtra("posterUrl");
             posterItem.posterUrl = url == null || url.isEmpty() ? null : url;
@@ -190,7 +207,11 @@ public class EpisodesActivity extends Activity {
 
         private void load() {
             failed = false;
-            trakt.episodes(traktId, this);
+            if(traktId>0) {int sourceId=traktId; trakt.episodes(sourceId,(episodes,fresh)->{if(traktId==sourceId)onEpisodes(episodes,fresh);});} else if(tmdbId>0) {
+                tmdbEpisodes.load(tmdbId,(episodes,fresh)->{if(traktId==0)onEpisodes(episodes,fresh);});
+                if(!resolvingTrakt && trakt.connected()){resolvingTrakt=true;trakt.resolveTmdb(tmdbId,id->{if(id>0&&running){traktId=id;hasMarks=true;loaded=false;load();}});}
+            }
+            if(imdb.isEmpty()&&tmdbId>0) Launcher.get(getContext()).imdb("tv",tmdbId,id->{if(!id.isEmpty())imdb=id;});
             invalidate();
         }
 
@@ -222,7 +243,13 @@ public class EpisodesActivity extends Activity {
         /** Applies the filters and sorting; the selection stays on `keepKey` when it is still there, else the next episode to watch on the first look, else the top. */
         private void rebuild(int keepKey, boolean toNext) {
             long now = System.currentTimeMillis();
+            for(EpisodeList.Episode e:list.all)e.resume=false;
+            int match=-1;
+            if(hasResume && resumeSeason>0 && resumeEpisode>0) for(int i=0;i<list.all.size();i++) if(list.all.get(i).season==resumeSeason&&list.all.get(i).number==resumeEpisode){match=i;break;}
+            if(match<0 && hasResume && resumeEpisode>0){int found=-1,count=0;for(int i=0;i<list.all.size();i++)if(list.all.get(i).number==resumeEpisode){found=i;count++;}if(count==1)match=found;}
+            if(match>=0)list.all.get(match).resume=true;
             shown = list.view(now);
+            if(hasResume){EpisodeList.Episode resume=new EpisodeList.Episode();resume.resume=true;resume.resumePinned=true;resume.title=resumeTitle.isEmpty()?(resumeSeason>0&&resumeEpisode>0?String.format(Ui.locale(),"S%d · E%d",resumeSeason,resumeEpisode):title):resumeTitle;shown.add(0,resume);}
             int n = shown.size();
             labelText = new String[n];
             dateText = new String[n];
@@ -231,13 +258,13 @@ public class EpisodesActivity extends Activity {
             unaired = new boolean[n];
             for (int i = 0; i < n; i++) {
                 EpisodeList.Episode e = shown.get(i);
-                labelText[i] = String.format(Ui.locale(), "S%d · E%d", e.season, e.number);
-                dateText[i] = e.aired == 0 ? "—" : dateFormat.format(new Date(e.aired));
+                labelText[i] = e.resumePinned ? (resumeKind==2?Ui.tr("Watchlist"):Ui.tr("Resume")) : String.format(Ui.locale(), "S%d · E%d", e.season, e.number);
+                dateText[i] = e.resumePinned ? resumeApp : e.aired == 0 ? "—" : dateFormat.format(new Date(e.aired));
                 fresh[i] = EpisodeList.isNew(e, now);
                 unaired[i] = e.aired > now;
             }
-            int at = -1;
-            if (toNext) {
+            int at = hasResume && toNext ? 0 : -1;
+            if (toNext && at < 0) {
                 EpisodeList.Episode next = list.nextToWatch(now);
                 if (next != null) at = indexOf(EpisodeList.key(next));
             } else if (keepKey >= 0) {
@@ -269,7 +296,8 @@ public class EpisodesActivity extends Activity {
 
         // MARK: - The bar
 
-        private int barCount() { return list.filtered() ? 5 : 4; }
+        private int clearIndex() { return hasMarks ? B_CLEAR : B_WATCHED; }
+        private int barCount() { return (hasMarks?4:3)+(list.filtered()?1:0); }
 
         private String sortName(int sort) {
             switch (sort) {
@@ -327,7 +355,7 @@ public class EpisodesActivity extends Activity {
 
         private RectF barBox(int i) {
             float x = barLeft(i);
-            float width = i == B_CLEAR ? LIST_R - x : BTN_WIDTHS[i];
+            float width = i == clearIndex() ? LIST_R - x : BTN_WIDTHS[i];
             box.set(x * k, BAR_Y * k, (x + width) * k, (BAR_Y + BAR_H) * k);
             return box;
         }
@@ -543,7 +571,7 @@ public class EpisodesActivity extends Activity {
             if (zone == CHOOSER) {
                 applyChoice();
             } else if (zone == BAR) {
-                if (bar == B_CLEAR) {
+                if (bar == clearIndex()) {
                     int keep = !shown.isEmpty() && sel < shown.size() ? EpisodeList.key(shown.get(sel)) : -1;
                     list.clearFilters();
                     rebuild(keep, false);
@@ -567,6 +595,19 @@ public class EpisodesActivity extends Activity {
         }
 
         private void openEpisode(EpisodeList.Episode e) {
+            if(e.resume){
+                try { if(resumeIntent==null)throw new IllegalStateException(); activity.startActivity(resumeIntent); }
+                catch(Exception ex){EpisodeList.Episode fallback=e;
+                    if(e.resumePinned){for(EpisodeList.Episode candidate:shown)if(!candidate.resumePinned&&candidate.resume){fallback=candidate;break;}}
+                    if(fallback.resumePinned){fallback=new EpisodeList.Episode();fallback.season=resumeSeason;fallback.number=resumeEpisode;fallback.title=resumeTitle;}
+                    openRouted(fallback);
+                }
+                return;
+            }
+            openRouted(e);
+        }
+
+        private void openRouted(EpisodeList.Episode e) {
             if (waiting != null) return;
             RectF r = rowBox(sel);
             final RectF from = new RectF(r);
@@ -577,18 +618,24 @@ public class EpisodesActivity extends Activity {
                 waiting = Launcher.get(getContext()).open("tv", tmdbId, imdb, found -> {
                     waiting = null;
                     target = found;
-                    go(found, e, from);
+                    routeAfterImdb(found,e,from);
                 });
                 return;
             }
-            go(t, e, from);
+            routeAfterImdb(t,e,from);
+        }
+
+        private void routeAfterImdb(Routing.Target t,EpisodeList.Episode e,RectF from){
+            if(t.kind==Routing.APP&&Recs.STREMIO.equals(t.pkg)&&imdb.isEmpty()&&tmdbId>0){
+                waitingImdb=true; Launcher.get(getContext()).imdb("tv",tmdbId,id->{waitingImdb=false;if(!id.isEmpty())imdb=id;if(running)go(t,e,from);});
+            } else go(t,e,from);
         }
 
         /** Stremio opens the episode itself; another app opens the show (service apps take no episode address). */
         private void go(Routing.Target t, EpisodeList.Episode e, RectF from) {
             Launcher launcher = Launcher.get(getContext());
             if (t.kind == Routing.APP) {
-                String uri = Recs.STREMIO.equals(t.pkg) && !imdb.isEmpty() ? Recs.stremioEpisode(imdb, e.season, e.number) : t.uri;
+                String uri = Recs.STREMIO.equals(t.pkg) && !imdb.isEmpty() && e.season>0 && e.number>0 ? Recs.stremioEpisode(imdb, e.season, e.number) : t.uri;
                 HomeApps.Item item = HomeApps.app(t.pkg, launcher.appName(t.pkg), uri);
                 if (!HomeApps.open(activity, item, this, Math.round(from.left), Math.round(from.top), Math.round(from.width()), Math.round(from.height()))) {
                     Toast.makeText(getContext(), Ui.trf("Couldn't open {app}.", "app", item.label), Toast.LENGTH_SHORT).show();
@@ -603,6 +650,7 @@ public class EpisodesActivity extends Activity {
 
         /** Where OK goes, in words (before the answer is in: just that it opens the episode). */
         private String whereOkGoes() {
+            if(hasResume&&sel<shown.size()&&shown.get(sel).resume)return resumeHint();
             Routing.Target t = target;
             if (t == null) return Ui.tr("OK opens the episode.");
             Launcher launcher = Launcher.get(getContext());
@@ -614,11 +662,13 @@ public class EpisodesActivity extends Activity {
             return Launcher.message(t);
         }
 
+        private String resumeHint(){return resumeKind==2?Ui.trf("OK opens {app}.","app",resumeApp):Ui.trf("OK resumes in {app}.","app",resumeApp);}
+
         // MARK: - Drawing
 
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (!scroll.settled() || !pop.settled() || waiting != null || SystemClock.uptimeMillis() - lastSky >= 100) invalidate();
+            if (!scroll.settled() || !pop.settled() || waiting != null || waitingImdb || SystemClock.uptimeMillis() - lastSky >= 100) invalidate();
             Choreographer.getInstance().postFrameCallback(this);
         }
 
@@ -779,9 +829,9 @@ public class EpisodesActivity extends Activity {
                     fill.setColor(0x26FFFFFF);
                     c.drawRoundRect(b, 18 * k, 18 * k, fill);
                 }
-                if (i == B_CLEAR) {
+                if (i == clearIndex()) {
                     pCenter.setColor(blend(0xE6FFFFFF, INK, f));
-                    c.drawText(TextUtils.ellipsize(barValues[i], new TextPaint(pCenter), b.width() - 20 * k, TextUtils.TruncateAt.END).toString(),
+                    c.drawText(TextUtils.ellipsize(Ui.tr("Clear filters"), new TextPaint(pCenter), b.width() - 20 * k, TextUtils.TruncateAt.END).toString(),
                             b.centerX(), b.centerY() + Ui.halfCap(pCenter), pCenter);
                     continue;
                 }
@@ -795,8 +845,9 @@ public class EpisodesActivity extends Activity {
 
         private void drawCount(Canvas c) {
             if (!loaded) return;
-            String line = list.filtered() ? Ui.trf("{shown} of {total} episodes", "shown", shown.size(), "total", list.all.size())
-                    : Ui.plural("plural|one:{n} episode|other:{n} episodes", shown.size());
+            int episodeCount=0; for(EpisodeList.Episode e:shown)if(!e.resumePinned)episodeCount++;
+            String line = list.filtered() ? Ui.trf("{shown} of {total} episodes", "shown", episodeCount, "total", list.all.size())
+                    : Ui.plural("plural|one:{n} episode|other:{n} episodes", episodeCount);
             c.drawText(line, LIST_X * k + 8 * k, COUNT_Y * k, pCount);
             if (zone == LIST && sel < shown.size()) c.drawText(seasonName(shown.get(sel).season), LIST_R * k - 8 * k, COUNT_Y * k, pCountRight);
         }
@@ -861,7 +912,10 @@ public class EpisodesActivity extends Activity {
                 pBadge.setColor(blend(AMBER, 0xFF9A6A00, f));
                 c.drawText(Ui.tr("New").toUpperCase(Ui.locale()), dateRight - pDate.measureText(dateText[i]) - 16 * k, base, pBadge);
             }
-            if (e.watched) {
+            if(e.resume){
+                float cw=Symbols.width(getContext(),"play",24*k);
+                Symbols.draw(getContext(),c,"play",r.right-40*k-cw/2,r.centerY(),24*k,blend(0xCCFFFFFF,INK,f));
+            } else if (e.watched) {
                 float cw = Symbols.width(getContext(), "check", 24 * k);
                 Symbols.draw(getContext(), c, "check", r.right - 40 * k - cw / 2, r.centerY(), 24 * k, blend(0xCCFFFFFF, INK, f));
             }
@@ -923,10 +977,10 @@ public class EpisodesActivity extends Activity {
                 int i = id - ID_ROW;
                 if (i >= shown.size()) return "";
                 EpisodeList.Episode e = shown.get(i);
-                return labelText[i] + ", " + e.title + ", " + dateText[i] + (e.watched ? ", " + Ui.tr("Watched") : "");
+                return labelText[i] + ", " + e.title + ", " + dateText[i] + (e.resume ? ", " + resumeHint() : e.watched ? ", " + Ui.tr("Watched") : "");
             }
             int i = id - ID_BAR;
-            return i == B_CLEAR ? barValues[i] : i >= 0 && i < 4 ? barLabels[i] + ", " + barValues[i] : "";
+            return i == clearIndex() ? Ui.tr("Clear filters") : i >= 0 && i < (hasMarks?4:3) ? barLabels[i] + ", " + barValues[i] : "";
         }
 
         private boolean spokenBounds(int id, Rect out) {

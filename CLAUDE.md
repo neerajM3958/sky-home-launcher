@@ -204,6 +204,13 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   without a publishing app: `content insert` on `content://android.media.tv/watch_next_program` from the shell (the
   provider records `com.android.shell` as the publisher, and values can't hold a `:`, so write the intent as
   `#Intent;action=...;component=pkg/cls;end` and no art address).
+- Watch Next series also join Trakt's *Shows you watch* row (`WatchNext.showItems`, `Catalogs.withWatchShows`), including
+  app watchlists (kind 2), with the same 60-day engagement cutoff as Continue Watching. Shows open `EpisodesActivity`;
+  TMDB supplies episodes and a connected Trakt account supplies watched marks after resolving the show's Trakt id.
+  The pinned row keeps the publisher's resume intent; the matching episode uses it too. A watchlist entry opens its app.
+  Both Watch Next rows follow `Prefs.watchNext`. `TmdbEpisodes` keeps the last 30 show lists and displays a saved list before
+  refreshing it. Same-name search results use a year when the provider title contains one; unresolved ambiguity leaves the
+  show out. `EpisodeList.Episode.resume` marks the resume row and matching episode; keep these outside `EpisodeList.all`.
 - *Remote Buttons > Added buttons* lets the person add any button: the screen asks `RemoteKeyService` (the only place that sees
   keys no app gets) through two small files (`remote-learn.req`, `.res`) for the next key that isn't needed to move around
   (`RemoteKeys.needed`), saved as `learn=` lines in `remote-keys.txt` by key code and scan code, and works on any brand. The

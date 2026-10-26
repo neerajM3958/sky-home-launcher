@@ -1613,16 +1613,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         syncRows();
         syncBrowse();
         if (drawerItems.isEmpty()) {
-            // No inputs (a streamer): the drawer opens on the poster rows (Trakt's, else TMDB's catalogs); with none either,
-            // one button keeps it open.
-            if (catRows.isEmpty() && browseRows.isEmpty()) setDrawerItems(HomeApps.drawerFallback());
-            else {
-                drawerOpen = true;
-                drawer.target = 1;
-                drawerDirty = true;
-                if (!enterCatalog()) enterBrowse();
-                return;
-            }
+            // No inputs (a streamer): the drawer opens on the poster rows (Trakt's, else TMDB's catalogs). Neither has
+            // loaded yet: nothing to open onto, so stay put; the next press (or the fetch finishing) tries again.
+            if (catRows.isEmpty() && browseRows.isEmpty()) return;
+            drawerOpen = true;
+            drawer.target = 1;
+            drawerDirty = true;
+            if (!enterCatalog()) enterBrowse();
+            return;
         }
         drawerOpen = true;
         drawer.target = 1;
@@ -3139,10 +3137,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (catRows.isEmpty()) return;
             Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
             click.open();
-            if (listed.launch != null) {        // what an app says you were watching: back into that app
-                openWatchNext(listed);
-            } else if (listed.episodes) {      // a show you watch: its episodes, not the app
+            if (listed.episodes) {      // a show you watch: its episodes, not the app
                 activity.startActivity(EpisodesActivity.intent(activity, listed));
+            } else if (listed.launch != null) {        // what an app says you were watching: back into that app
+                openWatchNext(listed);
             } else {
                 posterRect(catRowIndex, catCol[catRowIndex], cardRect);
                 openTitle(listed, cardRect);

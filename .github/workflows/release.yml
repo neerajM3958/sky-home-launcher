@@ -1,0 +1,63 @@
+# Builds the generic FreeMyTV.apk (no config.properties in the repo, so build.sh makes one with no key: city from
+# the TV's time zone, same as every release so far) and publishes it to a GitHub Release. Run by hand from the
+# Actions tab (Run workflow) when you want a new release; it does not run on pushes or pull requests.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.3.0)"
+        required: true
+      title:
+        description: "Release title (defaults to the tag)"
+        required: false
+      draft:
+        description: "Create as a draft (review and add notes before publishing)"
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark as a pre-release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The JDK and SDK the README asks for (see .github/workflows/check.yml).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK (build-tools 34, android-34)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$RUNNER_TEMP/sdk" \
+            "build-tools;34.0.0" "platforms;android-34" > /dev/null
+          echo "ANDROID_HOME=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
+
+      # The project's own signing key (the same one every release since v1.0.0 used), so this release updates in
+      # place over whatever people already installed. Added once as a repo secret: see CONTRIBUTING or ask the
+      # maintainer. Without it, build.sh would generate a throwaway key and break updates for everyone.
+      - name: Restore the signing key
+        run: echo "${{ secrets.FREEMYTV_KEYSTORE_BASE64 }}" | base64 -d > freemytv.keystore
+
+      # No config.properties in the repo (it's gitignored and never committed): build.sh creates a keyless one, the
+      # same generic build every release has shipped (picks off, city from the TV's time zone).
+      - run: ./build.sh
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.tag }}" FreeMyTV.apk \
+            --title "${{ inputs.title != '' && inputs.title || inputs.tag }}" \
+            --generate-notes \
+            ${{ inputs.draft && '--draft' || '' }} \
+            ${{ inputs.prerelease && '--prerelease' || '' }}
