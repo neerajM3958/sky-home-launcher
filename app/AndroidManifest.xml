@@ -11,8 +11,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Installs Stremio from its own site when the person asks (Settings > Stremio); Android asks them to confirm. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- The sleep timer's minutes left over any app (SleepOverlay), when picked; allowed through ADB, as Android TV
-         has no screen for it. -->
+    <!-- The sleep timer's minutes left over any app (SleepOverlay), when picked, and the debug memory card
+         (MemoryCard, config.properties: show_memory_card); allowed through ADB, as Android TV has no screen for it. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- The sleep timer on time: from Android 12, windows under 10 minutes stretch to 10. No prompt for either. -->
@@ -183,6 +183,13 @@
         <service
             android:name=".SleepOverlay"
             android:process=":sleep"
+            android:exported="false" />
+
+        <!-- Debug only (config.properties: show_memory_card): free/total RAM and the foreground app's memory, over
+             any app, refreshed every 2 seconds. A process of its own, for the same reason as SleepOverlay. -->
+        <service
+            android:name=".MemoryCard"
+            android:process=":memcard"
             android:exported="false" />
 
         <!-- What Android's installer says about the Stremio install; in the settings screen's process. -->

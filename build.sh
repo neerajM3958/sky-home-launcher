@@ -44,6 +44,7 @@ ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
 CRYPTO=false; [ "$(prop show_crypto false)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 SAVER=true; [ "$(prop screensaver true)" = "false" ] && SAVER=false
+MEMCARD=false; [ "$(prop show_memory_card false)" = "true" ] && MEMCARD=true
 FLATRATE=true; [ "$(prop flatrate_only true)" = "false" ] && FLATRATE=false
 WATCHNEXT=true; [ "$(prop watch_next true)" = "false" ] && WATCHNEXT=false
 RENTBUY=false; [ "$(prop include_rent_buy false)" = "true" ] && RENTBUY=true
@@ -84,6 +85,7 @@ final class Config {
     static final boolean SHOW_CRYPTO = $CRYPTO;
     static final boolean HIDE_ANIMATION = $ANIMATION;
     static final boolean OWN_SCREENSAVER = $SAVER;
+    static final boolean SHOW_MEMORY_CARD = $MEMCARD;
     static final boolean FLATRATE_ONLY = $FLATRATE;
     static final boolean INCLUDE_RENT_BUY = $RENTBUY;
     static final boolean WATCH_NEXT = $WATCHNEXT;
