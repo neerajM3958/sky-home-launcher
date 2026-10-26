@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT = os.path.join(ROOT, "app/assets/fonts/InterVariable.ttf")
-STOPS = [(0.0, (255, 194, 122)), (0.5, (255, 122, 158)), (1.0, (154, 140, 255))]   # sunrise -> pink -> dusk
+STOPS = [(0.0, (123, 97, 255)), (0.5, (74, 58, 166)), (1.0, (23, 20, 56))]   # twilight: dusk violet -> near-black
 
 
 def gradient(w, h, angle=35):
@@ -41,7 +41,7 @@ def sparkle(draw, cx, cy, r, fill):
 
 
 def mark(size, bg=True):
-    """The mark: a TV with a sparkle, on the gradient squircle (bg) or alone (white)."""
+    """The mark: a house with a sparkle, on the gradient squircle (bg) or alone (white)."""
     s = size * 4
     img = gradient(s, s).convert("RGBA") if bg else Image.new("RGBA", (s, s), (0, 0, 0, 0))
     if bg:
@@ -51,14 +51,18 @@ def mark(size, bg=True):
     layer = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     white = (255, 255, 255, 255)
-    # screen
-    x0, y0, x1, y1 = s * 0.2, s * 0.27, s * 0.8, s * 0.66
-    d.rounded_rectangle((x0, y0, x1, y1), radius=int(s * 0.07), outline=white, width=int(s * 0.055))
-    # stand
-    d.rounded_rectangle((s * 0.36, s * 0.715, s * 0.64, s * 0.765), radius=int(s * 0.025), fill=white)
-    # sparkle inside the screen
-    sparkle(d, s * 0.5, s * 0.465, s * 0.12, white)
-    sparkle(d, s * 0.655, s * 0.355, s * 0.045, white)
+    cx, cy = s * 0.5, s * 0.5
+    # roof
+    roof_w, roof_h = s * 0.46, s * 0.26
+    apex = (cx, cy - s * 0.17)
+    d.polygon([apex, (cx - roof_w / 2, cy + roof_h / 2 - s * 0.17), (cx + roof_w / 2, cy + roof_h / 2 - s * 0.17)],
+              fill=white)
+    # base
+    base_w, base_h = s * 0.34, s * 0.22
+    base_y = cy + roof_h / 2 - s * 0.17
+    d.rounded_rectangle((cx - base_w / 2, base_y, cx + base_w / 2, base_y + base_h), radius=int(s * 0.02), fill=white)
+    # sparkle above the roof
+    sparkle(d, cx + s * 0.16, cy - s * 0.27, s * 0.05, white)
     if bg:
         shadow = layer.copy().filter(ImageFilter.GaussianBlur(s * 0.02))
         tint = Image.new("RGBA", (s, s), (120, 40, 80, 0))
@@ -87,11 +91,17 @@ def banner(w=640, h=360):
     img = gradient(w * s, h * s, angle=20).convert("RGBA")
     m = mark(int(h * 0.5 * s), bg=False)
     d = ImageDraw.Draw(img)
-    f = font(int(h * 0.15 * s), 650)
     text = "Sky Home Launcher"
-    box = d.textbbox((0, 0), text, font=f)
     gap = int(w * 0.02 * s)
-    total = m.width + gap + (box[2] - box[0])
+    margin = w * s * 0.92
+    px = int(h * 0.15 * s)
+    while True:
+        f = font(px, 650)
+        box = d.textbbox((0, 0), text, font=f)
+        total = m.width + gap + (box[2] - box[0])
+        if total <= margin or px <= int(h * 0.06 * s):
+            break
+        px -= 2
     x = (w * s - total) // 2
     img.alpha_composite(m, (x, int((h * s - m.height) / 2)))
     y = (h * s - (box[3] - box[1])) // 2 - box[1]
