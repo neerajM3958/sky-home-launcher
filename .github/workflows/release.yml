@@ -1,5 +1,5 @@
-# Builds the generic FreeMyTV.apk (no config.properties in the repo, so build.sh makes one with no key: city from
-# the TV's time zone, same as every release so far) and publishes it to a GitHub Release. Run by hand from the
+# Builds the generic SkyHomeLauncher.apk (no config.properties in the repo, so build.sh makes one with no key: city
+# from the TV's time zone, same as every release so far) and publishes it to a GitHub Release. Run by hand from the
 # Actions tab (Run workflow) when you want a new release; it does not run on pushes or pull requests.
 name: Release
 
@@ -49,14 +49,17 @@ jobs:
         run: echo "${{ secrets.FREEMYTV_KEYSTORE_BASE64 }}" | base64 -d > freemytv.keystore
 
       # No config.properties in the repo (it's gitignored and never committed): build.sh creates a keyless one, the
-      # same generic build every release has shipped (picks off, city from the TV's time zone).
+      # same generic build every release has shipped (picks off, city from the TV's time zone). The release tag
+      # becomes the version shown in Settings (build.sh falls back to a local-<timestamp> one otherwise).
       - run: ./build.sh
+        env:
+          SKYHOME_VERSION: ${{ inputs.tag }}
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.tag }}" FreeMyTV.apk \
+          gh release create "${{ inputs.tag }}" SkyHomeLauncher.apk \
             --title "${{ inputs.title != '' && inputs.title || inputs.tag }}" \
             --generate-notes \
             ${{ inputs.draft && '--draft' || '' }} \

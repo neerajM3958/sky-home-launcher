@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.freemytv"
+    package="com.skyhome.launcher"
     android:versionCode="2"
     android:versionName="1.1">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
-    <!-- After the TV boots (and after a TV update), checks that Free My TV mode is still as you left it. -->
+    <!-- After the TV boots (and after a TV update), checks that Sky Home Launcher mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Installs Stremio from its own site when the person asks (Settings > Stremio); Android asks them to confirm. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -52,24 +52,24 @@
 
     <application
         android:name=".App"
-        android:label="Free My TV"
+        android:label="Sky Home Launcher"
         android:icon="@drawable/icon"
         android:banner="@drawable/banner"
         android:allowBackup="false"
         android:usesCleartextTraffic="false">
 
-        <!-- The app's icon opens the settings (switch between Free My TV and the original home screen). -->
+        <!-- The app's icon opens the settings (switch between Sky Home Launcher and the original home screen). -->
         <activity
             android:name=".SettingsActivity"
             android:process=":home"
             android:exported="true"
-            android:label="Free My TV"
+            android:label="Sky Home Launcher"
             android:launchMode="singleTask"
-            android:taskAffinity="io.freemytv.settings"
+            android:taskAffinity="com.skyhome.launcher.settings"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
-            android:theme="@style/FreeMyTV.Home">
+            android:theme="@style/SkyHomeLauncher.Home">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
@@ -82,20 +82,20 @@
             android:name=".EpisodesActivity"
             android:process=":home"
             android:exported="false"
-            android:label="Free My TV"
+            android:label="Sky Home Launcher"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
-            android:theme="@style/FreeMyTV.Home" />
+            android:theme="@style/SkyHomeLauncher.Home" />
 
         <!-- The home screen. Its own process (:home): if it ever crashes, the safety net in the main process still
-             works. It only becomes the TV's home screen in Free My TV mode (cmd package set-home-activity). -->
+             works. It only becomes the TV's home screen in Sky Home Launcher mode (cmd package set-home-activity). -->
         <activity
             android:name=".HomeActivity"
             android:process=":home"
             android:exported="true"
-            android:label="Free My TV"
+            android:label="Sky Home Launcher"
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:stateNotNeeded="true"
@@ -104,7 +104,7 @@
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
-            android:theme="@style/FreeMyTV.Home">
+            android:theme="@style/SkyHomeLauncher.Home">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
@@ -117,7 +117,7 @@
             android:process=":home"
             android:enabled="@bool/dream_in_home"
             android:exported="true"
-            android:label="Free My TV"
+            android:label="Sky Home Launcher"
             android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>
                 <action android:name="android.service.dreams.DreamService" />
@@ -130,7 +130,7 @@
             android:name=".ScreensaverAlone"
             android:enabled="@bool/dream_alone"
             android:exported="true"
-            android:label="Free My TV"
+            android:label="Sky Home Launcher"
             android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>
                 <action android:name="android.service.dreams.DreamService" />
@@ -150,7 +150,7 @@
             android:name=".RemoteKeyService"
             android:process=":keys"
             android:exported="true"
-            android:label="Free My TV"
+            android:label="Sky Home Launcher"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

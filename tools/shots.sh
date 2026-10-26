@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Screenshots of the same screens, for comparing one build with another (tools/shotdiff.py).
 #   tools/shots.sh <folder> [look] [theme]      look: glass | material3-expressive, theme: auto | light | dark
-# Needs adb connected to the TV (adb connect <ip>:5555) with Free My TV installed and switched on. It drives the TV with
+# Needs adb connected to the TV (adb connect <ip>:5555) with Sky Home Launcher installed and switched on. It drives the TV with
 # remote keys, so leave the remote alone while it runs (about two minutes). It changes the Look and Theme settings, and
 # puts them back to what they were when it is done only if you pass nothing: pass both to keep what you asked for.
 set -euo pipefail
@@ -14,12 +14,12 @@ key() { adb shell input keyevent "$1"; sleep "${2:-0.9}"; }
 shot() { adb exec-out screencap -p > "$out/$1.png"; echo "  $1"; }
 keys() { for k in "$@"; do key "$k"; done; }
 settings() {      # a fresh Settings with the look and theme set first
-  adb shell am force-stop io.freemytv
-  adb shell am start -n io.freemytv/.SettingsActivity --es look "$look" --es theme "$theme" "$@" > /dev/null
+  adb shell am force-stop com.skyhome.launcher
+  adb shell am start -n com.skyhome.launcher/.SettingsActivity --es look "$look" --es theme "$theme" "$@" > /dev/null
   sleep 4
 }
 home() {
-  adb shell am force-stop io.freemytv
+  adb shell am force-stop com.skyhome.launcher
   adb shell input keyevent KEYCODE_HOME
   sleep 9
 }
