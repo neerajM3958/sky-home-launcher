@@ -88,6 +88,8 @@ Then, in the code:
 
 Any TV that doesn't run Google TV or Android TV: the way is a Google TV streamer on HDMI (Chromecast with Google TV,
 Google TV Streamer, onn 4K, NVIDIA Shield). Set Sky Home Launcher up on the streamer.
+The onn 4K Streaming Box (Amlogic S905Y4, Google TV 14 tested) ships no promo apps of its own, so `DEBLOAT` has no onn
+entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 there, as the app needs.
 
 **Uninstalled while in Sky Home Launcher mode?** The apps it turned off stay off. Bring them back with
 `adb shell pm enable <package>` (the `DEBLOAT` list and the stock home screen), then
@@ -102,7 +104,8 @@ Google TV Streamer, onn 4K, NVIDIA Shield). Set Sky Home Launcher up on the stre
   rounds images with a shader instead of clipPath: their GPUs (a Mi Box 3's Mali-450) choked on those.
   Android 11 runs the screensaver as `ScreensaverAlone`, in the main process (its DreamActivity needs the dream in the
   app's default process, without a home activity); `res/values-v30/bools.xml` picks it, every other version keeps
-  `Screensaver` in `:home`. Keep both in step.
+  `Screensaver` in `:home`. Keep both in step. `ScreensaverAlone` reads `Prefs` from another process than the
+  settings screen's, so the screensaver calls `Prefs.reload()` when it starts.
   To check for newer APIs, compile against `platforms/android-26/android.jar`: only AGSL (`RuntimeShader`, guarded
   by a try/catch), `BitmapShader.setFilterMode` (guarded), `Recording.Node` and `Ui.Weighted` (the Android 9 font weight) should come up.
 - The home screen is drawn by hand on one Canvas (`HomeView`); the glass and the sky are AGSL shaders (`Shaders`,
@@ -119,7 +122,7 @@ Google TV Streamer, onn 4K, NVIDIA Shield). Set Sky Home Launcher up on the stre
   (`"unit|Automatic"`, `"format|h:mm"` holds a SimpleDateFormat pattern). A count with a word is
   `Ui.plural("plural|one:{n} season|other:{n} seasons", n)`: each catalogue gives one form per CLDR plural category of
   its language (`one`/`few`/`many`/`other` in Russian, Ukrainian, Polish; only `other` in Japanese, Chinese…), and
-  ICU's rules pick one. Portuguese, Spanish, German and Russian are hand translations: the reference, edited by hand,
+  ICU's rules pick one. Portuguese, Spanish, German, Russian and Turkish are hand translations: the reference, edited by hand,
   never replaced with machine ones. Dates and numbers use `Ui.locale()`. Text
   drawn every frame is cached and made again when `Ui.generation` changes. After changing text, run
   `python3 tools/translate.py`: it rebuilds `en.json` from the code and lists what each language lacks; translate those

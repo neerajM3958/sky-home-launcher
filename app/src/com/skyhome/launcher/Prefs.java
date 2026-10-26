@@ -68,6 +68,21 @@ final class Prefs {
         return app.getSharedPreferences("settings", Context.MODE_PRIVATE);
     }
 
+    /**
+     * Reads the file again if another process changed it. On Android 11 the screensaver runs in the main process
+     * (ScreensaverAlone), which otherwise keeps the values it first read, whatever the settings screen in :home saves.
+     */
+    @SuppressWarnings("deprecation")
+    static void reload() {
+        app.getSharedPreferences("settings", Context.MODE_MULTI_PROCESS);
+        version++;
+    }
+
+    /** The TV's own 12/24-hour setting (Settings → System → Date & time). */
+    static boolean clock24() {
+        return app != null && android.text.format.DateFormat.is24HourFormat(app);
+    }
+
     private static void put(String key, String value) {
         sp().edit().putString(key, value).apply();
         version++;
