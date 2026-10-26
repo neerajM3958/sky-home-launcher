@@ -111,10 +111,10 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [289](https://github.com/simbasjungles/free-my-tv/pull/289) | Home: the remote's Settings button opens Free My TV's Settings | 2026-10-25 | app | Pending | Check against our `RemoteKeys`/`Prefs.FMT_SETTINGS` (added independently, see CLAUDE.md) — likely `Superseded` on closer look |
 | [292](https://github.com/simbasjungles/free-my-tv/pull/292) | Fire TV: HDMI inputs through Amazon's input switch, Live TV on the an… | 2026-10-25 | app | Pending | Builds on #167 (Fire TV support) — review together |
 | [296](https://github.com/simbasjungles/free-my-tv/pull/296) | Package visibility: streaming services and OneWorld TV Center in `<queries>` | 2026-10-25 | app | Ready | Plan together with #253 (dependency, see its note); also fixes a pre-existing gap — `com.mediatek.tv.oneworld.tvcenter` is in our `LIVE_TV_APPS` but was never in `<queries>` |
-| [297](https://github.com/simbasjungles/free-my-tv/pull/297) | Optimized Traditional Chinese language support | 2026-10-25 | app | Pending | Translation refinement; likely low risk, review with #240 |
-| [298](https://github.com/simbasjungles/free-my-tv/pull/298) | LG and Samsung: About this TV in Home Settings (#265) | 2026-10-25 | app + web (mixed) | Pending | Mostly LG/Samsung by title, but touches `app/` too — check what the Android part actually is before rejecting outright |
+| [297](https://github.com/simbasjungles/free-my-tv/pull/297) | Optimized Traditional Chinese language support | 2026-10-25 | app | Ready | Translation refinement; likely low risk, review with #240 |
+| [298](https://github.com/simbasjungles/free-my-tv/pull/298) | LG and Samsung: About this TV in Home Settings (#265) | 2026-10-25 | app + web (mixed) | Rejected | Checked: the only `app/` touches are shared i18n catalog strings feeding `web/`'s UI text; all actual logic is in `web/home.js`/`tv.js`/`index.html`/`home.css` — genuinely web/ only, platform dropped |
 
-**Totals.** 48 PRs in this snapshot: 10 `Rejected` (9 web/webos/tizen-only, 1 moot doc/CI), 1 `Superseded` (#208 —
-already covered by our PatchWall debloat + remote-button learning), 22 `Ready` (#102, #124, #163, #167, #175, #178,
-#194, #205, #209, #219, #227, #250, #251, #252, #253, #254, #266, #273, #276, #284, #287, #296 — #102/#178/#227 to
-be planned together; #253/#296 to be planned together), 15 `Pending`.
+**Totals.** 48 PRs in this snapshot: 11 `Rejected` (10 web/webos/tizen-only, 1 moot doc/CI), 1 `Superseded` (#208 —
+already covered by our PatchWall debloat + remote-button learning), 23 `Ready` (#102, #124, #163, #167, #175, #178,
+#194, #205, #209, #219, #227, #250, #251, #252, #253, #254, #266, #273, #276, #284, #287, #296, #297 —
+#102/#178/#227 to be planned together; #253/#296 to be planned together), 13 `Pending`.
