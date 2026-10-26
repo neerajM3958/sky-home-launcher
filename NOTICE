@@ -1,0 +1,13 @@
+Sky Home Launcher is a fork of Free My TV (https://github.com/simbasjungles/free-my-tv), used here under
+the original project's MIT license (see LICENSE). This fork is not endorsed by or affiliated with the
+original project or its authors.
+
+What's changed since the fork:
+- Renamed throughout (app, package id, repository) to Sky Home Launcher.
+- Android/Google TV only: LG (webOS) and Samsung (Tizen) support, and the companion website, were removed.
+- Added since the fork: the catalog screen and poster rows, the picks carousel, top input buttons, a Trakt
+  integration (Continue Watching, Watchlist, episode browsing), remote-button learning (any button, any
+  brand), installing Stremio and its Torrentio addon from within the app, per-app control over which
+  turned-off apps stay off, and setting the TMDB/Watchmode/Trakt keys from a phone without rebuilding.
+
+See the git history for the full, unabridged record of changes.
