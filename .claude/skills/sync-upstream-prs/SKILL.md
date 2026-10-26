@@ -59,6 +59,9 @@ upstream's).
 - This skill only adds rows and updates the refresh date/totals. It never changes an existing row's `Status` or
   `Note`, and it never deletes a row. If a mistake in an existing row needs fixing, that's a manual edit, not
   something this skill does automatically.
+- New rows always start `Pending`, never `Ready` — promoting a row to `Ready` means someone (the user, or Claude
+  after discussing it with them) actually looked at the PR and decided it's worth porting. This skill only does the
+  mechanical classification pass, not that judgment call.
 - If `docs/upstream-fork-prs.md` doesn't exist yet, this skill isn't the right place to bootstrap its whole format
   (status vocabulary, baseline section) from scratch — stop and tell the user, rather than inventing a new index
   structure.

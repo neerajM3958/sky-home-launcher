@@ -3,19 +3,25 @@
 Sky Home Launcher is a fork of [Free My TV](https://github.com/simbasjungles/free-my-tv), which keeps shipping its
 own PRs. This is the living index of every PR merged there that isn't already in our history, so review work is
 never repeated: every upstream PR gets exactly one row below, with a status updated in place as it's reviewed —
-never by re-adding a row or re-reading a PR whose status isn't `Pending`.
+never by re-adding a row or re-reading a PR whose status is `Planned` or later.
 
 Maintained by two skills:
-- **`sync-upstream-prs`** appends new rows (newly-merged upstream PRs we don't have yet) — see below for how it
-  classifies and seeds them. It never edits an existing row.
-- **`plan-upstream-pr`** turns a `Pending` row into an implementation plan (`plans/port-pr-<number>-<slug>.md`) and
-  flips that row's status to `Planned`.
+- **`sync-upstream-prs`** appends new rows (newly-merged upstream PRs we don't have yet), always as `Pending` — see
+  below for how it classifies and seeds them. It never edits an existing row.
+- **`plan-upstream-pr`** turns `Ready` rows into implementation plans (one `plans/port-pr-<number>-<slug>.md` per
+  PR, or one shared `plans/port-prs-<numbers>-<slug>.md` for a few it judges worth grouping) and flips each row's
+  status to `Planned`.
 
 ## Status values
 
-- **Pending** — not reviewed yet; the default for anything newly added.
-- **Planned** — `plan-upstream-pr` has written an implementation plan for it; **Note** links the plan file. Not yet
-  built.
+- **Pending** — not reviewed yet; the default for anything newly added. Not something either skill acts on for
+  planning — a `Pending` row needs a human look first.
+- **Ready** — discussed and understood; worth porting. **Set manually** (by hand, or by asking Claude to update the
+  row after talking through a `Pending` PR together) — neither skill promotes a row to `Ready` on its own, since
+  that's the point of this status: a deliberate decision, not an automatic one. `plan-upstream-pr` picks up `Ready`
+  rows (in bulk, by default) to plan.
+- **Planned** — `plan-upstream-pr` has written an implementation plan for it; **Note** links the plan file (shared
+  with other PRs if it was grouped). Not yet built.
 - **Adopted** — ported in, with **Note** naming our commit/PR that did it.
 - **Adapted** — the idea was taken but reimplemented differently (naming conventions, or because our own code
   diverged too far to apply upstream's diff directly); **Note** names our commit/PR.
