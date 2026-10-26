@@ -171,6 +171,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         startedAt = clock();
         lastFrame = 0;
         failed.clear();
+        Prefs.reload();   // the settings screen may have changed them from :home since this process read them
         fallback = recs.showcase().isEmpty();
         data.addListener(this);
         recs.addListener(this);

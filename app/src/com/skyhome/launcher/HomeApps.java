@@ -79,7 +79,8 @@ final class HomeApps {
      * Apps on the home shelf, in this order, when installed (up to MAX_SHELF): key, name, package, brand color (for
      * its logo on glass) and how to lift the logo from the app's TV art: "tint" = a white logo takes the art's
      * background color (Prime Video, Globoplay); "play" = the white triangle inside the red button stays white
-     * (YouTube); empty = the art's colors as they are. Last, a visual size tweak for the logo. Edit freely.
+     * (YouTube); "white" = only the white of the art, for a white logo over a busy gradient (Kinopoisk); empty = the
+     * art's colors as they are. Last, a visual size tweak for the logo. Edit freely.
      */
     private static final String[][] SHELF = {
         {"netflix", "Netflix", "com.netflix.ninja", "E50914", "", "1"},
@@ -92,9 +93,17 @@ final class HomeApps {
         {"appletv", "Apple TV", "com.apple.atve.sony.appletv", "B8BCC6", "", "1.1"},   // Sony's own build
         {"hulu", "Hulu", "com.hulu.livingroomplus", "1CE783", "", "1"},
         {"paramount", "Paramount+", "com.cbs.ott", "0064FF", "", "1"},
+        {"paramount", "Paramount+", "com.cbs.ca", "0064FF", "", "1"},          // the build on Sony TVs in the UK
         {"peacock", "Peacock", "com.peacocktv.peacockandroid", "6E55DC", "", "1"},
         {"globoplay", "Globoplay", "com.globo.globotv", "FF5A1F", "tint", "1"},
+        {"kinopoisk", "Кинопоиск", "ru.kinopoisk.tv", "FF5500", "white", "1"},
+        {"okko", "Okko", "ru.more.play", "6D43FF", "", "1"},
+        {"premier", "Premier", "gpm.tnt_premier", "FF2D55", "", "1"},
+        {"amediateka", "Амедиатека", "ru.amediateka", "E31E24", "", "1"},
+        {"wink", "Wink", "ru.rt.video.app.tv", "FF5A1F", "", "1"},
         {"spotify", "Spotify", "com.spotify.tv.android", "1DB954", "", "1"},
+        {"moonlight", "Moonlight", "com.limelight", "5C6B7A", "", "1.3"},   // its banner fills the card edge to edge
+        {"now", "NOW", "com.bskyb.nowtv.beta", "1B9C8E", "", "1"},          // UK: Sky's NOW
     };
     static final int MAX_SHELF = 8;
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
@@ -539,20 +548,29 @@ final class HomeApps {
     static String tunerInput(Context c) {
         TvInputManager tim = (TvInputManager) c.getSystemService(Context.TV_INPUT_SERVICE);
         if (tim == null) return null;
-        String system = null, fallback = null;
+        String hardware = null, system = null, fallback = null;
         try {
             for (TvInputInfo info : tim.getTvInputList()) {
                 if (info.getType() != TvInputInfo.TYPE_TUNER || info.isPassthroughInput()) continue;
                 if (info.getServiceInfo() != null && info.getServiceInfo().applicationInfo != null
                         && (info.getServiceInfo().applicationInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0) {
-                    if (info.getId().contains("/HW")) return info.getId();
+                    // Several hardware tuners (MediaTek: Tuner, Cable, Analog): digital antenna first, analog last.
+                    // Haier H32S80EFX lists AnalogInputService/HW1 first, which opens on no channels in DVB-T2 countries.
+                    if (info.getId().contains("/HW") && (hardware == null || tunerRank(info.getId()) < tunerRank(hardware))) {
+                        hardware = info.getId();
+                    }
                     if (system == null) system = info.getId();
                 }
                 if (fallback == null) fallback = info.getId();
             }
         } catch (RuntimeException ignored) {
         }
-        return system != null ? system : fallback;
+        return hardware != null ? hardware : system != null ? system : fallback;
+    }
+
+    private static int tunerRank(String id) {
+        String s = id.toLowerCase(java.util.Locale.ROOT);
+        return s.contains("analog") ? 2 : s.contains("cable") ? 1 : 0;
     }
 
     static List<String[]> launchable(Context c) {
@@ -596,7 +614,7 @@ final class HomeApps {
             } else if (!extract) {
                 return null;
             } else {
-                logo = bannerLogo(c, pkg, mode.equals("tint"), mode.equals("play"));
+                logo = bannerLogo(c, pkg, mode.equals("tint"), mode.equals("play"), mode.equals("white"));
                 saveLogo(logo, file, none);
             }
         }
@@ -651,10 +669,11 @@ final class HomeApps {
     /**
      * Logo lifted from the app's TV art: the background is removed (estimated from the edges, gradients are fine), the
      * brand colors stay and black turns white (the card is dark). With `tint`, a white logo on a colored background
-     * takes the background's color; with `holes`, holes inside colored shapes (the play triangle) turn white. The
-     * edges are "decontaminated" (no halo from the background).
+     * takes the background's color; with `holes`, holes inside colored shapes (the play triangle) turn white; with
+     * `white`, only what is white is kept (anything colored or dark is background). The edges are "decontaminated" (no
+     * halo from the background).
      */
-    private static Bitmap bannerLogo(Context c, String pkg, boolean tint, boolean holes) {
+    private static Bitmap bannerLogo(Context c, String pkg, boolean tint, boolean holes, boolean white) {
         Drawable d = bannerDrawable(c, pkg);
         if (d == null) return null;
         final int w = 768, h = 432;
@@ -704,16 +723,24 @@ final class HomeApps {
                 col[0] = ((p >> 16) & 255) / 255f;
                 col[1] = ((p >> 8) & 255) / 255f;
                 col[2] = (p & 255) / 255f;
-                float dist = (float) Math.sqrt(((col[0] - bg[0]) * (col[0] - bg[0]) + (col[1] - bg[1]) * (col[1] - bg[1])
-                        + (col[2] - bg[2]) * (col[2] - bg[2])) / 3);
-                float a = smoothstep(0.07f, 0.22f, dist);
-                if (a <= 0.004f) continue;
-                for (int i = 0; i < 3; i++) col[i] = clamp((col[i] - (1 - a) * bg[i]) / a);   // no background halo
-                float l = lum(col), s = sat(col);
-                if (bgLum > 0.6f && l < 0.42f && s < 0.3f) {
-                    col[0] = col[1] = col[2] = 1f;                  // black text on a light background → white
-                } else if (tint && bgLum <= 0.6f && bgLum > 0.1f && bgSat > 0.35f && l > 0.7f && s < 0.25f) {
-                    vivid(bg, col);                                 // white logo on brand color → that color, vivid
+                float a;
+                if (white) {
+                    // Only what is white is ink: on a busy gradient the distance from the background says nothing.
+                    a = smoothstep(0.55f, 0.85f, lum(col)) * (1 - smoothstep(0.12f, 0.3f, sat(col)));
+                    if (a <= 0.004f) continue;
+                    col[0] = col[1] = col[2] = 1f;
+                } else {
+                    float dist = (float) Math.sqrt(((col[0] - bg[0]) * (col[0] - bg[0]) + (col[1] - bg[1]) * (col[1] - bg[1])
+                            + (col[2] - bg[2]) * (col[2] - bg[2])) / 3);
+                    a = smoothstep(0.07f, 0.22f, dist);
+                    if (a <= 0.004f) continue;
+                    for (int i = 0; i < 3; i++) col[i] = clamp((col[i] - (1 - a) * bg[i]) / a);   // no background halo
+                    float l = lum(col), s = sat(col);
+                    if (bgLum > 0.6f && l < 0.42f && s < 0.3f) {
+                        col[0] = col[1] = col[2] = 1f;                  // black text on a light background → white
+                    } else if (tint && bgLum <= 0.6f && bgLum > 0.1f && bgSat > 0.35f && l > 0.7f && s < 0.25f) {
+                        vivid(bg, col);                                 // white logo on brand color → that color, vivid
+                    }
                 }
                 out[y * w + x] = (Math.round(a * 255) << 24) | (Math.round(col[0] * 255) << 16) | (Math.round(col[1] * 255) << 8) | Math.round(col[2] * 255);
                 if (a > 0.5f) opaque++;

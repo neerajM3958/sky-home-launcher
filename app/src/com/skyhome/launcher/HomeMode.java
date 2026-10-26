@@ -137,7 +137,12 @@ final class HomeMode {
         "com.fengmi.projector.imaging", "com.fengmi.platform", "com.fengmi.Autopair", "com.fengmi.fmsettings",
         "com.fengmi.testsuite", "android.autoinstalls.config.fomovie",
         "uk.co.freeview.tifbridge",
-        "uk.co.freeview.mdsclient", "uk.co.freeview.fvpconfigauth"));
+        "uk.co.freeview.mdsclient", "uk.co.freeview.fvpconfigauth",
+        // onn (Walmart; Amlogic S905Y4, 4K Streaming Box, Google TV 14): remote pairing, update notices, the remote's
+        // app buttons (GLOBAL_BUTTON), hardware info, Amlogic system, settings, mic switch and launcher provider
+        "com.onn.bluetoothconnect", "com.onn.btpairoverlay", "com.onn.updatenotification", "com.gretzky.GlobalKey",
+        "com.gretzky.hwinfo", "com.droidlogic", "com.droidlogic.tv.settings", "com.droidlogic.mictoggle",
+        "com.droidlogic.launcher.provider", "com.droidlogic.android.tv.connecteddevices"));
 
     /**
      * Android's own pieces: with one of them off, a TV may not start again (a list that took the permission
@@ -380,7 +385,7 @@ final class HomeMode {
             Watchdog.clear(c);
             check(adb.shell("cmd package set-home-activity " + HOME_ACTIVITY), "Success",
                     Ui.tr("Android didn't accept the new home screen"));
-            adb.shell("settings put secure screensaver_components " + DREAM);
+            if (Config.OWN_SCREENSAVER) adb.shell("settings put secure screensaver_components " + DREAM);
             JSONObject started = state(c);
             started.put("mode", FREE).put("homeReverted", false).put("setupHome", setupHome);
             save(c, started);
@@ -691,7 +696,7 @@ final class HomeMode {
                     fixed.add(Ui.tr("the home screen"));
                 }
                 // Whole component names: ".ScreensaverAlone" (Android 11) contains ".Screensaver" (12 and newer).
-                if (!reverted && !Arrays.asList(adb.shell("settings get secure screensaver_components").trim().split(",")).contains(DREAM)) {
+                if (Config.OWN_SCREENSAVER && !reverted && !Arrays.asList(adb.shell("settings get secure screensaver_components").trim().split(",")).contains(DREAM)) {
                     adb.shell("settings put secure screensaver_components " + DREAM);
                     fixed.add(Ui.tr("the screensaver"));
                 }
@@ -725,7 +730,8 @@ final class HomeMode {
         if (homePkg != null && !homePkg.equals(PKG)) out.add(homePkg);
         if (TV_LAUNCHER.equals(homePkg)) out.add(TV_RECOMMENDATIONS);
         String dreamPkg = packageOf(dream);
-        if (dreamPkg != null && !dreamPkg.equals(PKG) && !dreamPkg.equals(homePkg)) out.add(dreamPkg);
+        // screensaver=false keeps the TV's own screensaver: then it stays on.
+        if (Config.OWN_SCREENSAVER && dreamPkg != null && !dreamPkg.equals(PKG) && !dreamPkg.equals(homePkg)) out.add(dreamPkg);
         out.addAll(Arrays.asList(DEBLOAT));
         if (Config.DISABLE_ASSISTANT) out.addAll(Arrays.asList(ASSISTANT));
         return out;

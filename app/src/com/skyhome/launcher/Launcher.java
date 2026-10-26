@@ -85,8 +85,8 @@ final class Launcher {
     };
 
     private final Routing.Env env = new Routing.Env() {
-        @Override public String[] service(String name) {
-            String[] row = recs.serviceRow(name);
+        @Override public String[] service(String name, int providerId) {
+            String[] row = recs.serviceRow(name, providerId);
             if (row != null) return row;
             String n = name.toLowerCase(Locale.ROOT);
             for (String[] extra : EXTRA) if (n.contains(extra[0])) return extra;
@@ -99,7 +99,7 @@ final class Launcher {
             return Prefs.toStremio(key) && (key.equals(Routing.OTHER) || recs.serviceAppInstalled(key));
         }
         @Override public boolean stremioForMissing() { return Prefs.stremioForMissing(); }
-        @Override public boolean hidden(String name) { return recs.hiddenService(name); }
+        @Override public boolean hidden(String name, int providerId) { return recs.hiddenService(name, providerId); }
     };
 
     private Launcher(Context c) {
@@ -226,7 +226,7 @@ final class Launcher {
             int bestRank = Integer.MAX_VALUE, at = 0;
             for (Routing.Offer o : info.offers) {
                 int rank = Routing.rank(o, at++, Routing.ready(o, env));
-                if (o.logo.isEmpty() || env.hidden(o.name) || rank >= bestRank) continue;
+                if (o.logo.isEmpty() || env.hidden(o.name, o.providerId) || rank >= bestRank) continue;
                 best = o;
                 bestRank = rank;
             }
@@ -289,7 +289,8 @@ final class Launcher {
                 String name = list.getJSONObject(i).optString("provider_name");
                 boolean seen = false;
                 for (Routing.Offer other : info.offers) seen |= other.name.equals(name);
-                if (!name.isEmpty() && !seen) info.offers.add(new Routing.Offer(name, tiers[t], list.getJSONObject(i).optString("logo_path")));
+                if (!name.isEmpty() && !seen) info.offers.add(new Routing.Offer(name, tiers[t], list.getJSONObject(i).optString("logo_path"),
+                        list.getJSONObject(i).optInt("provider_id")));
             }
         }
         return info;
@@ -302,14 +303,14 @@ final class Launcher {
             int at = 0, n;
             while (at < bytes.length && (n = in.read(bytes, at, bytes.length - at)) > 0) at += n;
             JSONObject o = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-            if (o.optInt("v") < 2) return null;         // kept before the logos: ask again
+            if (o.optInt("v") < 3) return null;         // kept before the provider id (needed for the Apple TV/channel fix): ask again
             Info info = new Info();
             info.at = o.optLong("at");
             info.imdb = o.optString("imdb");
             JSONArray list = o.optJSONArray("o");
             for (int i = 0; list != null && i < list.length(); i++) {
                 JSONArray p = list.optJSONArray(i);
-                if (p != null) info.offers.add(new Routing.Offer(p.optString(0), p.optInt(1), p.optString(2)));
+                if (p != null) info.offers.add(new Routing.Offer(p.optString(0), p.optInt(1), p.optString(2), p.optInt(3)));
             }
             return info;
         } catch (Exception e) {
@@ -320,8 +321,8 @@ final class Launcher {
     private static void write(File f, Info info) {
         try {
             JSONArray list = new JSONArray();
-            for (Routing.Offer o : info.offers) list.put(new JSONArray().put(o.name).put(o.tier).put(o.logo));
-            String text = new JSONObject().put("v", 2).put("at", info.at).put("imdb", info.imdb).put("o", list).toString();
+            for (Routing.Offer o : info.offers) list.put(new JSONArray().put(o.name).put(o.tier).put(o.logo).put(o.providerId));
+            String text = new JSONObject().put("v", 3).put("at", info.at).put("imdb", info.imdb).put("o", list).toString();
             //noinspection ResultOfMethodCallIgnored
             f.getParentFile().mkdirs();
             File part = new File(f.getPath() + ".part");

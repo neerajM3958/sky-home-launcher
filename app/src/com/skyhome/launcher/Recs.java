@@ -61,7 +61,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 12;
+    private static final int CACHE_VERSION = 13;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -70,6 +70,7 @@ final class Recs {
         {"disney", "disney", "com.disney.disneyplus"},
         {"hulu", "hulu", "com.hulu.livingroomplus"},
         {"paramount", "paramount", "com.cbs.ott"},
+        {"paramount", "paramount", "com.cbs.ca"},      // the build on Sony TVs in the UK (and in Canada)
         {"peacock", "peacock", "com.peacocktv.peacockandroid"},
         {"globoplay", "globoplay", "com.globo.globotv"},
         {"max", "max", "com.wbd.stream"},
@@ -80,6 +81,12 @@ final class Recs {
         {"okko", "okko", "ru.more.play"},
         {"crunchyroll", "crunchyroll", "com.crunchyroll.crunchyroid"},
         {"oneplay", "oneplay", "net.cme.voyo.cz.tvapp"},    // Czechia: Voyo and O2 TV became Oneplay, same app
+        {"now tv", "now", "com.bskyb.nowtv.beta"},     // UK: Sky's NOW (TMDB: "Now TV", "Now TV Cinema")
+        // Russia (TMDB's watch providers for RU)
+        {"kinopoisk", "kinopoisk", "ru.kinopoisk.tv"},
+        {"premier", "premier", "gpm.tnt_premier"},
+        {"amediateka", "amediateka", "ru.amediateka"},
+        {"more tv", "wink", "ru.rt.video.app.tv"},   // TMDB: "More TV" (more.tv is part of Rostelecom's Wink now)
     };
     private static final Map<String, String> SERVICE_NAME = new HashMap<>();
     static {
@@ -96,6 +103,11 @@ final class Recs {
         SERVICE_NAME.put("okko", "Okko");
         SERVICE_NAME.put("crunchyroll", "Crunchyroll");
         SERVICE_NAME.put("oneplay", "Oneplay");
+        SERVICE_NAME.put("now", "NOW");
+        SERVICE_NAME.put("kinopoisk", "Кинопоиск");
+        SERVICE_NAME.put("premier", "Premier");
+        SERVICE_NAME.put("amediateka", "Амедиатека");
+        SERVICE_NAME.put("wink", "Wink");
     }
     /**
      * Country for "what streams where": the Region setting (Sky Home Launcher > TMDB), whose first value is config.properties'
@@ -505,7 +517,7 @@ final class Recs {
         JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
         for (int i = 0; i < providers.length(); i++) {
             JSONObject o = providers.getJSONObject(i);
-            String[] s = service(o.optString("provider_name"));
+            String[] s = service(o.optString("provider_name"), o.optInt("provider_id"));
             if (s != null && installed(s[2])) services.put(o.getInt("provider_id"), s);
         }
         if (services.isEmpty()) throw new IOException(NO_APPS);
@@ -691,8 +703,8 @@ final class Recs {
     // MARK: - What Launcher needs (which app a service opens; the rest of this class stays about the picks)
 
     /** The SERVICES row (name part, key, package) for a provider's name on TMDB, or null when the TV has no app we know for it. */
-    String[] serviceRow(String providerName) {
-        return service(providerName);
+    String[] serviceRow(String providerName, int providerId) {
+        return service(providerName, providerId);
     }
 
     boolean appInstalled(String pkg) {
@@ -724,8 +736,8 @@ final class Recs {
     }
 
     /** The service is one the person hides (Sky Home Launcher > TMDB > Hidden services): it never opens, even when its app is on the TV. */
-    boolean hiddenService(String providerName) {
-        String[] row = service(providerName);
+    boolean hiddenService(String providerName, int providerId) {
+        String[] row = service(providerName, providerId);
         return row != null && Prefs.hiddenServices().contains(row[1]);
     }
 
@@ -778,7 +790,7 @@ final class Recs {
         JSONObject br = wp == null ? null : wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(region());
         JSONArray flat = br == null ? null : br.optJSONArray("flatrate");
         for (int i = 0; flat != null && i < flat.length() && p.app == null; i++) {
-            String[] s = service(flat.getJSONObject(i).optString("provider_name"));
+            String[] s = service(flat.getJSONObject(i).optString("provider_name"), flat.getJSONObject(i).optInt("provider_id"));
             if (s != null && installed(s[2])) {
                 p.app = s[1];
                 p.pkg = s[2];
@@ -845,10 +857,14 @@ final class Recs {
     }
 
     /** The SERVICES row for a TMDB name: the installed one first, when a service has more than one package. */
-    private String[] service(String name) {
+    private String[] service(String name, int providerId) {
         String n = name.toLowerCase(Locale.ROOT);
         String[] first = null;
+        // "HBO Max Amazon Channel", "Apple TV Amazon Channel"...: a subscription sold inside another app, not this one.
+        if (n.contains(" channel")) return null;
         for (String[] s : SERVICES) {
+            // Apple TV: only the streaming service (TMDB provider 350); provider 2 is the Apple TV Store (rent or buy).
+            if (s[1].equals("appletv") && providerId != 350) continue;
             if (!(s[0].equals("max") ? n.matches(".*\\bmax\\b.*") : n.contains(s[0]))) continue;
             if (installed(s[2])) return s;
             if (first == null) first = s;
@@ -906,7 +922,7 @@ final class Recs {
      */
     String watchLink(String kind, int id, String serviceKey) {
         if (!linksOn() || serviceKey == null) return null;
-        String saved = cache.getString("wm:" + kind + id + serviceKey, null);
+        String saved = cache.getString("wm2:" + kind + id + serviceKey, null);
         if (saved != null) return saved.isEmpty() ? null : saved;
         if (System.currentTimeMillis() < linkRetryAt) return null;
         try {
@@ -922,7 +938,10 @@ final class Recs {
                     JSONObject s = sources.getJSONObject(i);
                     String name = s.optString("name").toLowerCase(Locale.ROOT).replace(" ", "");
                     String want = service[0].replace(" ", "");
-                    boolean same = want.equals("max") ? name.equals("max") : name.contains(want);
+                    // Not a channel sold inside another app ("AppleTV+ Amazon Channel", "Paramount+ (Via Amazon Prime)"):
+                    // that link opens Amazon or Apple's app, not the one the pick is for.
+                    boolean resold = name.contains("channel") || name.contains("(via");
+                    boolean same = !resold && (want.equals("max") ? name.equals("max") : name.contains(want));
                     int rank = sourceRank(s.optString("type"));
                     if (same && rank >= 0 && rank < best && s.optString("web_url").startsWith("https://")) {
                         best = rank;
@@ -930,7 +949,7 @@ final class Recs {
                     }
                 }
             }
-            cache.edit().putString("wm:" + kind + id + serviceKey, link).apply();
+            cache.edit().putString("wm2:" + kind + id + serviceKey, link).apply();
             return link.isEmpty() ? null : link;
         } catch (Exception e) {
             if ("Watchmode returned HTTP 401".equals(e.getMessage())) {
@@ -1087,7 +1106,7 @@ final class Recs {
                     .putLong("keyStamp", keyStamp).putInt("version", CACHE_VERSION);
             // Watchmode links of every title opened are kept; past 600 they start over (the refused-key mark stays).
             List<String> links = new ArrayList<>();
-            for (String k : cache.getAll().keySet()) if (k.startsWith("wm:") && !k.equals("wm:refused")) links.add(k);
+            for (String k : cache.getAll().keySet()) if ((k.startsWith("wm:") || k.startsWith("wm2:")) && !k.equals("wm:refused")) links.add(k);
             if (links.size() > 600) for (String k : links) e.remove(k);
             e.apply();
         } catch (Exception ignored) {

@@ -140,6 +140,7 @@ TV, in *Sky Home Launcher* → *Home Settings*, and the TV's choice wins:
 | `look` | The look the home screen starts with: `material3-expressive` or `glass` (Liquid Glass). *Home Settings* on the TV changes it | `material3-expressive` |
 | `theme` | `auto` (dark from sunset to sunrise), `dark` or `light`. Also changeable on the TV | `auto` |
 | `disable_assistant` | Also turn off Google Assistant | `false` |
+| `screensaver` | `false` keeps the TV's own screensaver: Sky Home Launcher then changes only the home screen and the promo apps | `true` |
 | `hide_services` | Streaming services to leave out of the picks even when their app is on the TV (`netflix`, `prime`, `disney`…), comma separated; for apps the TV ships that you don't subscribe to. *TMDB* → *Hidden services* sets them on the TV | empty |
 | `pick_count` | How many picks the home screen rotates through, 3 to 12. At 3 it shows this hour's three; with more, left and right slide through them in a circle | 3 |
 | `pick_rotate_seconds` | If above 0, the picks move by themselves this often while focus is not on them | 0 |
@@ -202,7 +203,7 @@ To remove it for good, switch to *Original* first, then uninstall *Sky Home Laun
 
 - It becomes the home screen and the screensaver.
 - It turns off, without uninstalling:
-  - the stock home screen and screensaver;
+  - the stock home screen and screensaver (the screensaver stays with `screensaver=false`);
   - Google TV's recovery home, Play Games and YouTube Music;
   - on TCL TVs, the TCL Channel, messages, store demo, hotel menu, manuals, mirroring and logging apps;
   - on Philco TVs, AI PONT (promo channels and app downloads) and the manual;
@@ -267,7 +268,7 @@ Each language is one file, [`app/assets/i18n/<lang>.json`](app/assets/i18n), key
 English text in the code. *Automatic* follows the TV's language and uses any language that has a file (English otherwise); *Home
 Settings* → *Language* lists them all. Today: English, Portuguese, Spanish, German, French, Italian, Dutch, Polish,
 Swedish, Danish, Norwegian, Finnish, Czech, Romanian, Turkish, Russian, Ukrainian, Greek, Japanese, Korean, Simplified
-Chinese, Hindi, Indonesian, Vietnamese and Thai. Portuguese, Spanish, German and Russian were translated by hand and are the
+Chinese, Hindi, Indonesian, Vietnamese and Thai. Portuguese, Spanish, German, Russian and Turkish were translated by hand and are the
 reference (fix them by hand); the others were machine-made, and corrections from native speakers are welcome.
 
 - **Add a language:** `python3 tools/translate.py --new ca`, then fill `app/assets/i18n/ca.json` by hand, or with

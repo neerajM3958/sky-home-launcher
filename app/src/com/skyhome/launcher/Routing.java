@@ -53,21 +53,27 @@ final class Routing {
         final String name;
         final int tier;
         final String logo;      // TMDB's logo path ("/abc.jpg") for the card's icon, or ""
+        final int providerId;   // TMDB's provider id: tells apart services sharing a name (Apple TV the service vs. the Store)
 
         Offer(String name, int tier) {
-            this(name, tier, "");
+            this(name, tier, "", 0);
         }
 
         Offer(String name, int tier, String logo) {
+            this(name, tier, logo, 0);
+        }
+
+        Offer(String name, int tier, String logo, int providerId) {
             this.name = name;
             this.tier = tier;
             this.logo = logo;
+            this.providerId = providerId;
         }
     }
 
     interface Env {
         /** {name part, key, package} of the app we know for a service's name, or null. */
-        String[] service(String providerName);
+        String[] service(String providerName, int providerId);
         boolean installed(String pkg);
         /** Stremio is on the TV: without it every "Stremio" choice is off. */
         boolean stremio();
@@ -76,7 +82,7 @@ final class Routing {
         /** "Use Stremio for what is missing" is on. */
         boolean stremioForMissing();
         /** In hide_services: never opens. */
-        boolean hidden(String providerName);
+        boolean hidden(String providerName, int providerId);
     }
 
     /** `offers` is null when the lookup could not be done. */
@@ -89,8 +95,8 @@ final class Routing {
         String bestPkg = null;      // null with a best rank: Stremio
         for (int i = 0; i < offers.size(); i++) {
             Offer o = offers.get(i);
-            if (env.hidden(o.name)) continue;
-            String[] row = env.service(o.name);
+            if (env.hidden(o.name, o.providerId)) continue;
+            String[] row = env.service(o.name, o.providerId);
             boolean sent = stremio && env.toStremio(row == null ? OTHER : row[1]);
             if (row == null && !sent) continue;      // a service we can't open
             int rank = rank(o, i, sent || env.installed(row[2]));
@@ -116,7 +122,7 @@ final class Routing {
 
     /** Its app is on the TV, or the person sends it to Stremio (which is on the TV). */
     static boolean ready(Offer o, Env env) {
-        String[] row = env.service(o.name);
+        String[] row = env.service(o.name, o.providerId);
         return (env.stremio() && env.toStremio(row == null ? OTHER : row[1])) || (row != null && env.installed(row[2]));
     }
 
