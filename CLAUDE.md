@@ -131,8 +131,15 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   No right-to-left languages yet (the layout isn't mirrored); CJK and Devanagari use the system font.
   Comments in English, short, only where the why isn't obvious.
 - Settings come from `config.properties` through the generated `out/gen/com/skyhome/launcher/Config.java` (never
-  edit that). What the person changes on the TV (`Prefs`: Home Settings, Shelf, Remote Buttons) wins over those
-  first values.
+  edit that). What the person changes on the TV (`Prefs`: Home Settings, Shelf, Remote Buttons, Sleep Timer) wins
+  over those first values.
+- Settings rows that need something this TV lacks show *Unavailable* (or the specific reason) in place of their
+  value, and OK does nothing: `Capabilities.missing` says why, from a need a row names (`Capabilities.NEED_ADB`,
+  `NEED_OVERLAY`…). *Settings > Sleep Timer* turns the TV off after 5 minutes to 4 hours (needs Sky Home Launcher
+  mode on: it presses the remote's Sleep key through the TV's own ADB, the one the switch uses), with the minutes
+  left shown over any app (`SleepOverlay`, an overlay service in its own `:sleep` process; Android TV has no screen
+  to allow drawing over other apps, so the first time ADB allows it) or, where that's refused, on the home screen
+  itself (`HomeView`).
 - The weather's place is found from the TV's internet address (`Locator`, ipwho.is then ipapi.co, kept 12 hours) when
   the config names no city (`Prefs.autoLocation`); *Home Settings > City* picks one by hand (a city search) or goes back
   to *Automatic*. Until a place is found there is no forecast (never another city's: the theme uses 6:00 and 18:00),

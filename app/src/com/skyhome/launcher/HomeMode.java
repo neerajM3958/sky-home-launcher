@@ -500,6 +500,9 @@ final class HomeMode {
             } catch (IOException e) {
                 AppLog.w("remote buttons service: " + e.getMessage());
             }
+            SleepTimer.stop(c);
+            adb.shell("appops set " + PKG + " SYSTEM_ALERT_WINDOW default");   // SleepOverlay's, if it was allowed
+            Capabilities.forget(c, Capabilities.OVERLAY);                       // asked again next time
             s = state(c);
             s.put("mode", ORIGINAL).put("since", System.currentTimeMillis()).put("homeReverted", false)
                     .put("disabled", new JSONArray(failed)).remove("keptOff");
@@ -595,6 +598,7 @@ final class HomeMode {
                 record(adb, stillOff);
                 // The screensaver first: if that fails, the revert isn't marked done and the next try does it again.
                 restoreScreensaver(adb, s);
+                SleepTimer.stop(app);   // its row shows Unavailable from now on
                 s.put("homeReverted", true).put("disabled", kept);
                 save(app, s);
                 notice(app, Ui.tr("Sky Home Launcher's home screen crashed 3 times in a row; I switched back to the original one."));
