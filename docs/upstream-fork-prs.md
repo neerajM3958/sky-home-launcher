@@ -67,7 +67,7 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 |---|---|---|---|---|---|
 | [124](https://github.com/simbasjungles/free-my-tv/pull/124) | Turkish | 2026-10-23 | app | Adopted | Merged in PR #18 |
 | [163](https://github.com/simbasjungles/free-my-tv/pull/163) | Android 8-12: the glass over a photo drawn with bitmaps | 2026-10-23 | app | Adopted | Merged in PR #18 |
-| [167](https://github.com/simbasjungles/free-my-tv/pull/167) | Add Amazon Fire TV (Fire OS) support and remote input focus fixes | 2026-10-23 | app | Planned | See `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md` |
+| [167](https://github.com/simbasjungles/free-my-tv/pull/167) | Add Amazon Fire TV (Fire OS) support and remote input focus fixes | 2026-10-23 | app | Planned | See `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md`; held back — this build only targets Android/Google TV and Fire TV support can't be verified without that hardware |
 | [175](https://github.com/simbasjungles/free-my-tv/pull/175) | Home: smooth tiles, cards, logos and symbols on 4K TVs | 2026-10-23 | app + web (mixed) | Planned | See `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md` |
 | [178](https://github.com/simbasjungles/free-my-tv/pull/178) | My Photos: your photos, sent from the computer, for the screensaver and home | 2026-10-23 | app + tools | Planned | See `plans/port-prs-178-227-102-276-287-photos-screensaver.md` |
 | [190](https://github.com/simbasjungles/free-my-tv/pull/190) | Samsung: Prime Video on 2020 TVs reaches the shelf | 2026-10-23 | web | Rejected | web/ only — platform dropped |
@@ -80,7 +80,7 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [217](https://github.com/simbasjungles/free-my-tv/pull/217) | Remote buttons on Xiaomi TVs sold in Russia | 2026-10-23 | app | Pending | Brand remote-key support; check against our remote-button learning feature |
 | [220](https://github.com/simbasjungles/free-my-tv/pull/220) | Shelf: any number of apps, scrolling past what fits, and a check on the ones on it | 2026-10-23 | app + web (mixed) | Pending | Shelf UX change; check against our shelf-editor/catalog-screen changes since fork |
 | [225](https://github.com/simbasjungles/free-my-tv/pull/225) | LG and Samsung: Thai in the web app's NAMES and REGIONS | 2026-10-23 | web | Rejected | web/ only — platform dropped |
-| [219](https://github.com/simbasjungles/free-my-tv/pull/219) | Settings: a sleep timer, and options this TV lacks show why | 2026-10-24 | app | Planned | See `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md` |
+| [219](https://github.com/simbasjungles/free-my-tv/pull/219) | Settings: a sleep timer, and options this TV lacks show why | 2026-10-24 | app | Adopted | Merged in PR #19 |
 | [227](https://github.com/simbasjungles/free-my-tv/pull/227) | My Photos follow-ups: claim before importing, decode only the 16:9 band, a way in on Android 11 | 2026-10-24 | app + tools | Planned | See `plans/port-prs-178-227-102-276-287-photos-screensaver.md` |
 | [230](https://github.com/simbasjungles/free-my-tv/pull/230) | HY300 (Amlogic): the Home button opens Free My TV through JmLauncher | 2026-10-24 | app | Pending | New device support; low risk if self-contained to a new brand's keys |
 | [232](https://github.com/simbasjungles/free-my-tv/pull/232) | Weather: the next 5 days instead of the next 6 hours | 2026-10-24 | app + web (mixed) | Pending | Weather widget change; check against `HomeData`/drawer changes since fork |
@@ -107,7 +107,7 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [278](https://github.com/simbasjungles/free-my-tv/pull/278) | CLAUDE.md: the Always rules first; check.sh greps the CSS and --fill leaves hand translations alone | 2026-10-25 | CLAUDE.md + tools | Rejected | Doc/CI reorder moot for us — our `CLAUDE.md` already diverged, and `tools/check.sh` no longer checks `web/` CSS at all |
 | [282](https://github.com/simbasjungles/free-my-tv/pull/282) | Samsung install: tested on a 2024 Tizen 9 TV, and what to do when the TV drops the connection | 2026-10-25 | tizen | Rejected | tizen/ only — platform dropped |
 | [284](https://github.com/simbasjungles/free-my-tv/pull/284) | Add a screensaver=false option that keeps the TV's own screensaver | 2026-10-25 | app + build.sh | Adopted | Merged in PR #18 |
-| [287](https://github.com/simbasjungles/free-my-tv/pull/287) | Home and screensaver: what any app is playing, in the quotes' place while it plays | 2026-10-25 | app | Planned | See `plans/port-prs-178-227-102-276-287-photos-screensaver.md`; needs #219 (Plan 2, `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md`) built first for `Capabilities.java` |
+| [287](https://github.com/simbasjungles/free-my-tv/pull/287) | Home and screensaver: what any app is playing, in the quotes' place while it plays | 2026-10-25 | app | Planned | See `plans/port-prs-178-227-102-276-287-photos-screensaver.md`; its `Capabilities.java` dependency is satisfied now that #219 is merged (PR #19) |
 | [289](https://github.com/simbasjungles/free-my-tv/pull/289) | Home: the remote's Settings button opens Free My TV's Settings | 2026-10-25 | app | Pending | Check against our `RemoteKeys`/`Prefs.FMT_SETTINGS` (added independently, see CLAUDE.md) — likely `Superseded` on closer look |
 | [292](https://github.com/simbasjungles/free-my-tv/pull/292) | Fire TV: HDMI inputs through Amazon's input switch, Live TV on the an… | 2026-10-25 | app | Pending | Builds on #167 (Fire TV support) — review together |
 | [296](https://github.com/simbasjungles/free-my-tv/pull/296) | Package visibility: streaming services and OneWorld TV Center in `<queries>` | 2026-10-25 | app | Adopted | Merged in PR #18 (with #253) |
@@ -115,9 +115,10 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [298](https://github.com/simbasjungles/free-my-tv/pull/298) | LG and Samsung: About this TV in Home Settings (#265) | 2026-10-25 | app + web (mixed) | Rejected | Checked: the only `app/` touches are shared i18n catalog strings feeding `web/`'s UI text; all actual logic is in `web/home.js`/`tv.js`/`index.html`/`home.css` — genuinely web/ only, platform dropped |
 
 **Totals.** 48 PRs in this snapshot: 11 `Rejected` (10 web/webos/tizen-only, 1 moot doc/CI), 2 `Superseded` (#208 —
-PatchWall debloat + remote-button learning; #251 — already built independently, see its note), 13 `Adopted` (#124,
+PatchWall debloat + remote-button learning; #251 — already built independently, see its note), 14 `Adopted` (#124,
 #163, #194, #205, #209, #250, #252, #253, #254, #266, #273, #284, #296 — all merged in PR #18, per
-`plans/port-prs-small-fixes-batch.md`), 8 `Planned` in two grouped plans: #102, #178, #227, #276, #287 in
-`plans/port-prs-178-227-102-276-287-photos-screensaver.md` (#287 needs #219 built first for `Capabilities.java`),
-and #167, #175, #219 in `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md`. 1 `Ready` (#297 — blocked on #240,
-still `Pending`), 13 `Pending`.
+`plans/port-prs-small-fixes-batch.md`; #219 — merged in PR #19, per
+`plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md`), 7 `Planned`: #102, #178, #227, #276, #287 in
+`plans/port-prs-178-227-102-276-287-photos-screensaver.md` (#287's `Capabilities.java` dependency is now satisfied
+by #219), and #167, #175 in `plans/port-prs-167-175-219-fire-tv-4k-sleep-timer.md` (#167 held back — no Fire TV
+hardware to verify against). 1 `Ready` (#297 — blocked on #240, still `Pending`), 13 `Pending`.
