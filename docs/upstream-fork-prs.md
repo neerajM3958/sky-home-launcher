@@ -65,16 +65,16 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 
 | # | Title | Merged | Platform | Status | Note |
 |---|---|---|---|---|---|
-| [124](https://github.com/simbasjungles/free-my-tv/pull/124) | Turkish | 2026-10-23 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
-| [163](https://github.com/simbasjungles/free-my-tv/pull/163) | Android 8-12: the glass over a photo drawn with bitmaps | 2026-10-23 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [124](https://github.com/simbasjungles/free-my-tv/pull/124) | Turkish | 2026-10-23 | app | Adopted | PR #18 |
+| [163](https://github.com/simbasjungles/free-my-tv/pull/163) | Android 8-12: the glass over a photo drawn with bitmaps | 2026-10-23 | app | Adopted | PR #18 |
 | [167](https://github.com/simbasjungles/free-my-tv/pull/167) | Add Amazon Fire TV (Fire OS) support and remote input focus fixes | 2026-10-23 | app | Ready | New platform support (Fire OS is Android-based); sizable, worth a dedicated look; #292 builds on this one |
 | [175](https://github.com/simbasjungles/free-my-tv/pull/175) | Home: smooth tiles, cards, logos and symbols on 4K TVs | 2026-10-23 | app + web (mixed) | Ready | Rendering quality; check against our catalog-screen/poster rendering changes for conflicts |
 | [178](https://github.com/simbasjungles/free-my-tv/pull/178) | My Photos: your photos, sent from the computer, for the screensaver and home | 2026-10-23 | app + tools | Ready | Plan together with #227 (its correctness follow-up, same feature) and #102 (shares the same Backdrop/HomeView/Prefs/SettingsActivity touch points, depends on this PR's `Photos.on()`) |
 | [190](https://github.com/simbasjungles/free-my-tv/pull/190) | Samsung: Prime Video on 2020 TVs reaches the shelf | 2026-10-23 | web | Rejected | web/ only — platform dropped |
-| [194](https://github.com/simbasjungles/free-my-tv/pull/194) | Protect the onn 4K Streaming Box's system pieces | 2026-10-23 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
-| [205](https://github.com/simbasjungles/free-my-tv/pull/205) | Screensaver: read the settings again when it starts | 2026-10-23 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [194](https://github.com/simbasjungles/free-my-tv/pull/194) | Protect the onn 4K Streaming Box's system pieces | 2026-10-23 | app | Adopted | PR #18 |
+| [205](https://github.com/simbasjungles/free-my-tv/pull/205) | Screensaver: read the settings again when it starts | 2026-10-23 | app | Adopted | PR #18 |
 | [208](https://github.com/simbasjungles/free-my-tv/pull/208) | Xiaomi TVs: the Mi button opens Free My TV, not PatchWall | 2026-10-23 | app | Superseded | We already debloat (turn off) Xiaomi's PatchWall, and the Mi button (a global key) can already be recorded via our remote-button *learning* feature for a custom action — no Xiaomi-specific code needed |
-| [209](https://github.com/simbasjungles/free-my-tv/pull/209) | Picks: skip "… Amazon Channel" providers; Apple TV only as TMDB provider 350 | 2026-10-23 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [209](https://github.com/simbasjungles/free-my-tv/pull/209) | Picks: skip "… Amazon Channel" providers; Apple TV only as TMDB provider 350 | 2026-10-23 | app | Adopted | PR #18 |
 | [210](https://github.com/simbasjungles/free-my-tv/pull/210) | LG and Samsung: shelf logos lifted off the TV's icons, filling the tile | 2026-10-23 | web | Rejected | web/ only — platform dropped |
 | [213](https://github.com/simbasjungles/free-my-tv/pull/213) | HY300 projectors: Keystone and Screen Mirroring shortcuts, HDMI that opens | 2026-10-23 | app + tools (+ docs) | Pending | New device support (HY300/Amlogic projector shortcuts); check against our top-buttons/inputs rework since fork |
 | [217](https://github.com/simbasjungles/free-my-tv/pull/217) | Remote buttons on Xiaomi TVs sold in Russia | 2026-10-23 | app | Pending | Brand remote-key support; check against our remote-button learning feature |
@@ -90,32 +90,32 @@ Last full refresh: **2026-10-26** (covered the 48 PRs merged upstream since the 
 | [241](https://github.com/simbasjungles/free-my-tv/pull/241) | LG install: lock the TV's key by ACL on Windows | 2026-10-24 | webos | Rejected | webos/ only — platform dropped |
 | [242](https://github.com/simbasjungles/free-my-tv/pull/242) | Hisense remote buttons (Q6N, Android TV 12) | 2026-10-24 | app | Pending | Brand remote-key support; check against our remote-button learning feature |
 | [245](https://github.com/simbasjungles/free-my-tv/pull/245) | Inputs: check the maker's player is really installed, and open them on MIUI TV | 2026-10-24 | app | Pending | Check against our top-buttons/inputs rework since fork |
-| [250](https://github.com/simbasjungles/free-my-tv/pull/250) | Time: 24 hours in English when the TV is set to 24-hour | 2026-10-24 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [250](https://github.com/simbasjungles/free-my-tv/pull/250) | Time: 24 hours in English when the TV is set to 24-hour | 2026-10-24 | app | Adopted | PR #18 |
 | [251](https://github.com/simbasjungles/free-my-tv/pull/251) | Theme: its first value from config.properties | 2026-10-24 | app + build.sh + web (mixed) | Superseded | Checked: already built independently (`Prefs.theme()` defaults to `Config.THEME`, `build.sh`/`config.example.properties`/README already document `theme=`) |
-| [252](https://github.com/simbasjungles/free-my-tv/pull/252) | Picks and shelf: NOW (UK) and Paramount+'s build on Sony TVs | 2026-10-24 | app + web (mixed) | Planned | See `plans/port-prs-small-fixes-batch.md` |
-| [253](https://github.com/simbasjungles/free-my-tv/pull/253) | Picks and shelf: Kinopoisk, Okko, Premier, Amediateka and Wink; Moonlight on the shelf | 2026-10-24 | app | Planned | See `plans/port-prs-small-fixes-batch.md` (with #296) |
-| [254](https://github.com/simbasjungles/free-my-tv/pull/254) | Live TV: digital tuner first when a TV has several hardware tuners | 2026-10-24 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [252](https://github.com/simbasjungles/free-my-tv/pull/252) | Picks and shelf: NOW (UK) and Paramount+'s build on Sony TVs | 2026-10-24 | app + web (mixed) | Adopted | PR #18 |
+| [253](https://github.com/simbasjungles/free-my-tv/pull/253) | Picks and shelf: Kinopoisk, Okko, Premier, Amediateka and Wink; Moonlight on the shelf | 2026-10-24 | app | Adopted | PR #18 (with #296) |
+| [254](https://github.com/simbasjungles/free-my-tv/pull/254) | Live TV: digital tuner first when a TV has several hardware tuners | 2026-10-24 | app | Adopted | PR #18 |
 | [102](https://github.com/simbasjungles/free-my-tv/pull/102) | Photo of the day theme: Bing's daily photo behind the clock | 2026-10-25 | app + web + docs (mixed) | Ready | app/ part only (web/docs dropped); depends on #178's `Photos.on()` check — plan together with #178+#227, build on top once My Photos lands |
 | [170](https://github.com/simbasjungles/free-my-tv/pull/170) | Xiaomi TVs: the remote's YouTube and PatchWall buttons in Remote Buttons | 2026-10-25 | app | Pending | Brand remote-key support; check against our remote-button *learning* feature — may be redundant now |
 | [211](https://github.com/simbasjungles/free-my-tv/pull/211) | LG webOS 3: the TV's app list from the computer (webos/apps.py) | 2026-10-25 | web + webos | Rejected | webos/web only — platform dropped |
 | [261](https://github.com/simbasjungles/free-my-tv/pull/261) | fix(tv): widen Samsung internal-app filter for Tizen 9 | 2026-10-25 | web | Rejected | web/ only — platform dropped |
 | [263](https://github.com/simbasjungles/free-my-tv/pull/263) | TCL: the home screen opaque again, so the app just left no longer stays on screen | 2026-10-25 | app | Pending | TCL-specific bug fix; likely low risk, worth adopting |
-| [266](https://github.com/simbasjungles/free-my-tv/pull/266) | Watchmode: skip channels resold inside another app (AppleTV+ Amazon Channel, Paramount+ via Amazon) | 2026-10-25 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [266](https://github.com/simbasjungles/free-my-tv/pull/266) | Watchmode: skip channels resold inside another app (AppleTV+ Amazon Channel, Paramount+ via Amazon) | 2026-10-25 | app | Adopted | PR #18 |
 | [267](https://github.com/simbasjungles/free-my-tv/pull/267) | Run on 2016 Samsung TVs (Tizen 2.4) | 2026-10-25 | web + tizen | Rejected | web/tizen only — platform dropped |
-| [273](https://github.com/simbasjungles/free-my-tv/pull/273) | Prices: dollars when Binance has halted the currency's pairs | 2026-10-25 | app | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [273](https://github.com/simbasjungles/free-my-tv/pull/273) | Prices: dollars when Binance has halted the currency's pairs | 2026-10-25 | app | Adopted | PR #18 |
 | [276](https://github.com/simbasjungles/free-my-tv/pull/276) | Screensaver: OK opens the title on screen in its app (optional, off by default) | 2026-10-25 | app + web (mixed) | Ready | Check against our screensaver and title-routing (`Routing`/`Launcher`) changes since fork |
 | [278](https://github.com/simbasjungles/free-my-tv/pull/278) | CLAUDE.md: the Always rules first; check.sh greps the CSS and --fill leaves hand translations alone | 2026-10-25 | CLAUDE.md + tools | Rejected | Doc/CI reorder moot for us — our `CLAUDE.md` already diverged, and `tools/check.sh` no longer checks `web/` CSS at all |
 | [282](https://github.com/simbasjungles/free-my-tv/pull/282) | Samsung install: tested on a 2024 Tizen 9 TV, and what to do when the TV drops the connection | 2026-10-25 | tizen | Rejected | tizen/ only — platform dropped |
-| [284](https://github.com/simbasjungles/free-my-tv/pull/284) | Add a screensaver=false option that keeps the TV's own screensaver | 2026-10-25 | app + build.sh | Planned | See `plans/port-prs-small-fixes-batch.md` |
+| [284](https://github.com/simbasjungles/free-my-tv/pull/284) | Add a screensaver=false option that keeps the TV's own screensaver | 2026-10-25 | app + build.sh | Adopted | PR #18 |
 | [287](https://github.com/simbasjungles/free-my-tv/pull/287) | Home and screensaver: what any app is playing, in the quotes' place while it plays | 2026-10-25 | app | Ready | Sizable, needs design work: no `Capabilities.java` on our side, replaces the quotes row (our drawer/Top-Buttons layout has changed since fork), and adds a new `ModeJob` type overlapping our own `ModeJob.KEEP` addition |
 | [289](https://github.com/simbasjungles/free-my-tv/pull/289) | Home: the remote's Settings button opens Free My TV's Settings | 2026-10-25 | app | Pending | Check against our `RemoteKeys`/`Prefs.FMT_SETTINGS` (added independently, see CLAUDE.md) — likely `Superseded` on closer look |
 | [292](https://github.com/simbasjungles/free-my-tv/pull/292) | Fire TV: HDMI inputs through Amazon's input switch, Live TV on the an… | 2026-10-25 | app | Pending | Builds on #167 (Fire TV support) — review together |
-| [296](https://github.com/simbasjungles/free-my-tv/pull/296) | Package visibility: streaming services and OneWorld TV Center in `<queries>` | 2026-10-25 | app | Planned | See `plans/port-prs-small-fixes-batch.md` (with #253) |
+| [296](https://github.com/simbasjungles/free-my-tv/pull/296) | Package visibility: streaming services and OneWorld TV Center in `<queries>` | 2026-10-25 | app | Adopted | PR #18 (with #253) |
 | [297](https://github.com/simbasjungles/free-my-tv/pull/297) | Optimized Traditional Chinese language support | 2026-10-25 | app | Ready | Blocked on #240 (creates zh-TW.json, which doesn't exist in our repo yet; #240 is still `Pending`) — plan together once #240 is `Ready` |
 | [298](https://github.com/simbasjungles/free-my-tv/pull/298) | LG and Samsung: About this TV in Home Settings (#265) | 2026-10-25 | app + web (mixed) | Rejected | Checked: the only `app/` touches are shared i18n catalog strings feeding `web/`'s UI text; all actual logic is in `web/home.js`/`tv.js`/`index.html`/`home.css` — genuinely web/ only, platform dropped |
 
 **Totals.** 48 PRs in this snapshot: 11 `Rejected` (10 web/webos/tizen-only, 1 moot doc/CI), 2 `Superseded` (#208 —
-PatchWall debloat + remote-button learning; #251 — already built independently, see its note), 13 `Planned` (#124,
-#163, #194, #205, #209, #250, #252, #253, #254, #266, #273, #284, #296 — all in `plans/port-prs-small-fixes-batch.md`),
-9 `Ready` (#102, #167, #175, #178, #219, #227, #276, #287, #297 — #102/#178/#227 still to be planned together;
-#297 blocked on #240), 13 `Pending`.
+PatchWall debloat + remote-button learning; #251 — already built independently, see its note), 13 `Adopted` (#124,
+#163, #194, #205, #209, #250, #252, #253, #254, #266, #273, #284, #296 — all in PR #18, per
+`plans/port-prs-small-fixes-batch.md`), 9 `Ready` (#102, #167, #175, #178, #219, #227, #276, #287, #297 —
+#102/#178/#227 still to be planned together; #297 blocked on #240), 13 `Pending`.
