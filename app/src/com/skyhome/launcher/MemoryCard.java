@@ -27,11 +27,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Debug only (config.properties: show_memory_card, overridable in Settings > Home Settings > Memory card): a small
- * card, top right, over any app, with free and total RAM
- * (read straight off this process, no ADB needed) and the app in front's own memory (needs ADB, so it reads "—" until
- * that's been granted, same as SleepOverlay's pill). Its own process (:memcard), like SleepOverlay, and not tied to
- * Sky Home Launcher mode: once the overlay permission is granted it keeps running under the TV's own launcher too.
+ * Debug only (config.properties: show_memory_card, overridable in Settings > Home Settings > Memory card): a thin
+ * status bar, bottom right, over any app, with free and total RAM (read straight off this process, no ADB needed)
+ * and the app in front's own memory, process by process (needs ADB, so it reads "—" until that's been granted, same
+ * as SleepOverlay's pill). Its own process (:memcard), like SleepOverlay, and not tied to Sky Home Launcher mode:
+ * once the overlay permission is granted it keeps running under the TV's own launcher too.
  */
 public class MemoryCard extends Service {
     private static final int REFRESH_MS = 2_000;
@@ -94,19 +94,19 @@ public class MemoryCard extends Service {
         float k = getResources().getDisplayMetrics().widthPixels / 1920f;
         view = new TextView(this);
         view.setTypeface(Ui.regular);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, 22 * k);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, 20 * k);
         view.setTextColor(0xFFFFFFFF);
-        view.setLineSpacing(6 * k, 1);
-        GradientDrawable pill = new GradientDrawable();
-        pill.setCornerRadius(16 * k);
-        pill.setColor(0xCC1C1C1E);
-        view.setBackground(pill);
-        view.setPadding(Math.round(20 * k), Math.round(14 * k), Math.round(20 * k), Math.round(14 * k));
+        view.setSingleLine(true);
+        GradientDrawable bar = new GradientDrawable();
+        bar.setCornerRadius(8 * k);
+        bar.setColor(0xCC1C1C1E);
+        view.setBackground(bar);
+        view.setPadding(Math.round(18 * k), Math.round(8 * k), Math.round(18 * k), Math.round(8 * k));
         WindowManager.LayoutParams layout = new WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
                 PixelFormat.TRANSLUCENT);
-        layout.gravity = Gravity.TOP | Gravity.RIGHT;
+        layout.gravity = Gravity.BOTTOM | Gravity.RIGHT;
         layout.x = layout.y = Math.round(32 * k);
         getSystemService(WindowManager.class).addView(view, layout);
         startPolling();
@@ -133,12 +133,11 @@ public class MemoryCard extends Service {
                         adb = null;
                     }
                 }
-                StringBuilder text = new StringBuilder();
-                for (String line : processLines) text.append(line).append('\n');
-                text.append(Ui.trf("App: {app}", "app", appLine)).append('\n')
-                        .append(Ui.trf("Free: {n} MB", "n", freeTotal[0])).append('\n')
-                        .append(Ui.trf("Total: {n} MB", "n", freeTotal[1]));
-                String shown = text.toString();
+                List<String> parts = new ArrayList<>(processLines);
+                parts.add(Ui.trf("App: {app}", "app", appLine));
+                parts.add(Ui.trf("Free: {n} MB", "n", freeTotal[0]));
+                parts.add(Ui.trf("Total: {n} MB", "n", freeTotal[1]));
+                String shown = String.join("   ·   ", parts);
                 main.post(() -> { if (view != null) view.setText(shown); });
                 long elapsed = SystemClock.elapsedRealtime() - start;
                 if (running) SystemClock.sleep(Math.max(0, REFRESH_MS - elapsed));
