@@ -3871,6 +3871,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         out.set(lerp(slotA.left, slotB.left, t), lerp(slotA.top, slotB.top, t), lerp(slotA.right, slotB.right, t), lerp(slotA.bottom, slotB.bottom, t));
     }
 
+    /**
+     * The corner radius of a card `x` slots from the first, matching `slotAt`'s own slot-to-slot interpolation
+     * instead of the picture's wide/tall aspect ratio: slots 1 and 2 are both "tall" (same aspect), but
+     * `look.cardRadius` gives them different radii (28 vs 48 in MaterialLook) — interpolating by aspect alone
+     * (as this used to) collapses that distinction and makes whichever card settles into slot 2 snap to the wrong
+     * radius the instant it stops sliding and switches from this draw path to the resting one (`drawLightCard`).
+     */
+    private float cardRadiusAt(float x) {
+        int j = Math.max(-1, Math.min(2, (int) Math.floor(x)));
+        float t = x - j;
+        return lerp(look.cardRadius(Math.max(0, Math.min(2, j))), look.cardRadius(Math.max(0, Math.min(2, j + 1))), t);
+    }
+
     /** The cards while the picks travel: each pick moves from its slot to the next, changing shape on the way. */
     private void drawCarousel(Canvas c) {
         float pos = carousel.value;
@@ -3895,7 +3908,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float s = 1 + look.m.cardGrow * f, bw = travel.width(), bh = travel.height();
         float cx = travel.centerX(), cy = travel.centerY() - look.m.cardLift * k * f;
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
-        float r0 = lerp(look.cardRadius(1), look.cardRadius(0), wide) * k, r = r0 * s;
+        float r0 = cardRadiusAt(x) * k, r = r0 * s;
         // The card's shape morphs continuously as it slides, so an offscreen layer sized to it is almost never the
         // same two frames running (and several cards, each a different size, can be on screen at once): that defeats
         // the GPU's render-target cache (#memory-management). So the edge fade is `alpha` applied to each paint below
