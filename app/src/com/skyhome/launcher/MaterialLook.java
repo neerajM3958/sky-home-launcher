@@ -354,8 +354,12 @@ final class MaterialLook extends Look {
         }
         float pad = lerp(20, 32, wide) * k, width = cell.width() - 2 * pad;
         Paint t = heroTitle, d = heroMeta;
-        t.setTextSize(lerp(34, 56, wide) * k);
-        d.setTextSize(lerp(23, 30, wide) * k);
+        // The text size itself doesn't follow `wide` continuously (unlike the padding above, which can track the
+        // card's shape smoothly): a card sliding through the carousel would otherwise visibly grow or shrink its
+        // title for the whole trip instead of just once it's basically arrived.
+        float textWide = wide >= 0.5f ? 1 : 0;
+        t.setTextSize(lerp(34, 56, textWide) * k);
+        d.setTextSize(lerp(23, 30, textWide) * k);
         // A scrim over the bottom of the artwork keeps the text readable on any picture: dark, but on the small cards
         // by day a light fade with dark text.
         float top = cell.bottom - cell.height() * lerp(0.5f, 0.62f, wide);

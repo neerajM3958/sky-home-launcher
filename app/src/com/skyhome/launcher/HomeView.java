@@ -3901,7 +3901,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         slotAt(x, travel);
         float wideRatio = cardRects[0].width() / cardRects[0].height(), tallRatio = cardRects[1].width() / cardRects[1].height();
         float wide = Ui.clamp((travel.width() / travel.height() - tallRatio) / (wideRatio - tallRatio));
-        float alpha = x < 0 ? 1 + x : x > 2 ? 3 - x : 1;
+        // Eased, not linear: a card that's still mostly off to the side (entering or leaving) stays close to fully
+        // transparent for most of its travel, instead of being visibly see-through the whole way across — it only
+        // really shows up right as it reaches the row.
+        float edge = x < 0 ? 1 + x : x > 2 ? 3 - x : 1;
+        float alpha = x < 0 ? 1 - (1 - edge) * (1 - edge) : x > 2 ? edge * edge : 1;
         float f = Ui.clamp(cardFocus[0].value) * Math.max(0, 1 - Math.abs(x));
         float left = pos - carouselTarget;       // how far the row still has to go
         float reveal = a == carouselTarget ? Ui.clamp(1 - Math.abs(left) * 1.6f) : 1;
