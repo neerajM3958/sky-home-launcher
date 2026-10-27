@@ -97,9 +97,11 @@ abstract class Look {
      * The title and details of a pick card, drawn by the look over the card (`cell` is the card now, `f` how focused
      * it is). `wide` is 0 for a small card and 1 for the hero (a card on its way from one to the other is in between), and
      * `reveal` how far its text has come in (0 to 1: it arrives a beat after the picture). Returns false when the look
-     * draws none, and the screen writes them under the card.
+     * draws none, and the screen writes them under the card. `alpha` is the card's own opacity (1 unless it is
+     * fading in or out of a sliding carousel), applied on top of the paints drawn here instead of an offscreen
+     * layer (#memory-management: a layer sized to a continuously-morphing card defeats the GPU's render-target cache).
      */
-    boolean cardCaption(Canvas c, RectF cell, float radius, float wide, String title, String meta, float f, float night, float reveal) {
+    boolean cardCaption(Canvas c, RectF cell, float radius, float wide, String title, String meta, float f, float night, float reveal, float alpha) {
         return false;
     }
 
@@ -120,9 +122,9 @@ abstract class Look {
 
     /**
      * The focus of a tile or card as this look draws it, on top of the picture. Returns false when the look has none of
-     * its own, and the screen draws the glass's (sheen and rim).
+     * its own, and the screen draws the glass's (sheen and rim). `alpha`: see {@link #cardCaption}.
      */
-    boolean focusRing(Canvas c, RectF cell, float radius, float f, float night) { return false; }
+    boolean focusRing(Canvas c, RectF cell, float radius, float f, float night, float alpha) { return false; }
 
     /** A top tab's surface. Returns false when the look draws none (the screen draws the glass pill for the selected one). */
     boolean tab(Canvas c, RectF r, boolean selected, float focus, float night) { return false; }

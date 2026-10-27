@@ -296,6 +296,10 @@ final class Prefs {
     static boolean watchNext() { return app == null ? Config.WATCH_NEXT : sp().getBoolean("watchNext", Config.WATCH_NEXT); }
     static void setWatchNext(boolean on) { put("watchNext", on); }
 
+    /** Settings > Home Settings > Memory card (debug): free/total RAM and the foreground app's memory, over any app. */
+    static boolean memoryCard() { return app == null ? Config.SHOW_MEMORY_CARD : sp().getBoolean("memoryCard", Config.SHOW_MEMORY_CARD); }
+    static void setMemoryCard(boolean on) { put("memoryCard", on); }
+
     /**
      * Trailers play inside the home screen (an embedded YouTube player); off, the YouTube app opens them. On unless the TV is
      * short of memory (shortOfMemory) and the person hasn't chosen.

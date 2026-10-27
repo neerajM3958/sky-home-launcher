@@ -10,9 +10,11 @@ public class HomeReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
             HomeMode.bootCheck(context);
+            MemoryCard.start(context);
         } else if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             HomeMode.verify(context);   // app updated: complete Sky Home Launcher mode if something is missing
             HomeMode.ensureRemoteService(context, 3_000);
+            MemoryCard.start(context);
         } else if (SleepTimer.ACTION.equals(action)) {
             long setAt = intent.getLongExtra("setAt", 0);
             PendingResult result = goAsync();   // ADB is network: off the main thread

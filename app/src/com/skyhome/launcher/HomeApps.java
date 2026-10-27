@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -127,8 +128,35 @@ final class HomeApps {
             "com.disney.starplus",                  // Star+ (merged into Disney+)
             "com.tcl.exhibit"));                    // TCL: T-Exhibition
 
-    private static final Map<String, Bitmap> TILES = new HashMap<>();   // key → ready card
-    private static final Map<String, Bitmap> LOGOS = new HashMap<>();   // key → colored logo with no background
+    // Capped, not recycled on eviction: a shelf/All-Apps Item keeps its own Bitmap reference directly (HomeView's
+    // `shelf` field holds the Items across many frames, not a fresh map lookup each frame), so recycling an evicted
+    // entry here would risk the same "Canvas: trying to use a recycled bitmap" crash the picks cache hit
+    // (#memory-management, item 5's lesson). Capping still bounds growth; an evicted entry just redecodes from its
+    // small saved-to-disk copy (logos) or is rebuilt (tiles) if it's needed again later.
+    private static final int MAX_LOGOS = 32, MAX_TILES = 48;
+    private static final Map<String, Bitmap> TILES = new LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) { return size() > MAX_TILES; }
+    };
+    private static final Map<String, Bitmap> LOGOS = new LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) { return size() > MAX_LOGOS; }
+    };   // key → colored logo with no background
+
+    // TEMP (memory investigation, remove after): byte count and entry count of each cache.
+    static long[] debugTileBytes() {
+        synchronized (HomeApps.class) {
+            long bytes = 0;
+            for (Bitmap b : TILES.values()) if (b != null) bytes += b.getAllocationByteCount();
+            return new long[] {bytes, TILES.size()};
+        }
+    }
+
+    static long[] debugLogoBytes() {
+        synchronized (LOGOS) {
+            long bytes = 0;
+            for (Bitmap b : LOGOS.values()) if (b != null) bytes += b.getAllocationByteCount();
+            return new long[] {bytes, LOGOS.size()};
+        }
+    }
 
     /**
      * Home screen apps. `extract`: also lifts the logos that are not on disk yet (slow: background only); without it,

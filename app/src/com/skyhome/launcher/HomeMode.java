@@ -452,6 +452,7 @@ final class HomeMode {
             done(c, null);
             adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
             ModeJob.schedule(c, ModeJob.MEMORY, FREE, 120_000);
+            MemoryCard.start(c);
         } catch (Exception e) {
             done(c, Ui.trf("Couldn't turn on Sky Home Launcher: {error}", "error", e.getMessage()));
         }
@@ -501,8 +502,10 @@ final class HomeMode {
                 AppLog.w("remote buttons service: " + e.getMessage());
             }
             SleepTimer.stop(c);
-            adb.shell("appops set " + PKG + " SYSTEM_ALERT_WINDOW default");   // SleepOverlay's, if it was allowed
-            Capabilities.forget(c, Capabilities.OVERLAY);                       // asked again next time
+            if (!Prefs.memoryCard()) {   // else: the debug memory card keeps using it in Original mode too
+                adb.shell("appops set " + PKG + " SYSTEM_ALERT_WINDOW default");   // SleepOverlay's, if it was allowed
+                Capabilities.forget(c, Capabilities.OVERLAY);                       // asked again next time
+            }
             s = state(c);
             s.put("mode", ORIGINAL).put("since", System.currentTimeMillis()).put("homeReverted", false)
                     .put("disabled", new JSONArray(failed)).remove("keptOff");
@@ -519,6 +522,7 @@ final class HomeMode {
             done(c, null);
             adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
             ModeJob.schedule(c, ModeJob.MEMORY, ORIGINAL, 120_000);
+            MemoryCard.start(c);
         } catch (Exception e) {
             done(c, Ui.trf("Couldn't go back to the original: {error}", "error", e.getMessage()));
         }

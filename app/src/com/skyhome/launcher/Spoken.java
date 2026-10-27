@@ -54,8 +54,8 @@ final class Spoken extends AccessibilityNodeProvider {
     private final Runnable settled = () -> send(HOST_VIEW_ID, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
     private int lastFocused = -1, accessibilityFocused = -1;
     private String lastText = "";
-    private boolean following;
-    private long keyAt, talkBackAt;
+    private boolean following, spokenActive;
+    private long keyAt, talkBackAt, spokenCheckedAt;
 
     Spoken(View host, Source source) {
         this.host = host;
@@ -63,9 +63,25 @@ final class Spoken extends AccessibilityNodeProvider {
         manager = (AccessibilityManager) host.getContext().getSystemService(Context.ACCESSIBILITY_SERVICE);
     }
 
+    // manager.isEnabled() goes true the moment ANY accessibility service is on, including RemoteKeyService (a
+    // feedbackGeneric service that only reads key events, no screen reader) — broadcasting a full
+    // TYPE_WINDOW_CONTENT_CHANGED event on every focus move for that case alone forces extra GPU RenderTarget churn
+    // for no one listening (#memory-management, the All Apps grid mystery). Only a real spoken-feedback service
+    // (TalkBack) needs these events; re-checked at most once a second, not on every key, since
+    // getEnabledAccessibilityServiceList is a binder call.
+    private boolean spokenActive() {
+        long now = SystemClock.uptimeMillis();
+        if (now - spokenCheckedAt > 1000) {
+            spokenCheckedAt = now;
+            spokenActive = manager.isEnabled()
+                    && !manager.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_SPOKEN).isEmpty();
+        }
+        return spokenActive;
+    }
+
     /** After every focus move (or change on screen): TalkBack reads the focused item if it changed. */
     void focusMoved() {
-        if (!manager.isEnabled()) return;
+        if (!spokenActive()) return;
         send(HOST_VIEW_ID, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
         // Again once the slide is over: the items have moved to where they rest.
         host.removeCallbacks(settled);
@@ -178,7 +194,7 @@ final class Spoken extends AccessibilityNodeProvider {
 
     private void send(int id, int type) {
         ViewParent parent = host.getParent();
-        if (parent == null || !manager.isEnabled()) return;
+        if (parent == null || !spokenActive()) return;
         AccessibilityEvent e = AccessibilityEvent.obtain(type);
         if (id == HOST_VIEW_ID) {
             host.onInitializeAccessibilityEvent(e);

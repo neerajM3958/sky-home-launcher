@@ -428,6 +428,34 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     };
 
+    // TEMP (memory investigation, remove after): logs every bitmap cache's byte count every 20s, plus native heap total.
+    private final Runnable debugMemory = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            long[] posters = catalogs.debugPosterBytes();
+            long[] tiles = HomeApps.debugTileBytes();
+            long[] logos = HomeApps.debugLogoBytes();
+            long[] symbols = Symbols.debugBytes();
+            long[] badges = ServiceBadge.debugBytes();
+            long[] shad = shadows.debugBytes();
+            long[] picks = recs.debugImageBytes();
+            long[] details2 = details.debugBackdropBytes();
+            long backdropBytes = (bgFrom != null ? bgFrom.debugBytes() : 0) + (bgTo != null ? bgTo.debugBytes() : 0);
+            long crispBytes = 0;
+            for (Bitmap b : crispLogos.values()) if (b != null) crispBytes += b.getAllocationByteCount();
+            long known = posters[0] + tiles[0] + logos[0] + symbols[0] + badges[0] + shad[0] + backdropBytes + picks[0] + crispBytes + details2[0];
+            long nativeHeap = android.os.Debug.getNativeHeapAllocatedSize();
+            AppLog.w(String.format(java.util.Locale.ROOT,
+                    "mem: posters %dKB(%d) tiles %dKB(%d) logos %dKB(%d) symbols %dKB(%d) badges %dKB(%d) shadows %dKB(%d) "
+                            + "backdrop %dKB(%d+%d) picks %dKB(%d) crisp %dKB(%d) details %dKB(%d) | known %dKB / native heap %dKB",
+                    posters[0] / 1024, posters[1], tiles[0] / 1024, tiles[1], logos[0] / 1024, logos[1],
+                    symbols[0] / 1024, symbols[1], badges[0] / 1024, badges[1], shad[0] / 1024, shad[1],
+                    backdropBytes / 1024, bgFrom != null ? 1 : 0, bgTo != null ? 1 : 0, picks[0] / 1024, picks[1],
+                    crispBytes / 1024, crispLogos.size(), details2[0] / 1024, details2[1], known / 1024, nativeHeap / 1024));
+            handler.postDelayed(this, 20_000);
+        }
+    };
+
     HomeView(Activity a) {
         super(a);
         activity = a;
@@ -454,8 +482,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
-        // drawer 19 → 17 ms).
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        // drawer 19 → 17 ms). heroLayer/status/platter/tiles/popLayer are page-1 content (the resting screen), so they
+        // stay hardware-accelerated always; drawerLayer/catalogLayer/browseLayer/sheetLayer are other pages' content
+        // and start off (they're also INVISIBLE below) — updateMotion() turns each one's GPU layer on only while its
+        // own page is actually showing (#memory-management, item 3: ~25 MB of persistent GPU memory otherwise sat
+        // behind pages that may never be opened in a session).
+        for (View v : new View[] {heroLayer, status, platter, tiles, popLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
         for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
@@ -506,6 +538,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.refreshIfStale();
         catalogs.refreshWatchNext(false);
         handler.postDelayed(tick, 15_000);
+        handler.postDelayed(debugMemory, 5_000);   // TEMP (memory investigation, remove after)
         if (look.m.animatedBackground) handler.postDelayed(drift, 100);
         if (Config.PICK_ROTATE_SECONDS > 0) handler.postDelayed(rotate, Config.PICK_ROTATE_SECONDS * 1000L);
         checkNotices();
@@ -535,6 +568,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         Choreographer.getInstance().removeFrameCallback(this);
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(debugMemory);   // TEMP (memory investigation, remove after)
         handler.removeCallbacks(drift);
         handler.removeCallbacks(rotate);
         handler.removeCallbacks(reloadSoon);
@@ -867,14 +901,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float da = home * smoothstep(0.1f, 0.6f, dc);
         drawerLayer.setTranslationY((1 - d) * shift - catLift);
         drawerLayer.setAlpha(da);
-        drawerLayer.setVisibility(da > 0.002f ? VISIBLE : INVISIBLE);
+        showLayer(drawerLayer, da > 0.002f);
         float ca = home * smoothstep(0, 0.35f, Ui.clamp(catIn.value));
         catalogLayer.setAlpha(ca);
-        catalogLayer.setVisibility(ca > 0.002f ? VISIBLE : INVISIBLE);
+        showLayer(catalogLayer, ca > 0.002f);
         browseLayer.setAlpha(b);
         browseLayer.setTranslationY((1 - Ui.clamp(browseIn.value)) * 60 * k);
-        browseLayer.setVisibility(b > 0.002f ? VISIBLE : INVISIBLE);
-        sheetLayer.setVisibility(s > 0.001f || sheetOpen ? VISIBLE : INVISIBLE);
+        showLayer(browseLayer, b > 0.002f);
+        showLayer(sheetLayer, s > 0.001f || sheetOpen);
         sheetLayer.setAlpha(s);
         float scale = 1.04f - 0.04f * s;
         sheetLayer.setScaleX(scale);
@@ -885,6 +919,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         v.setAlpha(alpha);
         v.setTranslationY(translationY);
         v.setVisibility(alpha > 0.002f ? VISIBLE : INVISIBLE);
+    }
+
+    /**
+     * Visibility and the GPU layer together, for a page whose content doesn't need its hardware layer to exist at
+     * all while the page is fully closed (#memory-management, item 3): the layer comes back the moment it's needed
+     * again, same as Android's own documented pattern for a hardware layer as a temporary aid, not a permanent canvas.
+     */
+    private static void showLayer(View v, boolean visible) {
+        v.setVisibility(visible ? VISIBLE : INVISIBLE);
+        if (!Ui.LEGACY) {
+            int want = visible ? LAYER_TYPE_HARDWARE : LAYER_TYPE_NONE;
+            if (v.getLayerType() != want) v.setLayerType(want, null);
+        }
     }
 
     private void updateSleep() {
@@ -1436,22 +1483,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         HomeApps.Item it = shelf.get(i);
         // Lifted to be moved: a little bigger than focused, with a deeper shadow.
         float l = i == liftIndex ? Math.max(0, moveLift.value) : 0;
-        float f = tileFocus[i].value, fc = Ui.clamp(f), s = 1 + look.m.shelfGrow * f + LIFT_GROW * l;
+        // Only the targeted tile grows (as the catalog/poster rows already do): with every tile's own Spring
+        // animating independently, the outgoing and incoming tiles' shadows both need a fresh, differently-sized
+        // offscreen blur surface almost every frame, which Skia's GPU scratch cache can't reuse (#memory-management).
+        float f = (i == shelfIndex ? tileFocus[i].value : 0), fc = Ui.clamp(f), s = 1 + look.m.shelfGrow * f + LIFT_GROW * l;
         RectF base = tileRects[i];
         float bw = base.width(), bh = base.height(), r0 = TILE_RADIUS * k;
         float cx = base.centerX(), cy = base.centerY();
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
         float r = r0 * s;
-        // Shadow at the resting icon size, enlarged by the transform (so the blur stays cached): short at rest, deep
-        // and lower when focused.
-        c.save();
-        c.translate(cx, cy);
-        c.scale(s, s);
-        tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
+        // Shadow at the already-scaled bounds (cell/r, not a canvas scale): matches drawCard's shape, so repeated
+        // frames at the same size let the GPU reuse its offscreen blur surface instead of allocating a new one.
+        tmp.set(cell);
         tmp.offset(0, (4 + 14 * f + 6 * l) * k);
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.3f) + tone(0.18f, 0.3f) * fc + 0.14f * Ui.clamp(l)));
-        shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
-        c.restore();
+        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
         int[] style = TILE_STYLE.get(it.key);
         if (it.logo != null && style != null) {
             if (tileShaders.length != shelf.size() || tileShaderH != bh) {
@@ -1488,7 +1534,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else {
             if (it.tile != null) roundImage(c, it.tile, cell, r);
         }
-        look.focusRing(c, cell, r, fc, dark());
+        look.focusRing(c, cell, r, fc, dark(), 1);
     }
 
     /**
@@ -2022,7 +2068,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (y > h || y + GRID_ROW * k < 0) continue;
             float x = left + col * (GRID_W + GRID_GAP) * k;
             gridCell.set(x, y, x + GRID_W * k, y + GRID_H * k);
-            float f = gridFocus[i].value;
+            // Only the targeted tile grows (#memory-management, same as the shelf): doesn't explain this screen's
+            // own GPU growth (measured separately, cause unidentified), but still the correct behavior on its own
+            // merits — matches every other fixed section, and costs nothing since it's still provably no worse.
+            float f = i == gridIndex ? gridFocus[i].value : 0;
             drawCard(c, others.get(i).tile, gridCell, GRID_RADIUS * k, f, 0.08f);
             if (sheetOpen && i == gridIndex) focusedCell.set(cell);
             gridLabel.setColor(look.gridLabelInk(f, dark()));
@@ -2064,7 +2113,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             veil.setColor(Ui.alpha(0xFF000000, 0.08f * (1 - fc)));
             c.drawRoundRect(cell, r, r, veil);
         }
-        if (!look.focusRing(c, cell, r, fc, dark())) {
+        if (!look.focusRing(c, cell, r, fc, dark(), 1)) {
             border.setColor(0x14FFFFFF);
             c.drawRoundRect(cell, r, r, border);
             if (f > 0.01f) {
@@ -3808,8 +3857,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void slotRect(int j, RectF out) {
         RectF r0 = cardRects[0], r1 = cardRects[1], r2 = cardRects[2];
         float tall = r1.width(), gap = r1.left - r0.right;
-        if (j < 0) out.set(r0.left - gap - tall, r0.top, r0.left - gap, r0.bottom);
-        else if (j > 2) out.set(r2.right + gap, r2.top, r2.right + gap + tall, r2.bottom);
+        // Further than the inter-card gap (#picks-carousel): already fully off the visible screen from here, but
+        // the extra distance means the eased edge-fade (drawTravelCard) has more travel to work with before the
+        // entering/exiting card reaches the row, instead of becoming a half-formed, near-opaque card shortly in.
+        float stage = gap + tall;
+        if (j < 0) out.set(r0.left - stage - tall, r0.top, r0.left - stage, r0.bottom);
+        else if (j > 2) out.set(r2.right + stage, r2.top, r2.right + stage + tall, r2.bottom);
         else out.set(cardRects[j]);
     }
 
@@ -3820,6 +3873,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         slotRect(j, slotA);
         slotRect(j + 1, slotB);
         out.set(lerp(slotA.left, slotB.left, t), lerp(slotA.top, slotB.top, t), lerp(slotA.right, slotB.right, t), lerp(slotA.bottom, slotB.bottom, t));
+    }
+
+    /**
+     * The corner radius of a card `x` slots from the first, matching `slotAt`'s own slot-to-slot interpolation
+     * instead of the picture's wide/tall aspect ratio: slots 1 and 2 are both "tall" (same aspect), but
+     * `look.cardRadius` gives them different radii (28 vs 48 in MaterialLook) — interpolating by aspect alone
+     * (as this used to) collapses that distinction and makes whichever card settles into slot 2 snap to the wrong
+     * radius the instant it stops sliding and switches from this draw path to the resting one (`drawLightCard`).
+     */
+    private float cardRadiusAt(float x) {
+        int j = Math.max(-1, Math.min(2, (int) Math.floor(x)));
+        float t = x - j;
+        return lerp(look.cardRadius(Math.max(0, Math.min(2, j))), look.cardRadius(Math.max(0, Math.min(2, j + 1))), t);
     }
 
     /** The cards while the picks travel: each pick moves from its slot to the next, changing shape on the way. */
@@ -3839,22 +3905,28 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         slotAt(x, travel);
         float wideRatio = cardRects[0].width() / cardRects[0].height(), tallRatio = cardRects[1].width() / cardRects[1].height();
         float wide = Ui.clamp((travel.width() / travel.height() - tallRatio) / (wideRatio - tallRatio));
-        float alpha = x < 0 ? 1 + x : x > 2 ? 3 - x : 1;
+        // Eased, not linear: a card that's still mostly off to the side (entering or leaving) stays close to fully
+        // transparent for most of its travel, instead of being visibly see-through the whole way across — it only
+        // really shows up right as it reaches the row.
+        float edge = x < 0 ? 1 + x : x > 2 ? 3 - x : 1;
+        float alpha = x < 0 ? 1 - (1 - edge) * (1 - edge) : x > 2 ? edge * edge : 1;
         float f = Ui.clamp(cardFocus[0].value) * Math.max(0, 1 - Math.abs(x));
         float left = pos - carouselTarget;       // how far the row still has to go
         float reveal = a == carouselTarget ? Ui.clamp(1 - Math.abs(left) * 1.6f) : 1;
         float s = 1 + look.m.cardGrow * f, bw = travel.width(), bh = travel.height();
         float cx = travel.centerX(), cy = travel.centerY() - look.m.cardLift * k * f;
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
-        float r0 = lerp(look.cardRadius(1), look.cardRadius(0), wide) * k, r = r0 * s;
-        fadeBounds.set(cell.left - 70 * k, cell.top - 70 * k, cell.right + 70 * k, cell.bottom + 160 * k);
-        int saved = alpha < 0.995f ? c.saveLayerAlpha(fadeBounds, Math.round(255 * alpha)) : c.save();
+        float r0 = cardRadiusAt(x) * k, r = r0 * s;
+        // The card's shape morphs continuously as it slides, so an offscreen layer sized to it is almost never the
+        // same two frames running (and several cards, each a different size, can be on screen at once): that defeats
+        // the GPU's render-target cache (#memory-management). So the edge fade is `alpha` applied to each paint below
+        // instead of one saveLayerAlpha over the whole card.
         c.save();
         c.translate(cx, cy);
         c.scale(s, s);
         tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
         tmp.offset(0, (10 + 14 * f) * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
+        shadowDeep.setColor(Ui.alpha(0xFF000000, (tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f) * alpha));
         shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
         c.restore();
         Backdrop b = recs.backdrop(p);
@@ -3863,35 +3935,38 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // little behind its card while the row moves.
             Bitmap lo = b.tall != null ? b.tall : b.wide, hi = b.wide != null ? b.wide : b.tall;
             float shift = -left * 0.12f;
+            bitmapPaint.setAlpha(Math.round(255 * alpha));
             roundImage(c, lo, cell, r, shift);
             if (hi != lo && wide > 0.01f) {
-                bitmapPaint.setAlpha(Math.round(255 * wide));
+                bitmapPaint.setAlpha(Math.round(255 * wide * alpha));
                 roundImage(c, hi, cell, r, shift);
-                bitmapPaint.setAlpha(255);
             }
+            bitmapPaint.setAlpha(255);
             drawBadge(c, cell, pickService(p));
         } else {
             fill.setShader(null);
-            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
+            fill.setColor(Ui.alpha(look.color(Look.PLACEHOLDER, dark()), alpha));
             c.drawRoundRect(cell, r, r, fill);
         }
-        if (!look.focusRing(c, cell, r, f, dark()) && f > 0.01f) {
+        if (!look.focusRing(c, cell, r, f, dark(), alpha) && f > 0.01f) {
             rim.setShader(null);
-            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.7f * f));
+            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.7f * f * alpha));
             c.drawRoundRect(cell, r, r, rim);
         }
-        if (!look.cardCaption(c, cell, r, wide, p.title, p.meta, f, dark(), reveal)) {
+        if (!look.cardCaption(c, cell, r, wide, p.title, p.meta, f, dark(), reveal, alpha)) {
+            int titleAlpha = lCardTitle.getAlpha();
+            lCardTitle.setAlpha(Math.round(titleAlpha * alpha));
             fitPaint.set(lCardTitle);
             c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), travel.left, travel.bottom + 46 * k, lCardTitle);
+            lCardTitle.setAlpha(titleAlpha);
             if (wide > 0.5f && p.meta != null && !p.meta.isEmpty()) {
                 int old = lCardMeta.getAlpha();
-                lCardMeta.setAlpha(Math.round(old * (wide - 0.5f) * 2));
+                lCardMeta.setAlpha(Math.round(old * (wide - 0.5f) * 2 * alpha));
                 fitPaint.set(lCardMeta);
                 c.drawText(TextUtils.ellipsize(p.meta, fitPaint, bw, TextUtils.TruncateAt.END).toString(), travel.left, travel.bottom + 80 * k, lCardMeta);
                 lCardMeta.setAlpha(old);
             }
         }
-        c.restoreToCount(saved);
     }
 
     private void drawFaded(Canvas c, int i, Recs.Pick pick, float alpha, float dx) {
@@ -4144,19 +4219,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawLightCard(Canvas c, int i, Recs.Pick p) {
         RectF base = cardRects[i];
-        float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + look.m.cardGrow * v;
+        // Only the targeted card grows (#memory-management, same fix as the shelf and All Apps grid): a per-slot
+        // Spring animating every slot at once would need a fresh GPU blur surface for each, every frame.
+        float v = i == cardIndex ? cardFocus[i].value : 0, f = Ui.clamp(v), s = 1 + look.m.cardGrow * v;
         float bw = base.width(), bh = base.height(), r0 = look.cardRadius(i) * k;
         float cx = base.centerX(), cy = base.centerY() - look.m.cardLift * k * v;
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
         float r = r0 * s;
-        c.save();
-        c.translate(cx, cy);
-        c.scale(s, s);
-        tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
+        tmp.set(cell);
         tmp.offset(0, (10 + 14 * f) * k);
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
-        shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
-        c.restore();
+        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
         Backdrop b = p == null ? null : recs.backdrop(p);
         Bitmap img = b == null ? null : (i == 0 ? b.wide : b.tall);
         float shown = 1;
@@ -4184,7 +4257,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             imageFill.setAlpha(255);
             if (shown >= 1) drawBadge(c, cell, pickService(p));
         }
-        if (!look.focusRing(c, cell, r, f, dark()) && f > 0.01f) {
+        if (!look.focusRing(c, cell, r, f, dark(), 1) && f > 0.01f) {
             if (lightSheens.length != cardRects.length) {
                 lightSheens = new LinearGradient[cardRects.length];
                 lightRims = new LinearGradient[cardRects.length];
@@ -4213,7 +4286,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.restore();
         }
         if (p == null) return;
-        if (look.cardCaption(c, cell, r, i == 0 ? 1 : 0, p.title, p.meta, f, dark(), 1)) return;
+        if (look.cardCaption(c, cell, r, i == 0 ? 1 : 0, p.title, p.meta, f, dark(), 1, 1)) return;
         fitPaint.set(lCardTitle);
         c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 46 * k, lCardTitle);
         if (i == 0 && p.meta != null && !p.meta.isEmpty()) {

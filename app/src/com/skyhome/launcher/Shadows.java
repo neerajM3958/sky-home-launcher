@@ -25,6 +25,13 @@ final class Shadows {
     private final int[] sx = new int[4], sy = new int[4];
     boolean dither;
 
+    // TEMP (memory investigation, remove after): byte count and entry count of the blurred-shadow cache.
+    long[] debugBytes() {
+        long bytes = 0;
+        for (Bitmap b : cache.values()) if (b != null) bytes += b.getAllocationByteCount();
+        return new long[] {bytes, cache.size()};
+    }
+
     /** Draws `shape` (radius `r`) with `paint`, whose BlurMaskFilter was made with radius `blur`. */
     void draw(Canvas c, RectF shape, float r, float blur, Paint paint) {
         if (!Ui.LEGACY) {

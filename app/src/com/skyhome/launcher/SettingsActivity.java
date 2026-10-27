@@ -125,14 +125,14 @@ public class SettingsActivity extends Activity {
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15, INTEGRATIONS = 16, POWER = 17;
-        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9, SLEEP_ROW = 10;
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9, SLEEP_ROW = 10, RESTART_ROW = 12;
         private static final int TMDB_PICKS = 1, TMDB_FROM = 2, TMDB_STREAM = 3, RENT_BUY_ROW = 4, TMDB_LANGS = 5, TMDB_HIDDEN = 6, TMDB_ANIMATION = 7, TMDB_CATALOGS = 8;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
-        // The main menu: eleven rows, then the comparison, the picks (with the Watchmode credit) and two notices, all
-        // on one 1080 px screen.
-        private static final float MAIN_TOP = 122, ROW_H = 56, MAIN_GAP = 4;
+        // The main menu: twelve rows plus Restart, then the comparison, the picks (with the Watchmode credit) and
+        // two notices, all on one 1080 px screen.
+        private static final float MAIN_TOP = 122, ROW_H = 52, MAIN_GAP = 4;
         /** Sleep Timer's rows, by what they set: the timer, whether it shows on screen and (where it shows over other
          *  apps) where. Values are picked from lists (OK), as on the TV's own settings; ← → step them. */
         private static final int P_SLEEP = 0, P_SHOW = 1, P_WHERE = 2;
@@ -440,7 +440,7 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 12;
+                case MAIN: return 13;
                 case TRAKT: return 1;
                 case INTEGRATIONS: return 1;
                 case POWER: return powerRows().length;
@@ -508,9 +508,9 @@ public class SettingsActivity extends Activity {
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
                     Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("Integrations"),
-                    Ui.tr("Sleep Timer"), Ui.tr("TV Settings")};
+                    Ui.tr("Sleep Timer"), Ui.tr("TV Settings"), Ui.tr("Restart")};
             String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(),
-                    stremioStatus(), integrationsStatus(), sleepStatus(), ""};
+                    stremioStatus(), integrationsStatus(), sleepStatus(), "", ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -528,7 +528,7 @@ public class SettingsActivity extends Activity {
                     float maxWidth = right - (rowRect.left + 30 * k) - rowLabel.measureText(labels[i]) - 20 * k;
                     CharSequence shownOff = TextUtils.ellipsize(values[i], new TextPaint(rowValue), Math.max(0, maxWidth), TextUtils.TruncateAt.END);
                     c.drawText(shownOff, 0, shownOff.length(), right, base, rowValue);
-                } else if (i >= 2) {
+                } else if (i >= 2 && i != RESTART_ROW) {
                     float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
                     Symbols.draw(getContext(), c, "chevron_right", right - cw / 2, rowRect.centerY(), 22 * k, blend(0x66FFFFFF, 0x991C1C1E, f));
                     if (!values[i].isEmpty()) {
@@ -1643,6 +1643,8 @@ public class SettingsActivity extends Activity {
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
         /** Home Settings: color scheme and visual theme are independent controls. */
         private static final int LOOK_ROW = 3, CITY_ROW = 6, WATCH_NEXT_ROW = 7, TRAILER_ROW = 8, QUOTES_ROW = 9, COIN_ROWS = 10;
+        /** Debug: Settings > Home Settings > Memory card, after the coin rows (and "Dollar", when shown). */
+        private int memCardRow() { return COIN_ROWS + 3 + (dollar() ? 1 : 0); }
 
         private boolean dollar() {
             return "BRL".equalsIgnoreCase(Config.CURRENCY.trim());
@@ -1664,6 +1666,7 @@ public class SettingsActivity extends Activity {
             l.add("Ethereum");
             l.add("Solana");
             if (dollar()) l.add(Ui.tr("Dollar"));
+            l.add(Ui.tr("Memory card"));
             return l.toArray(new String[0]);
         }
 
@@ -1686,7 +1689,8 @@ public class SettingsActivity extends Activity {
             v[TRAILER_ROW] = onOff(Prefs.trailers());
             v[QUOTES_ROW] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
-            for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
+            for (int i = COIN_ROWS; i < memCardRow(); i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
+            v[memCardRow()] = onOff(Prefs.memoryCard());
             return v;
         }
 
@@ -1867,6 +1871,11 @@ public class SettingsActivity extends Activity {
                 case TRAILER_ROW: Prefs.setTrailers(!Prefs.trailers()); break;
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
+                    if (row == memCardRow()) {
+                        Prefs.setMemoryCard(!Prefs.memoryCard());
+                        if (Prefs.memoryCard()) MemoryCard.start(getContext()); else MemoryCard.stop(getContext());
+                        break;
+                    }
                     if (!Prefs.quotes()) return;
                     Prefs.setCoin(row - COIN_ROWS, !Prefs.coin(row - COIN_ROWS));
                     break;
@@ -1956,6 +1965,17 @@ public class SettingsActivity extends Activity {
                     if (!message.isEmpty()) handler.postDelayed(() -> { cityStatus = ""; invalidate(); }, 4000);
                 });
             }).start();
+        }
+
+        /** Settings > Restart: confirms, then kills this process (:home) so the system starts it fresh. Not a crash:
+         *  no exception is thrown, so the watchdog's crash counter (Watchdog.java) never sees it. */
+        private void askRestart() {
+            new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Restart"))
+                    .setMessage(Ui.tr("Sky Home Launcher will close and reopen."))
+                    .setPositiveButton(Ui.tr("Restart"), (d, which) -> android.os.Process.killProcess(android.os.Process.myPid()))
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .create().show();
         }
 
         private boolean scrolling() {
@@ -2352,6 +2372,9 @@ public class SettingsActivity extends Activity {
                 pickScroll = 0;
                 screen = POWER;
                 focus = 0;
+            } else if (focus == RESTART_ROW) {
+                askRestart();
+                return;
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }
