@@ -3857,8 +3857,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void slotRect(int j, RectF out) {
         RectF r0 = cardRects[0], r1 = cardRects[1], r2 = cardRects[2];
         float tall = r1.width(), gap = r1.left - r0.right;
-        if (j < 0) out.set(r0.left - gap - tall, r0.top, r0.left - gap, r0.bottom);
-        else if (j > 2) out.set(r2.right + gap, r2.top, r2.right + gap + tall, r2.bottom);
+        // Further than the inter-card gap (#picks-carousel): already fully off the visible screen from here, but
+        // the extra distance means the eased edge-fade (drawTravelCard) has more travel to work with before the
+        // entering/exiting card reaches the row, instead of becoming a half-formed, near-opaque card shortly in.
+        float stage = gap + tall;
+        if (j < 0) out.set(r0.left - stage - tall, r0.top, r0.left - stage, r0.bottom);
+        else if (j > 2) out.set(r2.right + stage, r2.top, r2.right + stage + tall, r2.bottom);
         else out.set(cardRects[j]);
     }
 
