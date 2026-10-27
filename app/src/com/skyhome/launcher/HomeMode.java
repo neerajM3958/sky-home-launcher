@@ -502,7 +502,7 @@ final class HomeMode {
                 AppLog.w("remote buttons service: " + e.getMessage());
             }
             SleepTimer.stop(c);
-            if (!Config.SHOW_MEMORY_CARD) {   // else: the debug memory card keeps using it in Original mode too
+            if (!Prefs.memoryCard()) {   // else: the debug memory card keeps using it in Original mode too
                 adb.shell("appops set " + PKG + " SYSTEM_ALERT_WINDOW default");   // SleepOverlay's, if it was allowed
                 Capabilities.forget(c, Capabilities.OVERLAY);                       // asked again next time
             }

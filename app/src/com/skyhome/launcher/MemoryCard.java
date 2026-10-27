@@ -27,7 +27,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Debug only (config.properties: show_memory_card): a small card, top right, over any app, with free and total RAM
+ * Debug only (config.properties: show_memory_card, overridable in Settings > Home Settings > Memory card): a small
+ * card, top right, over any app, with free and total RAM
  * (read straight off this process, no ADB needed) and the app in front's own memory (needs ADB, so it reads "—" until
  * that's been granted, same as SleepOverlay's pill). Its own process (:memcard), like SleepOverlay, and not tied to
  * Sky Home Launcher mode: once the overlay permission is granted it keeps running under the TV's own launcher too.
@@ -45,15 +46,20 @@ public class MemoryCard extends Service {
     private volatile boolean running;
     private Thread worker;
 
-    /** Starts it if config.properties turned it on; grants the overlay permission through ADB first, if needed. */
+    /** Starts it if config.properties or Settings > Home Settings turned it on; grants the overlay permission through ADB first, if needed. */
     static void start(Context c) {
-        if (!Config.SHOW_MEMORY_CARD) return;
+        if (!Prefs.memoryCard()) return;
         Intent i = new Intent(c, MemoryCard.class);
         if (Settings.canDrawOverlays(c)) {
             c.startForegroundService(i);
         } else if (Capabilities.adb(c)) {
             allow(c.getApplicationContext(), i);
         }   // else: no overlay permission yet and no ADB to grant it now; tried again next boot or switch
+    }
+
+    /** Settings > Home Settings: turned off, so stop it right away instead of waiting for the next boot or switch. */
+    static void stop(Context c) {
+        c.stopService(new Intent(c, MemoryCard.class));
     }
 
     private static final AtomicBoolean allowing = new AtomicBoolean();
