@@ -41,9 +41,12 @@ layer's size to a grid failed (the real problem is several differently-shaped ca
 *simultaneously* within one frame, not frame-to-frame resizing). Fixed by dropping the offscreen layer and applying
 `alpha` directly to each of the card's paints instead (image, shadow, placeholder, rim, text, and the look's own
 focus ring/caption via a new `alpha` parameter). Verified: +1.42 MB/+17 entries per 2 rotations, down from +6.84
-MB/+19 (~79% fewer bytes), matching the "saveLayerAlpha disabled" isolation result almost exactly. The All Apps
-grid's own growth remains a genuinely separate, still-unexplained mystery — unaffected by this fix, not yet
-re-investigated with the same rigor. Item 2's diagnostic flags
+MB/+19 (~79% fewer bytes), matching the "saveLayerAlpha disabled" isolation result almost exactly. **The All Apps
+grid's own growth is now also found and fixed** (see item 9's final section): it wasn't a drawing cost at all —
+`Spoken.focusMoved()` was broadcasting a full TalkBack-oriented accessibility event on every focus move whenever
+*any* accessibility service was enabled, including `RemoteKeyService` (needed on TCL/Vestel/KTC/Sony TVs for remote
+app buttons, no screen reader involved); now gated on an actual spoken-feedback service being enabled instead.
+Item 2's diagnostic flags
 are still sitting in `MaterialLook.java`, marked `TEMP`, not yet reverted; the full per-cache diagnostic logging pass
 (item 7's groundwork) is still in place too (`TEMP`, not yet reverted) across `Catalogs.java`, `HomeApps.java`,
 `Symbols.java`,
@@ -463,13 +466,13 @@ real complexity and animation-smoothness risk. The residual ~1 MB/transition is 
 theoretical floor (entries added ≈ step count per genuinely novel transition) and — importantly — doesn't
 accumulate: once a given tile's sizes are cached this session, re-focusing it again is free. Reverted; not applied.
 
-**All Apps grid — dead end: looked like the same bug, isn't (2026-10-27).** The All Apps sheet (`drawSheet`,
-`HomeView.java:2047-2060`) is a separate code path using `drawCard` directly (already has factor 2 — explicit
-bounds, same as posters) but with `gridFocus[i]`, a **per-item `Spring[]` array** (`HomeView.java:270`, `:1988`) —
-i.e. only factor 1 (simultaneous dual-animation) looked present, same diagnosis that worked for the shelf. Measured
-directly, same method, after the shelf fix was already in place (so reaching All Apps cost almost nothing:
-`+2.56 MB/+11 entries` for 5 shelf moves): opening the sheet cost `+11.78 MB/+18 entries` (the open transition), then
-2 focus moves *inside* the grid cost a further `+8.0 MB/+3 entries`.
+**All Apps grid — found and fixed (2026-10-27).** The All Apps sheet (`drawSheet`, `HomeView.java:2047-2060`) is a
+separate code path using `drawCard` directly (already has factor 2 — explicit bounds, same as posters) but with
+`gridFocus[i]`, a **per-item `Spring[]` array** (`HomeView.java:270`, `:1988`) — i.e. only factor 1 (simultaneous
+dual-animation) looked present, same diagnosis that worked for the shelf. Measured directly, same method, after the
+shelf fix was already in place (so reaching All Apps cost almost nothing: `+2.56 MB/+11 entries` for 5 shelf moves):
+opening the sheet cost `+11.78 MB/+18 entries` (the open transition), then 2 focus moves *inside* the grid cost a
+further `+8.0 MB/+3 entries`.
 
 Applied the identical fix used for the shelf (`i == gridIndex ? gridFocus[i].value : 0`) and re-measured: **zero
 change — `+8.03 MB/+3 entries`, same as before the fix.** Isolated further to find out why: disabled `drawCard`'s
@@ -479,12 +482,33 @@ shadow draw entirely (`if (false) shadows.draw(...)`) — still `+7.97 MB/+1 ent
 grew, +7.97 MB/+1 entry.** Separately confirmed it's not just idle drift: two `gfxinfo` samples 4 seconds apart with
 zero key presses showed *exactly* the same `RenderTarget` figure, no growth at all.
 
-**Conclusion: this is not the same bug.** Something in the All Apps screen's focus-move event handling causes this
-growth, independent of anything drawn in the per-item loop — a genuinely different, unidentified mechanism. All
-grid-specific changes (the `gridIndex` fix and every isolation hack) were reverted; the grid is unchanged from
-before this investigation. Worth its own fresh investigation if pursued — start from what else runs on a focus-move
-key event for this screen (`scroll`/`gridMoving` state, `sheetLayer` invalidation) rather than assuming it's
-drawing-related.
+**The real cause: not drawing at all.** With the per-item loop fully disabled and growth still happening, the only
+thing left running on a grid focus move is `HomeView.retargetGrid()`'s `spoken.focusMoved()` call
+(`HomeView.java:2046`). `Spoken.focusMoved()`/`send()` (`Spoken.java:67-69,181`, before this fix) only skipped their
+work when `AccessibilityManager.isEnabled()` was false — but that flag goes **true the moment any accessibility
+service is enabled, not just a screen reader**. `RemoteKeyService` (`remote_key_service.xml:5`,
+`accessibilityFeedbackType="feedbackGeneric"`, needed on TCL/Vestel/KTC/Sony TVs purely to read the remote's app
+buttons — its `onAccessibilityEvent` is a no-op) is itself an accessibility service, so `isEnabled()` is true on any
+such TV whether or not a real screen reader is running. Confirmed by a live A/B test: with
+`enabled_accessibility_services` cleared (`adb shell settings delete secure enabled_accessibility_services`), the
+identical 2-move test showed **zero `RenderTarget` growth** (`52.63 MB (127 entries)` before and after, byte for
+byte); restoring `RemoteKeyService` reproduced the original `+8.03 MB/+3 entries` exactly.
+
+**Built.** `Spoken.java`: replaced both `manager.isEnabled()` checks with a new `spokenActive()` that also requires
+at least one enabled service with `AccessibilityServiceInfo.FEEDBACK_SPOKEN` (what a real screen reader like
+TalkBack registers as; `RemoteKeyService`'s `feedbackGeneric` doesn't qualify) — re-checked at most once a second
+(cached, `spokenCheckedAt`) rather than on every key, since `getEnabledAccessibilityServiceList` is a binder call.
+`focusMoved()`'s `TYPE_WINDOW_CONTENT_CHANGED` broadcast (plus its delayed `settled` follow-up) and `send()` now both
+gate on this, so a TV with only `RemoteKeyService` enabled — or no accessibility service at all — does none of this
+work, while a real screen reader still gets every event it did before.
+
+**Verified on the TV.** Rebuilt, reinstalled, `RemoteKeyService` left enabled (the realistic case this TV actually
+runs). Same 2-move test, grid position confirmed by screenshot before and after (`Browser` → `Cx File Explorer`):
+`RenderTarget` went from `52.31 MB (63 entries)` to `52.37 MB (65 entries)` — **`+0.06 MB/+2 entries`**, essentially
+flat, down from `+8.03 MB/+3 entries`. A further 6 focus moves (down a row, left twice, right three times) added
+**zero** additional growth (`5.08 MB (33 entries)` unchanged across all of them, a separate run after Skia's own
+budget-triggered scratch-cache compaction had already brought the baseline down). No crash, no regression: the
+grid's label/tile rendering, navigation and (unrelated) `TalkBack`-if-present path are all untouched by this change.
 
 **Picks — found the real cause, after a methodology bug invalidated the first attempt (2026-10-27).** First pass
 (the "same dead end as All Apps grid" conclusion below) was wrong: the `force-stop → launch → press key` test
@@ -546,10 +570,10 @@ before and after rotating: **+1.42 MB / +17 entries per 2 rotations**, down from
 entries), confirming `saveLayerAlpha` itself (not the shadow) was the dominant cost. Visually checked at rest and
 mid-slide on the TV: no artifacts, text/images/fade all look correct.
 
-**All Apps grid's own mystery is still unexplained.** This methodology bug doesn't touch the earlier All Apps grid
-investigation — that one didn't involve rotating/sliding cards at all, and its "disable the entire per-item loop,
-still grows" result holds. It's a separate, still-open question; worth re-checking with the same zone-verification
-discipline before concluding further, but not yet connected to this `drawTravelCard` finding.
+**All Apps grid's own mystery — since found and fixed, see the grid's own section above.** This methodology bug
+didn't touch that investigation (it never involved rotating/sliding cards); the real cause turned out to be
+`Spoken.focusMoved()`'s accessibility event broadcast, not anything drawing-related, confirmed by a live A/B test
+toggling `enabled_accessibility_services`.
 
 **Posters and catalogs confirmed to need no change.** Continue Watching/Watchlist/Shows You Watch already use a
 single shared `catFocus` Spring (`HomeView.java:238`); TMDB's browse-screen catalogs already use a single shared
