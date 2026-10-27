@@ -65,6 +65,22 @@ final class Backdrop {
         frostImage = frost == null ? null : Bitmap.createBitmap(frost, FW, FH, Bitmap.Config.ARGB_8888);
     }
 
+    /** Frees every bitmap's native/GPU backing store right away, instead of waiting for the garbage collector to get to it. */
+    void recycle() {
+        for (Bitmap b : new Bitmap[] {image, wide, tall, lightImage, nightImage, glassBitmap, frostImage})
+            if (b != null) b.recycle();
+    }
+
+    // TEMP (memory investigation, remove after): this instance's total bytes (bitmaps + the raw int[] pixel arrays).
+    long debugBytes() {
+        long bytes = 0;
+        for (Bitmap b : new Bitmap[] {image, wide, tall, lightImage, nightImage, glassBitmap, frostImage})
+            if (b != null) bytes += b.getAllocationByteCount();
+        for (int[] a : new int[][] {frost, glass, light, lightGlass, nightFrost, nightGlass})
+            if (a != null) bytes += (long) a.length * 4;
+        return bytes;
+    }
+
     /** The lightly blurred version as a bitmap (made when a look first asks for it, UI thread). */
     Bitmap glassImage() {
         if (glassBitmap == null && glass != null) glassBitmap = Bitmap.createBitmap(glass, GW, GH, Bitmap.Config.ARGB_8888);

@@ -42,6 +42,16 @@ final class Details {
     private static final long FRESH_MS = 7 * 24 * 3600_000L;
     private static final int VERSION = 3, KEEP = 200, TRAILERS = 4;
     private static final String IMAGES = "https://image.tmdb.org/t/p/" + (Backdrop.W <= 1280 ? "w780" : "w1280");
+    // The browse screen's details card (HomeView.browseStage(): height 440, width 440*16/9, in 1920-wide units):
+    // decoding at its own display size instead of the downloaded file's full size (#memory-management, item 6).
+    private static final float UI_SCALE = uiScale();
+    private static final int BACKDROP_W = Math.round(440 * 16 / 9f * UI_SCALE), BACKDROP_H = Math.round(440 * UI_SCALE);
+
+    private static float uiScale() {
+        android.util.DisplayMetrics m = android.content.res.Resources.getSystem().getDisplayMetrics();
+        int longest = Math.max(m.widthPixels, m.heightPixels);
+        return longest > 0 ? Math.min(1f, longest / 1920f) : 1f;
+    }
 
     private static Details instance;
 
@@ -67,6 +77,9 @@ final class Details {
             return size() > 40;
         }
     };
+    // Not recycled on eviction: HomeView's browseBack/browsePrev can hold a reference to any of these for as long as
+    // a cross-fade is still showing it, well outside this map's own eviction order (#memory-management, item 5: the
+    // identical mistake in Recs.images raced that kind of reference and crashed the renderer).
     private final Map<String, Bitmap> backdrops = new LinkedHashMap<String, Bitmap>(4, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
             return size() > 3;
@@ -74,6 +87,15 @@ final class Details {
     };
     private final Set<String> asking = new HashSet<>(), loading = new HashSet<>();
     private final List<Listener> listeners = new ArrayList<>();
+
+    // TEMP (memory investigation, remove after): byte count and entry count of the browse screen's backdrop cache.
+    long[] debugBackdropBytes() {
+        synchronized (backdrops) {
+            long bytes = 0;
+            for (Bitmap b : backdrops.values()) bytes += b.getAllocationByteCount();
+            return new long[] {bytes, backdrops.size()};
+        }
+    }
 
     private Details(Context c) {
         context = c;
@@ -188,7 +210,19 @@ final class Details {
             try {
                 File f = new File(new File(context.getCacheDir(), "details"), "b" + path.replace("/", "_"));
                 if (!f.exists()) download(IMAGES + path, f);
-                Bitmap b = BitmapFactory.decodeFile(f.getPath());
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(f.getPath(), bounds);
+                BitmapFactory.Options decode = new BitmapFactory.Options();
+                int sample = 1;
+                while (sample < 8 && bounds.outWidth / (sample * 2) >= BACKDROP_W * 5 / 4) sample *= 2;
+                decode.inSampleSize = sample;
+                Bitmap b = BitmapFactory.decodeFile(f.getPath(), decode);
+                if (b != null && b.getWidth() > BACKDROP_W * 5 / 4) {
+                    Bitmap small = Bitmap.createScaledBitmap(b, BACKDROP_W, Math.round(b.getHeight() * (float) BACKDROP_W / b.getWidth()), true);
+                    if (small != b) b.recycle();
+                    b = small;
+                }
                 if (b == null) {
                     //noinspection ResultOfMethodCallIgnored
                     f.delete();

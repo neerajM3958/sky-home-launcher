@@ -137,6 +137,15 @@ final class Recs {
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
     private final java.util.Set<String> pending = new java.util.HashSet<>();
+
+    // TEMP (memory investigation, remove after): byte count and entry count of the picks' Backdrop cache.
+    long[] debugImageBytes() {
+        synchronized (images) {
+            long bytes = 0;
+            for (Backdrop b : images.values()) bytes += b.debugBytes();
+            return new long[] {bytes, images.size()};
+        }
+    }
     private volatile List<Pick> picks = new ArrayList<>();
     private volatile int period = -1;
     private volatile long listAt;
@@ -1055,6 +1064,10 @@ final class Recs {
             if (forLight != light) return;   // the design changed midway: this one is stale
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
+                // Not recycled on eviction: HomeView's bgFrom/bgTo can hold a reference to any of these — including
+                // the oldest one, which this FIFO eviction always removes first — for as long as that pick stays the
+                // current background (minutes, not frames), well outside this map's own eviction order
+                // (#memory-management, item 5: recycling here raced that reference and crashed the renderer).
                 while (images.size() > (forLight ? Math.max(10, Config.PICK_COUNT + 3) : 4)) images.remove(images.keySet().iterator().next());
             }
             notifyListeners();

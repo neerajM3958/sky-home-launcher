@@ -90,7 +90,12 @@ final class Catalogs {
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Bitmap> posters = new LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
-            return size() > MAX_POSTERS;
+            if (size() <= MAX_POSTERS) return false;
+            // A frame or two may still be in flight on the RenderThread with this bitmap, so free it from the main
+            // thread after they've had time to finish, instead of recycling it out from under them here.
+            Bitmap b = eldest.getValue();
+            main.postDelayed(b::recycle, 1000);
+            return true;
         }
     };
     private final Set<String> pending = new HashSet<>();
@@ -507,6 +512,15 @@ final class Catalogs {
 
     private void notifyListeners() {
         main.post(() -> { for (Listener l : new ArrayList<>(listeners)) l.onCatalogs(); });
+    }
+
+    // TEMP (memory investigation, remove after): byte count and entry count of the decoded poster cache.
+    long[] debugPosterBytes() {
+        synchronized (posters) {
+            long bytes = 0;
+            for (Bitmap b : posters.values()) bytes += b.getAllocationByteCount();
+            return new long[] {bytes, posters.size()};
+        }
     }
 
     // MARK: - Posters (w342 on disk; the ones near the screen stay decoded in memory)

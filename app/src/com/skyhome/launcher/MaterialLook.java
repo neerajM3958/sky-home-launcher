@@ -346,7 +346,7 @@ final class MaterialLook extends Look {
         return (Math.round((color >>> 24) * Math.max(0, Math.min(1, a))) << 24) | (color & 0x00FFFFFF);
     }
 
-    @Override boolean cardCaption(Canvas c, RectF cell, float radius, float wide, String title, String meta, float f, float night, float reveal) {
+    @Override boolean cardCaption(Canvas c, RectF cell, float radius, float wide, String title, String meta, float f, float night, float reveal, float alpha) {
         if (wide < 0.5f && meta != null) {
             // Room for the genre and the rating only.
             String[] parts = meta.split(" · ");
@@ -366,18 +366,18 @@ final class MaterialLook extends Look {
         float dayAmt = (1 - wide) * (1 - night);
         if (dayAmt < 0.999f) {
             paint.setShader(scrim);
-            paint.setAlpha(Math.round(255 * (1 - dayAmt)));
+            paint.setAlpha(Math.round(255 * (1 - dayAmt) * alpha));
             c.drawRoundRect(cell.left, top, cell.right, cell.bottom, radius, radius, paint);
         }
         if (dayAmt > 0.001f) {
             paint.setShader(scrimLight);
-            paint.setAlpha(Math.round(255 * dayAmt));
+            paint.setAlpha(Math.round(255 * dayAmt * alpha));
             c.drawRoundRect(cell.left, top, cell.right, cell.bottom, radius, radius, paint);
         }
         paint.setShader(null);
         paint.setAlpha(255);
-        int ink = fade(blend(0xFFFFFFFF, palette(ON_SURFACE, night), dayAmt), reveal);
-        int inkDim = fade(blend(0xCCFFFFFF, palette(ON_VARIANT, night), dayAmt), reveal);
+        int ink = fade(blend(0xFFFFFFFF, palette(ON_SURFACE, night), dayAmt), reveal * alpha);
+        int inkDim = fade(blend(0xCCFFFFFF, palette(ON_VARIANT, night), dayAmt), reveal * alpha);
         // The text comes in a beat after the picture: it rises a little as it appears.
         float base = cell.bottom - pad + (1 - reveal) * 18 * k;
         if (meta != null && !meta.isEmpty()) {
@@ -392,7 +392,7 @@ final class MaterialLook extends Look {
                 String before = line.substring(0, star);
                 c.drawText(before, x, base, d);
                 x += d.measureText(before);
-                d.setColor(fade(STAR, reveal));
+                d.setColor(fade(STAR, reveal * alpha));
                 c.drawText("★", x, base, d);
                 x += d.measureText("★");
                 d.setColor(inkDim);
@@ -447,8 +447,8 @@ final class MaterialLook extends Look {
         return i == 0 ? 40 : i == 1 ? 28 : 48;
     }
 
-    @Override boolean focusRing(Canvas c, RectF cell, float radius, float f, float night) {
-        if (f > 0.01f) ring(c, cell, radius, f, night);
+    @Override boolean focusRing(Canvas c, RectF cell, float radius, float f, float night, float alpha) {
+        if (f > 0.01f) ring(c, cell, radius, f * alpha, night);
         return true;
     }
 
