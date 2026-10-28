@@ -154,6 +154,14 @@ abstract class Look {
     /** The whole screen's background. Returns false when the look has none of its own (the glass draws the photo and sky). */
     boolean background(Canvas c, RectF screen, float night) { return false; }
 
+    /**
+     * Spotlight's full-screen photo: the look draws the picture (sharp, blurred, or a blend of its own choosing) plus
+     * its own corner treatment so the weather (top-left) and the icon buttons (top-right) stay legible over it, and its
+     * own shadow/scrim depth. `b` is the focused pick's ready image (`b.image`, built only once `Recs.backdrop`
+     * reports it ready). Abstract, not defaulted: every look must make a real choice, not silently draw nothing.
+     */
+    abstract void spotlightPhoto(Canvas c, RectF screen, Backdrop b, float night);
+
     // MARK: - Settings, episodes and screensaver (the screens drawn in white over the sky)
 
     /**

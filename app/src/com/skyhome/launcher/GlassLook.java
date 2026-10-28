@@ -1,9 +1,16 @@
 package com.skyhome.launcher;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
+import android.graphics.ComposeShader;
+import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
 import android.graphics.RectF;
+import android.graphics.Shader;
 
 /** The glass look: frosted glass over the animated sky (and, on the home screen, the first pick's photo), in light or dark. */
 final class GlassLook extends Look {
@@ -42,6 +49,17 @@ final class GlassLook extends Look {
     private final Paint rowShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF tmp = new RectF();
     private float k = 1;
+    private final Paint spotlightPhoto = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Paint spotlightScrimPaint = new Paint();
+    private Shader spotlightLeft, spotlightBottom;
+    // The soft blur on the left/bottom (not just the darkening above): `b.glassImage()` (Backdrop's already-built,
+    // lightly-blurred 480×270 variant — free, no new per-pick work) masked by the same gradients, via DST_IN, so it
+    // only shows where the darkening already does. Rebuilt only when the focused pick's bitmap actually changes
+    // (identity check), not per frame — a new Shader every frame would be an allocation in the draw path.
+    private Bitmap spotlightBlurBitmap;
+    private Shader spotlightBlurLeft, spotlightBlurBottom;
+    private final Matrix spotlightBlurMatrix = new Matrix();
+    private int spotlightBlurW, spotlightBlurH;
 
     GlassLook(Scene scene) {
         this.scene = scene;
@@ -51,6 +69,56 @@ final class GlassLook extends Look {
         this.k = k;
         shadow.setMaskFilter(new BlurMaskFilter(SHADOW_BLUR * k, BlurMaskFilter.Blur.NORMAL));
         rowShadow.setMaskFilter(new BlurMaskFilter(22 * k, BlurMaskFilter.Blur.NORMAL));
+        // Spotlight's corner gradient: dark at the left (where the title and weather sit), fading out toward the
+        // buttons' corner (which sit on their own glass pill already); a second, bottom one so the shelf and poster
+        // row read against a busy photo. Built once per size, not per frame or per pick.
+        spotlightLeft = new LinearGradient(0, 0, width * 0.62f, 0,
+                new int[] {0xDE000000, 0x8A000000, 0x33000000, 0}, new float[] {0, 0.35f, 0.72f, 1}, Shader.TileMode.CLAMP);
+        spotlightBottom = new LinearGradient(0, height, 0, height * 0.58f,
+                new int[] {0x8F000000, 0x42000000, 0}, new float[] {0, 0.4f, 1}, Shader.TileMode.CLAMP);
+        spotlightBlurW = width;
+        spotlightBlurH = height;
+        spotlightBlurBitmap = null;      // the blur shaders' scale depends on the screen size: rebuild on next draw
+    }
+
+    @Override void spotlightPhoto(Canvas c, RectF screen, Backdrop b, float night) {
+        if (b == null || b.image == null) {
+            c.drawColor(blend(0xFFE2E2E7, 0xFF0B0B0D, night));
+            return;
+        }
+        c.drawBitmap(b.image, null, screen, spotlightPhoto);
+        Bitmap blur = b.glassImage();
+        if (blur != null) {
+            if (blur != spotlightBlurBitmap) {
+                spotlightBlurBitmap = blur;
+                BitmapShader bs = new BitmapShader(blur, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+                spotlightBlurMatrix.setScale((float) spotlightBlurW / blur.getWidth(), (float) spotlightBlurH / blur.getHeight());
+                bs.setLocalMatrix(spotlightBlurMatrix);
+                // ComposeShader(shaderA, shaderB, mode) treats shaderA as SRC, shaderB as DST — the gradient must be
+                // SRC (its alpha is what should mask the result) and the blurred bitmap DST (its colour is what
+                // should show through), or DST_IN keeps the gradient's own (black) colour instead of the photo's.
+                spotlightBlurLeft = new ComposeShader(spotlightLeft, bs, PorterDuff.Mode.DST_IN);
+                spotlightBlurBottom = new ComposeShader(spotlightBottom, bs, PorterDuff.Mode.DST_IN);
+            }
+            spotlightScrimPaint.setShader(spotlightBlurLeft);
+            c.drawRect(screen, spotlightScrimPaint);
+            spotlightScrimPaint.setShader(spotlightBlurBottom);
+            c.drawRect(screen, spotlightScrimPaint);
+        }
+        if (spotlightLeft != null) {
+            spotlightScrimPaint.setShader(spotlightLeft);
+            c.drawRect(screen, spotlightScrimPaint);
+        }
+        if (spotlightBottom != null) {
+            spotlightScrimPaint.setShader(spotlightBottom);
+            c.drawRect(screen, spotlightScrimPaint);
+        }
+        if (night > 0.001f) {
+            // An even wash on top, at night, so the glass shelf and white text keep the same contrast they have in Cards mode.
+            spotlightScrimPaint.setShader(null);
+            spotlightScrimPaint.setColor(Ui.alpha(0xFF000000, 0.24f * night));
+            c.drawRect(screen, spotlightScrimPaint);
+        }
     }
 
     @Override int color(int role, float night) {

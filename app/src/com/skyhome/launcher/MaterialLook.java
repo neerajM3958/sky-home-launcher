@@ -2,8 +2,10 @@ package com.skyhome.launcher;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
+import android.graphics.ComposeShader;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Path;
@@ -87,6 +89,14 @@ final class MaterialLook extends Look {
     private Context ctx;
     private float k = 1;
     private int width = 1, height = 1;
+    private Shader spotlightLeftDay, spotlightLeftNight, spotlightBottomDay, spotlightBottomNight;
+    private final Paint spotlightPhotoPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    // The soft blur on the left/bottom, same idea as Glass's: `b.glassImage()` (Backdrop's already-built, lightly-
+    // blurred 480×270 variant) masked by the same tonal-surface gradients above, via DST_IN, instead of a copy of
+    // Glass's numbers. Rebuilt only when the focused pick's bitmap changes (identity check), not per frame.
+    private Bitmap spotlightBlurBitmap;
+    private Shader spotlightBlurLeftDay, spotlightBlurLeftNight, spotlightBlurBottomDay, spotlightBlurBottomNight;
+    private final Matrix spotlightBlurMatrix = new Matrix();
 
     static int paletteColor(int role, boolean dark) {
         int i = Math.max(0, Math.min(LIGHT[0].length - 1, role));
@@ -132,6 +142,85 @@ final class MaterialLook extends Look {
                 (float) Math.hypot(this.width, this.height) * 0.55f,
                 new int[] {0x00000000, 0x00000000, 0xFF000000}, new float[] {0, 0.55f, 1}, Shader.TileMode.CLAMP));
         focusGlowPaint.setShader(new RadialGradient(0, 0, 640 * k, new int[] {0xFFFFFFFF, 0x00FFFFFF}, null, Shader.TileMode.CLAMP));
+        // Spotlight's corner treatment: the surface tone itself (not flat black), so the darkening reads as Material's
+        // tonal surface showing through, not Glass's gradient recoloured. Day and night versions, blended by alpha at
+        // draw time like cardCaption's scrim/scrimLight pair.
+        int surfaceDay = paletteColor(SURFACE, false), surfaceNight = paletteColor(SURFACE, true);
+        spotlightLeftDay = new LinearGradient(0, 0, this.width * 0.6f, 0,
+                new int[] {withAlpha(surfaceDay, 0.92f), withAlpha(surfaceDay, 0.55f), withAlpha(surfaceDay, 0.18f), 0},
+                new float[] {0, 0.4f, 0.75f, 1}, Shader.TileMode.CLAMP);
+        spotlightLeftNight = new LinearGradient(0, 0, this.width * 0.6f, 0,
+                new int[] {withAlpha(surfaceNight, 0.96f), withAlpha(surfaceNight, 0.68f), withAlpha(surfaceNight, 0.26f), 0},
+                new float[] {0, 0.4f, 0.75f, 1}, Shader.TileMode.CLAMP);
+        spotlightBottomDay = new LinearGradient(0, this.height, 0, this.height * 0.6f,
+                new int[] {withAlpha(surfaceDay, 0.85f), withAlpha(surfaceDay, 0.35f), 0},
+                new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP);
+        spotlightBottomNight = new LinearGradient(0, this.height, 0, this.height * 0.6f,
+                new int[] {withAlpha(surfaceNight, 0.9f), withAlpha(surfaceNight, 0.45f), 0},
+                new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP);
+        spotlightBlurBitmap = null;      // the blur shaders' scale depends on the screen size: rebuild on next draw
+    }
+
+    @Override void spotlightPhoto(Canvas c, RectF screen, Backdrop b, float night) {
+        if (b == null || b.image == null) {
+            paintBackground(c, screen, night);
+            return;
+        }
+        c.drawBitmap(b.image, null, screen, spotlightPhotoPaint);
+        float n = Math.max(0, Math.min(1, night)), day = 1 - n;
+        Bitmap blur = b.glassImage();
+        if (blur != null) {
+            if (blur != spotlightBlurBitmap) {
+                spotlightBlurBitmap = blur;
+                BitmapShader bs = new BitmapShader(blur, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+                spotlightBlurMatrix.setScale((float) width / blur.getWidth(), (float) height / blur.getHeight());
+                bs.setLocalMatrix(spotlightBlurMatrix);
+                // ComposeShader(shaderA, shaderB, mode) treats shaderA as SRC, shaderB as DST — the gradient must be
+                // SRC (its alpha masks the result) and the blurred bitmap DST (its colour shows through), or DST_IN
+                // keeps the gradient's own colour instead of the photo's (see GlassLook.spotlightPhoto's note).
+                spotlightBlurLeftDay = new ComposeShader(spotlightLeftDay, bs, PorterDuff.Mode.DST_IN);
+                spotlightBlurLeftNight = new ComposeShader(spotlightLeftNight, bs, PorterDuff.Mode.DST_IN);
+                spotlightBlurBottomDay = new ComposeShader(spotlightBottomDay, bs, PorterDuff.Mode.DST_IN);
+                spotlightBlurBottomNight = new ComposeShader(spotlightBottomNight, bs, PorterDuff.Mode.DST_IN);
+            }
+            if (day > 0.001f) {
+                paint.setShader(spotlightBlurLeftDay);
+                paint.setAlpha(Math.round(255 * day));
+                c.drawRect(screen, paint);
+                paint.setShader(spotlightBlurBottomDay);
+                c.drawRect(screen, paint);
+            }
+            if (n > 0.001f) {
+                paint.setShader(spotlightBlurLeftNight);
+                paint.setAlpha(Math.round(255 * n));
+                c.drawRect(screen, paint);
+                paint.setShader(spotlightBlurBottomNight);
+                c.drawRect(screen, paint);
+            }
+            paint.setAlpha(255);
+        }
+        if (day > 0.001f && spotlightLeftDay != null) {
+            paint.setShader(spotlightLeftDay);
+            paint.setAlpha(Math.round(255 * day));
+            c.drawRect(screen, paint);
+        }
+        if (n > 0.001f && spotlightLeftNight != null) {
+            paint.setShader(spotlightLeftNight);
+            paint.setAlpha(Math.round(255 * n));
+            c.drawRect(screen, paint);
+        }
+        if (day > 0.001f && spotlightBottomDay != null) {
+            paint.setShader(spotlightBottomDay);
+            paint.setAlpha(Math.round(255 * day));
+            c.drawRect(screen, paint);
+        }
+        if (n > 0.001f && spotlightBottomNight != null) {
+            paint.setShader(spotlightBottomNight);
+            paint.setAlpha(Math.round(255 * n));
+            c.drawRect(screen, paint);
+        }
+        paint.setShader(null);
+        paint.setAlpha(255);
     }
 
 

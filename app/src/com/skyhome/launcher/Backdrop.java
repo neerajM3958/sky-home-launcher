@@ -16,10 +16,12 @@ import android.graphics.Shader;
  *  - the frosted version (192×108, heavily blurred) of the same image: the background of the frosted glass and of the
  *    bottom drawer;
  *  - the Liquid Glass version (480×270, lightly blurred): the photo shows through the shelf and the cards;
- *  - with forLight: the cards (the photo without scrims, cropped wide and tall, already at the focused card size) and
- *    the frosted and glass versions blended with white (by day) and with near-black (at night).
- * Only what is needed gets built (with forLight, no full photo: the cards are lightweight, so all 9 for the three tabs
- * fit in memory, ready); the other fields stay null.
+ *  - with forLight: the cards (the photo without scrims, cropped wide and tall, already at the focused card size), the
+ *    frosted and glass versions blended with white (by day) and with near-black (at night), and the plain sharp photo
+ *    itself (`image`, no scrims baked in — Spotlight's full-screen background; each look draws its own corner
+ *    treatment live, see Look.spotlightPhoto).
+ * Only what is needed gets built (with forLight, no scrims: the cards and the sharp photo are each one GPU texture, so
+ * many picks stay ready at once); the other fields stay null.
  * The final image lives only in GPU memory (HARDWARE): drawing it costs one texture, and the process doesn't hold 8 MB.
  */
 final class Backdrop {
@@ -104,8 +106,11 @@ final class Backdrop {
             int[] lightGlass = whiten(glass.clone(), 0.74f);
             int[] night = darken(frost.clone(), 0.76f);
             int[] nightGlass = darken(glass, 0.56f);
-            out.recycle();
-            return new Backdrop(null, frost, null, wide, tall, light, lightGlass, night, nightGlass);
+            // The sharp photo itself, no scrims baked in (Spotlight's full-screen background): each look draws its
+            // own corner treatment live (Look.spotlightPhoto), so this stays the plain picture. GPU-backed: one more
+            // texture per cached pick, not more process heap.
+            Bitmap image = gpu(out);
+            return new Backdrop(image, frost, null, wide, tall, light, lightGlass, night, nightGlass);
         }
 
         float boost = Math.max(0, Math.min(0.3f, (luminance(out, 0, 0.22f, 0.5f, 0.62f) - 0.22f) * 1.1f));
