@@ -130,8 +130,9 @@ public class SettingsActivity extends Activity {
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
-        // The main menu: twelve rows plus Restart, then the comparison, the picks (with the Watchmode credit) and
-        // two notices, all on one 1080 px screen.
+        // The left column (logo, title, version): the comparison and notices go underneath, where the main
+        // menu's thirteen rows would otherwise crowd them off the bottom of the screen.
+        private static final float LEFT_X = 150, LEFT_R = 900;
         private static final float MAIN_TOP = 122, ROW_H = 52, MAIN_GAP = 4;
         /** Sleep Timer's rows, by what they set: the timer, whether it shows on screen and (where it shows over other
          *  apps) where. Values are picked from lists (OK), as on the TV's own settings; ← → step them. */
@@ -500,6 +501,10 @@ public class SettingsActivity extends Activity {
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
             c.drawText(Ui.tr("A fork of Free My TV"), cx, 730 * k, version);
+            if (screen == MAIN) {
+                float ly = drawComparison(c, 760 * k);
+                drawNotices(c, ly + 30 * k);
+            }
 
             if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else if (screen == TRAKT) drawTrakt(c); else if (screen == TMDB) drawTmdb(c); else if (screen == STREMIO) drawStremio(c); else if (screen == LANGUAGES) drawLanguages(c); else if (screen == HIDDEN) drawHidden(c); else if (screen == APPS_OFF) drawAppsOff(c); else if (screen == TORRENTIO) drawTorrentio(c); else if (screen == TOR_LANGS) drawTorLangs(c); else if (screen == ADDED_KEYS) drawAdded(c); else if (screen == LEARN) drawLearn(c); else if (screen == INTEGRATIONS) drawIntegrations(c); else if (screen == POWER) drawPower(c); else drawList(c);
         }
@@ -573,8 +578,6 @@ public class SettingsActivity extends Activity {
                 c.restore();
                 y += errorLayout.getLineBaseline(errorLayout.getLineCount() - 1) - errorLayout.getLineBaseline(0) + 46 * k;
             }
-            y = drawComparison(c, y);
-            drawNotices(c, y + 40 * k);
         }
 
         /** The picks' status, and the credits TMDB and Watchmode ask for (on the TMDB screen). */
@@ -617,7 +620,7 @@ public class SettingsActivity extends Activity {
         }
 
         private float drawComparison(Canvas c, float y) {
-            float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k, gap = 16 * k;
+            float x = LEFT_X * k, colA = LEFT_R * k - 220 * k, colB = LEFT_R * k, gap = 16 * k;
             c.drawText(Ui.tr("COMPARISON"), x, y, header);
             cellValue.setColor(look.inkAlpha(0x73FFFFFF, currentNight));
             drawEllipsizedRight(c, Ui.tr("Original"), colA, y, colA - x - gap, cellValue);
@@ -643,8 +646,8 @@ public class SettingsActivity extends Activity {
             c.drawText(out, 0, out.length(), right, y, p);
         }
 
-        private void drawNotices(Canvas c, float y) {
-            float x = LIST_X * k + 30 * k;
+        private float drawNotices(Canvas c, float y) {
+            float x = LEFT_X * k;
             c.drawText(Ui.tr("NOTICES"), x, y, header);
             JSONArray notices = state.optJSONArray("notices");
             int shown = 0;
@@ -652,10 +655,11 @@ public class SettingsActivity extends Activity {
                 JSONObject o = notices.optJSONObject(i);
                 if (o == null) continue;
                 String line = ago(o.optLong("at")) + " · " + o.optString("text");
-                c.drawText(TextUtils.ellipsize(line, notice, 790 * k, TextUtils.TruncateAt.END).toString(), x, y + (42 + 38 * shown) * k, notice);
+                c.drawText(TextUtils.ellipsize(line, notice, (LEFT_R - LEFT_X) * k, TextUtils.TruncateAt.END).toString(), x, y + (42 + 38 * shown) * k, notice);
                 shown++;
             }
             if (shown == 0) c.drawText(Ui.tr("None yet."), x, y + 42 * k, notice);
+            return y + (42 + 38 * Math.max(1, shown)) * k;
         }
 
         /** Home screen choice: Sky Home Launcher or the original, with a check on the one in use. */
