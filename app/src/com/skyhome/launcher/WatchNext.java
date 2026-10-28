@@ -213,7 +213,8 @@ final class WatchNext {
             if (now >= at && now - at < NO_MATCH_FOR) return null;       // nothing last time: not again today
         }
         try {
-            JSONObject r = Recs.get(c).get("/search/" + kind + "?query=" + URLEncoder.encode(title, "UTF-8")
+            String query = title.replaceAll("\\(\\d{4}\\)\\s*$", "").trim();     // TMDB's search finds nothing with the year still in the text
+            JSONObject r = Recs.get(c).get("/search/" + kind + "?query=" + URLEncoder.encode(query, "UTF-8")
                     + "&language=" + Recs.lang() + "&include_adult=false");
             JSONArray list = r.optJSONArray("results");
             String want = normalize(title);
@@ -227,8 +228,9 @@ final class WatchNext {
             }
             if (exact.size() == 1) found = match(exact.get(0));
             else if (!exact.isEmpty() && !year.isEmpty()) {
+                String dateField = kind.equals("movie") ? "release_date" : "first_air_date";
                 List<JSONObject> sameYear = new ArrayList<>();
-                for (JSONObject o : exact) if (year.equals(o.optString("first_air_date", "").substring(0, Math.min(4, o.optString("first_air_date", "").length())))) sameYear.add(o);
+                for (JSONObject o : exact) if (year.equals(o.optString(dateField, "").substring(0, Math.min(4, o.optString(dateField, "").length())))) sameYear.add(o);
                 if (sameYear.size() == 1) found = match(sameYear.get(0));
             }
             if (sp.getAll().size() > 200) sp.edit().clear().apply();
