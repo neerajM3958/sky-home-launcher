@@ -473,6 +473,7 @@ final class Recs {
             // Spotlight's row is its own, bigger list (SPOTLIGHT_POOL): the window must come from that same list, or
             // the picks past pick_count never get details or a photo.
             List<Pick> list = now(viewKind, poolCap());
+            if (list.isEmpty()) return out;     // no TMDB key, or the picks are turned off
             // Spotlight's row is circular and shows a big photo per focus: two behind the focus load too, so Left is ready.
             int back = Prefs.spotlightOn() ? 2 : 0;
             for (int i = -back; i < Math.min(2 * PAGE, list.size()); i++)
