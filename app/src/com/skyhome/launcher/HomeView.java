@@ -1415,7 +1415,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float fit = (full - Math.max(0, n - 1) * gap) / Math.max(1, n);
         float tw = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
         float th = tw * 9f / 16;
-        if (Prefs.spotlightOn()) pad = 10 * k;   // docked above Continue Watching, so only the outer padding shrinks; the tiles stay full size
+        // Looks without a visible glass pill (tiles fill the width, no side padding) keep a slim bar above Continue Watching;
+        // the others keep Cards' own shelf padding, so the shelf is the same size in both styles.
+        if (Prefs.spotlightOn() && look.m.shelfFill) pad = 10 * k;
         float width = n * tw + Math.max(0, n - 1) * gap, left = look.m.shelfFill ? MARGIN * k : (w - width) / 2f;
         float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
         // Spotlight shows a sliver of the shelf on the hero page (about half the platter block, as a hint there's
@@ -2273,7 +2275,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float lift = cardsOn() ? CAT_LIFT : CARDS_TOP - 140;
         // Spotlight's shelf is docked just above row 0 (see layoutShelf): row 0 needs to rest a bit lower than Cards'
         // does, so there's room for the shelf's full glass pill (not just its tiles) between it and the screen's top edge.
-        return Prefs.spotlightOn() ? lift - SPOTLIGHT_SHELF_GAP : lift;
+        // A shelf with Cards' full padding is taller by 2 * (SHELF_PAD - 10): row 0 sits that much lower again.
+        return Prefs.spotlightOn() ? lift - SPOTLIGHT_SHELF_GAP - (look.m.shelfFill ? 0 : 2 * (SHELF_PAD - 10)) : lift;
     }
 
     @Override public void onCatalogs() {
