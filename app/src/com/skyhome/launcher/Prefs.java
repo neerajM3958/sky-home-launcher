@@ -201,18 +201,33 @@ final class Prefs {
     static void setRegion(String v) { put("region", v); }
 
     /**
-     * The picks carousel (the cards under the tabs): on unless the TV is short of memory (shortOfMemory) and the person
-     * hasn't chosen. Off, none are fetched or shown; the tabs go and the shelf and catalogs stay.
+     * The picks carousel's style: "off", "cards" (the row of 3 cards under the tabs, today's look) or "spotlight"
+     * (the full-screen carousel). On (cards) unless the TV is short of memory (shortOfMemory) and the person hasn't
+     * chosen. Off, none are fetched or shown; the tabs go and the shelf and catalogs stay.
      */
-    static boolean picks() {
-        if (app == null) return false;
+    static final String PICKS_OFF = "off", PICKS_CARDS = "cards", PICKS_SPOTLIGHT = "spotlight";
+
+    static String picksStyle() {
+        if (app == null) return PICKS_OFF;
         SharedPreferences s = sp();
-        return s.contains("picks") ? s.getBoolean("picks", true) : !shortOfMemory();
+        if (!s.contains("picks")) return shortOfMemory() ? PICKS_OFF : PICKS_CARDS;
+        try {
+            return s.getString("picks", PICKS_CARDS);
+        } catch (ClassCastException e) {          // migrating an old boolean value
+            boolean was = s.getBoolean("picks", true);
+            String v = was ? PICKS_CARDS : PICKS_OFF;
+            put("picks", v);
+            return v;
+        }
     }
-    static void setPicks(boolean on) { put("picks", on); }
+    static void setPicksStyle(String v) { put("picks", v); }
+
+    /** Picks are showing, in either style. */
+    static boolean picksOn() { return !picksStyle().equals(PICKS_OFF); }
+    static boolean spotlightOn() { return picksStyle().equals(PICKS_SPOTLIGHT); }
 
     /** The picks are off only because the TV is short of memory: the person hasn't chosen. */
-    static boolean picksOffForMemory() { return app != null && !sp().contains("picks") && shortOfMemory(); }
+    static boolean picksStyleOffForMemory() { return app != null && !sp().contains("picks") && shortOfMemory(); }
 
     /** Leave cartoons and anime out of the picks and the poster rows. */
     static boolean hideAnimation() { return app == null ? Config.HIDE_ANIMATION : sp().getBoolean("hideAnimation", Config.HIDE_ANIMATION); }

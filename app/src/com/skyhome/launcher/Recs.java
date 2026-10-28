@@ -45,7 +45,7 @@ final class Recs {
     static final class Pick {
         int id;
         String kind;            // "movie" or "tv"
-        String title, backdrop, meta = "", app, pkg;
+        String title, backdrop, poster, meta = "", app, pkg;
         long shownAt;           // when its picture was first drawn (UI thread): the picture fades in from then
         boolean detailed;
         String servicePkg;      // routed picks: the app it opens in, for the card's icon (null not known yet, "" none; UI thread)
@@ -61,7 +61,16 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 13;
+    private static final int CACHE_VERSION = 14;
+    /** Spotlight's poster row pool (HomeView.updateCards) — bigger than pick_count's default, so the image and poster
+     * caches below are sized to hold the whole circular pool, not just `pick_count + 3`: with a smaller cache, the
+     * row's own real working set (every pick the circular scroll ever revisits) would keep evicting itself and
+     * re-downloading/re-decoding, visible as the backdrop and posters blinking every few seconds. */
+    static final int SPOTLIGHT_POOL = 20;
+
+    private static int poolCap() {
+        return Prefs.spotlightOn() ? SPOTLIGHT_POOL : Config.PICK_COUNT;
+    }
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -137,6 +146,11 @@ final class Recs {
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
     private final java.util.Set<String> pending = new java.util.HashSet<>();
+    // Spotlight's poster row: TMDB's poster art (the title baked in), not the textless backdrop — a small, separate
+    // cache (w342, like Catalogs' poster rows) since it's a different image from the same title's backdrop.
+    private static final String POSTER_IMAGES = "https://image.tmdb.org/t/p/w342";
+    private final Map<String, Bitmap> posters = new LinkedHashMap<>();
+    private final java.util.Set<String> posterPending = new java.util.HashSet<>();
 
     // TEMP (memory investigation, remove after): byte count and entry count of the picks' Backdrop cache.
     long[] debugImageBytes() {
@@ -200,7 +214,7 @@ final class Recs {
 
     /** There is nothing to show and nothing coming: no TMDB key, or the last fetch failed or found no titles. */
     boolean noPicks() {
-        return !hasKey(context) || !Prefs.picks() || (picks.isEmpty() && !error.isEmpty());
+        return !hasKey(context) || !Prefs.picksOn() || (picks.isEmpty() && !error.isEmpty());
     }
 
     static String periodLabel() {
@@ -222,8 +236,16 @@ final class Recs {
 
     /** This hour's picks (pick_count, 3 by default), movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
     List<Pick> now(String kind) {
+        return now(kind, Config.PICK_COUNT);
+    }
+
+    /** Like {@link #now(String)}, but with its own count instead of `pick_count` — Spotlight's poster row wants more
+     * titles on screen than Cards' 3-card rotation, without changing Cards' own pace or `pick_count` (and its memory
+     * budgets, which key off it: `Recs.loadImage`/`loadPoster`'s cache sizes). Pulled from the same already-fetched
+     * `picks` pool TMDB's list call already returned (no extra request), just capped differently. */
+    List<Pick> now(String kind, int count) {
         List<Pick> list = new ArrayList<>();
-        if (!hasKey(context) || !Prefs.picks()) return list;    // no TMDB key, or the picks are turned off: no recommendations
+        if (!hasKey(context) || !Prefs.picksOn()) return list;    // no TMDB key, or the picks are turned off: no recommendations
         Map<String, Boolean> have = new HashMap<>();   // one look per app, not per title (this runs every 15 s)
         for (Pick p : picks) {
             if ((kind == null || kind.equals(p.kind))
@@ -235,7 +257,7 @@ final class Recs {
         // ("Law & Order" and "Law & Order: Special…").
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (int i = 0; i < list.size() && out.size() < Config.PICK_COUNT; i++) {
+        for (int i = 0; i < list.size() && out.size() < count; i++) {
             Pick p = list.get((int) ((hour * 3 + i) % list.size()));
             if (seen.add(franchise(p.title))) out.add(p);
         }
@@ -276,6 +298,27 @@ final class Recs {
         return null;
     }
 
+    /** The pick's poster (TMDB's poster art, the title baked in), decoded at about `width` px — or null: loads in the
+     * background and notifies listeners when ready. Unlike {@link #backdrop}, needs no details fetch: `poster_path`
+     * comes straight off the list response. */
+    Bitmap poster(Pick p, int width) {
+        if (p == null || p.poster == null) return null;
+        final String key = p.poster;
+        synchronized (posters) {
+            Bitmap b = posters.get(key);
+            if (b != null) return b;
+            if (!posterPending.add(key)) return null;
+        }
+        io.execute(() -> {
+            try {
+                loadPoster(p, width);
+            } finally {
+                synchronized (posters) { posterPending.remove(key); }
+            }
+        });
+        return null;
+    }
+
     private boolean hasImage(Pick p) {
         return p.backdrop != null && imageFile(p).exists();
     }
@@ -286,7 +329,7 @@ final class Recs {
 
     /** With a key: fetches the list if stale or the time of day (morning/afternoon/night) changed; then the details. */
     void refreshIfStale() {
-        if (!hasKey(context) || !Prefs.picks() || fetching) return;
+        if (!hasKey(context) || !Prefs.picksOn() || fetching) return;
         long now = System.currentTimeMillis();
         long stamp = sourceStamp();   // a new key, country, animation choice or installed streaming-app set refetches
         boolean newKey = stamp != keyStamp;
@@ -314,6 +357,7 @@ final class Recs {
                     } catch (Exception e) {
                         failures++;
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
+                        AppLog.w("details “" + pick.title + "”: " + last);
                     }
                     Launcher.get(context).prefetch(pick.kind, pick.id);   // so OK opens it at once
                 }
@@ -425,9 +469,14 @@ final class Recs {
      */
     List<Pick> wanted() {
         List<Pick> out = new ArrayList<>();
-        if (Config.PICK_COUNT > PAGE) {
-            List<Pick> list = now(viewKind);
-            for (int i = 0; i < Math.min(2 * PAGE, list.size()); i++) out.add(list.get((viewStart + i) % list.size()));
+        if (Config.PICK_COUNT > PAGE || Prefs.spotlightOn()) {
+            // Spotlight's row is its own, bigger list (SPOTLIGHT_POOL): the window must come from that same list, or
+            // the picks past pick_count never get details or a photo.
+            List<Pick> list = now(viewKind, poolCap());
+            // Spotlight's row is circular and shows a big photo per focus: two behind the focus load too, so Left is ready.
+            int back = Prefs.spotlightOn() ? 2 : 0;
+            for (int i = -back; i < Math.min(2 * PAGE, list.size()); i++)
+                out.add(list.get(Math.floorMod(viewStart + i, list.size())));
             return out;
         }
         java.util.Set<String> seen = new java.util.HashSet<>();
@@ -569,6 +618,8 @@ final class Recs {
         p.kind = kind;
         p.title = o.optString(kind.equals("movie") ? "title" : "name");
         p.backdrop = backdrop;
+        String poster = o.optString("poster_path", "");
+        p.poster = poster.isEmpty() || "null".equals(poster) ? null : poster;
         list.add(p);
         return p;
     }
@@ -1068,13 +1119,67 @@ final class Recs {
                 // the oldest one, which this FIFO eviction always removes first — for as long as that pick stays the
                 // current background (minutes, not frames), well outside this map's own eviction order
                 // (#memory-management, item 5: recycling here raced that reference and crashed the renderer).
-                while (images.size() > (forLight ? Math.max(10, Config.PICK_COUNT + 3) : 4)) images.remove(images.keySet().iterator().next());
+                while (images.size() > (forLight ? Math.max(10, poolCap() + 3) : Prefs.spotlightOn() ? 6 : 4)) images.remove(images.keySet().iterator().next());
             }
             notifyListeners();
         } catch (IOException | RuntimeException | OutOfMemoryError e) {
             //noinspection ResultOfMethodCallIgnored
             f.delete();
             AppLog.w("recommendation image: " + e.getMessage());
+        }
+    }
+
+    private File posterFile(Pick p) {
+        return new File(new File(context.getCacheDir(), "recs-posters"), p.poster.replace("/", ""));
+    }
+
+    /** Downloads (if needed) and decodes the pick's poster at about `width` px, same pattern as {@link #loadImage}. */
+    private void loadPoster(Pick p, int width) {
+        synchronized (posters) {
+            if (posters.containsKey(p.poster)) return;
+        }
+        File f = posterFile(p);
+        try {
+            if (!f.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                f.getParentFile().mkdirs();
+                File part = new File(f.getPath() + ".part");
+                HttpURLConnection c = (HttpURLConnection) new URL(POSTER_IMAGES + p.poster).openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(20000);
+                try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+                    byte[] buffer = new byte[16384];
+                    int n;
+                    while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+                } catch (IOException e) {
+                    //noinspection ResultOfMethodCallIgnored
+                    part.delete();
+                    throw e;
+                } finally {
+                    c.disconnect();
+                }
+                if (!part.renameTo(f)) throw new IOException("couldn't save the poster");
+            }
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(f.getPath(), bounds);
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = 1;
+            while (bounds.outWidth / (opts.inSampleSize * 2) >= width) opts.inSampleSize *= 2;
+            Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+            if (b == null) throw new IOException("unreadable poster");
+            synchronized (posters) {
+                posters.put(p.poster, b);
+                while (posters.size() > Math.max(10, poolCap() + 3)) {
+                    Bitmap old = posters.remove(posters.keySet().iterator().next());
+                    if (old != null) old.recycle();
+                }
+            }
+            notifyListeners();
+        } catch (IOException | RuntimeException | OutOfMemoryError e) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            AppLog.w("poster: " + e.getMessage());
         }
     }
 
@@ -1111,6 +1216,7 @@ final class Recs {
             JSONArray a = new JSONArray();
             for (Pick p : picks) {
                 a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop)
+                        .put("poster", p.poster == null ? "" : p.poster)
                         .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
                         .put("detailed", p.detailed));
             }
@@ -1136,6 +1242,7 @@ final class Recs {
             p.kind = o.optString("kind");
             p.title = o.optString("title");
             p.backdrop = o.optString("backdrop");
+            p.poster = o.optString("poster").isEmpty() ? null : o.optString("poster");
             p.meta = o.optString("meta");
             p.app = o.optString("app").isEmpty() ? null : o.optString("app");
             p.pkg = o.optString("pkg").isEmpty() ? null : o.optString("pkg");

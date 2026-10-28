@@ -16,6 +16,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.RadialGradient;
 import android.graphics.Shader;
 import android.os.Handler;
 import android.os.Looper;
@@ -46,17 +47,27 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 /**
- * The home screen, styled after the Apple TV app with the macOS 27 glass:
- *  - at the top left, the "For You" title and the tabs (Explore, Movies, Shows); at the top right, icon-only glass
- *    buttons (Home Settings, Settings, Live TV, AV and HDMI input), with the focused one's name below it, and the small crypto quotes
- *    (logo + price) at the right end of the tab row;
- *  - three cards with the titles recommended for right now in the selected tab (Recs, from TMDB); the background is
- *    the first card's photo, heavily blurred and almost white (Backdrop); without one, a light gradient;
- *  - at the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one
- *    grows);
- *  - ↓ on the shelf: everything moves up and the bottom drawer appears (inputs, shortcuts, weather for the next hours
- *    and quotes with the 24 h change); the background lightens (darkens at night). ↑ or Back closes it;
- *  - from sunset to sunrise, a night look: dark background, smoked glass and white text.
+ * The home screen, styled after the Apple TV app with the macOS 27 glass. The picks carousel (Settings > TMDB >
+ * "Picks carousel") has three styles, `Prefs.picksStyle()`:
+ *  - **Off**: no tabs, no cards, just the weather, the icon buttons and the shelf.
+ *  - **Cards** (the look this class was first built around): tabs (Explore, Movies, Shows) under the weather, three
+ *    cards with the titles recommended for right now in the selected tab (Recs, from TMDB), the background the first
+ *    card's photo heavily blurred and almost white (Backdrop); without one, a light gradient.
+ *  - **Spotlight** (stock Google TV's "Top picks for you" style): no tabs, a full-screen sharp photo of the focused
+ *    pick from the top of the screen down (`Look.spotlightPhoto`, each look's own corner/scrim treatment), its title
+ *    and meta over the dark side, and a poster row that drives it (`drawSpotlight`) — the same `cards` list Cards mode
+ *    uses, always from Explore's pool, but scrolled (not re-sorted to the front) via `spotlightRowShift`, the same
+ *    pattern the catalog rows' `catShift` already uses. The shelf doesn't live on this screen at all: Down from the
+ *    row pages straight to the drawer/catalog screen (below), landing on the shelf as its first row.
+ * In every style: at the top right, icon-only glass buttons (Home Settings, Settings, Live TV, AV and HDMI input),
+ * with the focused one's name below it, and the small crypto quotes (logo + price) at the right end of that row; at
+ * the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one grows).
+ * ↓ on the shelf: everything moves up and the bottom drawer appears
+ * (inputs, shortcuts, weather for the next hours and quotes with the 24 h change); the background lightens (darkens
+ * at night). ↑ or Back closes it. From sunset to sunrise, a night look: dark background, smoked glass and white text.
+ * In Spotlight, Down from the poster row goes straight into this drawer/catalog screen in one press (skipping the
+ * shelf-at-the-bottom step Cards mode has), with the shelf as the first thing on it instead of living on the hero
+ * screen; Up from the shelf (or Back) closes it and returns to the poster row, same as Cards' shelf↔row behavior.
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
@@ -79,6 +90,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float CAPSULE_TOP = 46, CAPSULE_H = 68, BUTTON = 56;
     // Bottom drawer (measured with it open; everything moves up by SHIFT).
     private static final float SHIFT = 560, ROW_TITLE = 518, ROW_TOP = 540, ROW_H = 126, CARDS_TOP = 708, CARDS_H = 300;
+    // Spotlight (the full-screen picks carousel): a full-bleed photo from the top of the screen, the title and a
+    // poster row near the bottom. Positions tuned on-TV, not fixed by a grid.
+    // Round 2: posters are TMDB poster art (2:3, the title baked in), not landscape backdrop crops, so they're taller
+    // and the whole block moved up to leave them real room.
+    // Round 3: the shelf no longer lives on this screen at all (Down pages to the drawer/catalog screen, the shelf as
+    // its first row — see moveLight's Z_CARDS case and updateMotion); the row scrolls (spotlightRowShift) instead of
+    // re-sorting the focused pick to the front, and draws one column past SPOTLIGHT_VISIBLE so the next one peeks in.
+    private static final float SPOTLIGHT_TITLE_Y = 526, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_Y = 652,
+            SPOTLIGHT_ROW_TOP = 676, SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20,
+            SPOTLIGHT_SHELF_GAP = 60;
+    private static final int SPOTLIGHT_VISIBLE = 11;
     // "All Apps" sheet.
     private static final int COLUMNS = 5, VISIBLE_ROWS = 3;
     private static final float GRID_W = 300, GRID_H = 169, GRID_GAP = 40, GRID_ROW = 239, GRID_TOP = 196, GRID_RADIUS = 22;
@@ -105,6 +127,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
     // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
     private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 440, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
+    // The blank space between one row's posters and the next row's title (CAT_PITCH minus a poster's own 50-above/
+    // 30-below offsets): how far "Shows you watch" sits below "Continue Watching"'s posters.
+    private static final float CAT_ROW_GAP = CAT_PITCH - 50 - CAT_POSTER_H + 30;
 
     private final Activity activity;
     private final Scene scene = new Scene();
@@ -161,7 +186,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring[] cardFocus = new Spring[3];
     private final RectF[] cardRects = new RectF[3];
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
-    private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote;
+    // Spotlight's poster row: the same fixed `cards` list Cards mode uses, but unreordered and scrolled (not
+    // re-sorted to put focus at slot 0) — `cardStart` is the focused *column* (an absolute index into `cards`, not a
+    // rotation offset), `spotlightRowShift` is the first visible column (a Spring, same pattern as the catalog rows'
+    // `catShift`). The focused column also drives the full-screen background, via `cardFocus[0]` (reused).
+    private final Spring spotlightRowShift = new Spring(0.34f, 1f, 0);
+    private final RectF spotlightFocusedRect = new RectF();
+    private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote,
+            lSpotlightTitle, lSpotlightMeta, lSpotlightHeading;
     private Shader lightGradient;
 
     // Shelf
@@ -397,7 +429,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Runnable rotate = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            if (zone != Z_CARDS && !sheetOpen && !drawerOpen && cards.size() > 3) rotateCards(1);
+            if (zone != Z_CARDS && !sheetOpen && !drawerOpen && cards.size() > 3) {
+                if (Prefs.spotlightOn()) autoAdvanceSpotlight();
+                else rotateCards(1);
+            }
             handler.postDelayed(this, Config.PICK_ROTATE_SECONDS * 1000L);
         }
     };
@@ -507,6 +542,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         setLightButtons(HomeApps.topButtons(a));
         recs.setLight(true);
+        // Spotlight's shelf doesn't live on this screen (it's the drawer/catalog page's first row, not the bottom of
+        // the hero screen) — starting focus there, as every other style does, would land on something invisible.
+        if (Prefs.spotlightOn()) zone = Z_CARDS;
         checkNight(false);
         sheetLayer.setVisibility(INVISIBLE);
         scene.setMotion(0.6f, 0f);
@@ -589,10 +627,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void reset(boolean animated) {
         wake();
         cancelReorder(!animated);
-        zone = Z_SHELF;
+        zone = Prefs.spotlightOn() ? Z_CARDS : Z_SHELF;   // Spotlight's shelf isn't on this screen (see constructor)
         shelfIndex = 0;
         sheetOpen = false;
         drawerOpen = false;
+        if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; catRow.target = 0; }   // close its page too
         closePop(!animated);
         if (animated) {
             sheet.target = 0;
@@ -622,7 +661,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lightButtons.addAll(list);
         if (zone == Z_TOP && topIndex >= 3 + lightButtons.size()) {
             topIndex = 2 + lightButtons.size();
-            if (topIndex < 3 && !picksOn()) zone = Z_SHELF;   // without the picks the tabs can't hold focus
+            // No tab slots to land on: without picks, or in Spotlight (no tabs at all there), there's nothing in
+            // Z_TOP to focus — back to the poster row in Spotlight (its shelf isn't on this screen), the shelf elsewhere.
+            if (topIndex < 3 && !picksOn()) zone = Z_SHELF;
+            else if (topIndex < 3 && Prefs.spotlightOn()) zone = cards.isEmpty() ? Z_SHELF : Z_CARDS;
             else if (topIndex < 3) selectTab(topIndex);
             retarget(true);
         }
@@ -663,12 +705,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
-        measure(heroLayer, width, Math.round(790 * kk));
+        // Spotlight's poster row and heading sit below Cards mode's fixed 790px hero height, so it needs the full screen.
+        measure(heroLayer, width, Prefs.spotlightOn() ? height : Math.round(790 * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
-        // cheaper for the GPU to composite on every frame of the drawer animation.
-        measure(platter, width, Math.round(320 * kk));
-        measure(tiles, width, Math.round(270 * kk));
+        // cheaper for the GPU to composite on every frame of the drawer animation. Spotlight moves the shelf across
+        // most of the screen's height (a sliver near the bottom, "row -1" up near the catalog rows once that page
+        // opens, scrolling away further still as you browse deeper) — a small, Cards-sized box would clip it the same
+        // way the hero layer used to clip the poster row (see the 790px note above), so it gets the full screen too.
+        measure(platter, width, Prefs.spotlightOn() ? height : Math.round(320 * kk));
+        measure(tiles, width, Prefs.spotlightOn() ? height : Math.round(270 * kk));
         measure(drawerLayer, width, Math.round(600 * kk));
         measure(catalogLayer, width, height);
         measure(browseLayer, width, height);
@@ -688,8 +734,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sky.layout(0, 0, width, height);
         place(heroLayer, 0, 0);
         place(status, width - status.getMeasuredWidth(), 0);
-        place(platter, 0, Math.round(750 * kk));
-        place(tiles, 0, Math.round(790 * kk));
+        place(platter, 0, Prefs.spotlightOn() ? 0 : Math.round(750 * kk));
+        place(tiles, 0, Prefs.spotlightOn() ? 0 : Math.round(790 * kk));
         place(drawerLayer, 0, Math.round(470 * kk));
         catalogLayer.layout(0, 0, width, height);
         browseLayer.layout(0, 0, width, height);
@@ -736,7 +782,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         metaPaint.setLetterSpacing(0.014f);
         clockPaint = Ui.numbers(Ui.thin, 176 * k, 0xFFFFFFFF);
         clockPaint.setLetterSpacing(-0.01f);
-        for (Paint p : new Paint[] {labelPaint, titlePaint, metaPaint, clockPaint}) p.setShadowLayer(22 * k, 0, 2 * k, 0x59000000);
+        // Spotlight's title/meta/heading sit directly on the full-screen photo (inside its dark corner treatment, both
+        // looks, day or night), not on the page background applyTone()'s roles are meant for — fixed white, like the
+        // old Hero title this replaces, not a look role.
+        lSpotlightTitle = Ui.text(Ui.displaySemibold, 64 * k, 0xFFFFFFFF);
+        lSpotlightTitle.setLetterSpacing(0.004f);
+        lSpotlightMeta = Ui.text(Ui.medium, 30 * k, 0xD1FFFFFF);
+        lSpotlightHeading = Ui.text(Ui.semibold, 30 * k, 0xE8FFFFFF);
+        for (Paint p : new Paint[] {labelPaint, titlePaint, metaPaint, clockPaint, lSpotlightTitle, lSpotlightMeta, lSpotlightHeading})
+            p.setShadowLayer(22 * k, 0, 2 * k, 0x59000000);
         lTitle = Ui.text(look.typeface(Ui.displaySemibold), 76 * k, L_INK);
         lTitle.setLetterSpacing(0.004f);
         lTab = Ui.text(look.typeface(Ui.medium), 30 * k, L_DIM);
@@ -815,8 +869,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt);
+        boolean spotlightRowMoving = spotlightRowShift.step(dt);
         if (topMoving) status.invalidate();
-        heroMoving |= topMoving | cardsMoving;
+        heroMoving |= topMoving | cardsMoving | spotlightRowMoving;
         boolean drawerItemsMoving = step(drawerFocus, dt);
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
@@ -836,7 +891,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
         // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
         // glass shows the background where it ended up.
-        if (tilesMoving || tilesDirty) tiles.invalidate();
+        // Spotlight's shelf is pinned to row 0 of the catalog (see layoutShelf): its position is recomputed from
+        // catIn/catRow/drawer every frame they animate, so (unlike Cards, where the shelf only moves via its own
+        // translationY) it needs its layers invalidated while those are moving too, not just once they settle.
+        boolean spotlightShelfMoving = Prefs.spotlightOn() && (catMoving || drawerMoving);
+        if (tilesMoving || tilesDirty || spotlightShelfMoving) tiles.invalidate();
         if (statusMoving || statusDirty || bgFading) status.invalidate();
         if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
@@ -847,7 +906,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (catMoving || catDirty) catalogLayer.invalidate();
         if (browseMoving || browseDirty) browseLayer.invalidate();
         if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
-        if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
+        if (bgFading || (drawerWasMoving && !drawerMoving) || spotlightShelfMoving) platter.invalidate();
         drawerWasMoving = drawerMoving;
         if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
         catWasMoving = catMoving;
@@ -896,9 +955,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float lift = -d * shift - catLift;
         show(heroLayer, top, lift);
         show(status, top, lift);
-        show(platter, home, lift);
-        show(tiles, home, lift);
         float da = home * smoothstep(0.1f, 0.6f, dc);
+        // The shelf is visible (at full alpha) on both pages — a sliver on the hero page, "row -1" of the catalog's
+        // own coordinate system once the drawer opens. `layoutShelf()`'s own position formula now bakes in the
+        // catIn/catRow transform directly (so it's pinned to Continue Watching, not independently animated), so the
+        // shelf layer needs no extra translateY of its own in Spotlight — only Cards mode still uses `lift`.
+        float shelfLift = Prefs.spotlightOn() ? 0 : lift;
+        if (Prefs.spotlightOn()) layoutShelf();
+        show(platter, home, shelfLift);
+        show(tiles, home, shelfLift);
         drawerLayer.setTranslationY((1 - d) * shift - catLift);
         drawerLayer.setAlpha(da);
         showLayer(drawerLayer, da > 0.002f);
@@ -1136,9 +1201,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         platter.invalidate();
     }
 
-    /** How dark it is: 0 = day, 1 = night (in between during the transition). */
+    /** How dark it is: 0 = day, 1 = night (in between during the transition). Spotlight's chrome (weather, buttons,
+     * shelf) always sits over a photo with a dark corner treatment, by day or by night (Look.spotlightPhoto), so it
+     * leans toward the night palette even in the day theme instead of using low-contrast ink on a bright scrim. */
     private float dark() {
-        return night;
+        return Prefs.spotlightOn() && picksOn() ? Math.max(night, 0.7f) : night;
     }
 
     /** The day or the night value of a glass surface (until those move into GlassLook). */
@@ -1348,8 +1415,34 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float fit = (full - Math.max(0, n - 1) * gap) / Math.max(1, n);
         float tw = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
         float th = tw * 9f / 16;
+        if (Prefs.spotlightOn()) pad = 10 * k;   // docked above Continue Watching, so only the outer padding shrinks; the tiles stay full size
         float width = n * tw + Math.max(0, n - 1) * gap, left = look.m.shelfFill ? MARGIN * k : (w - width) / 2f;
         float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
+        // Spotlight shows a sliver of the shelf on the hero page (about half the platter block, as a hint there's
+        // more below), and once the page opens, the shelf is "row -1" of the catalog's own coordinate system —
+        // positioned just above row 0, with the exact same `catIn`/`catRow` transform `drawCatalog` applies to every
+        // real row — so it's guaranteed to sit immediately above Continue Watching, never overlapping it, and
+        // scrolls away with the same motion as everything else once you move deeper into the catalog. The two
+        // states are blended by `drawer.value` (already animating every frame it moves).
+        if (Prefs.spotlightOn()) {
+            float platterH = th + 2 * pad;
+            float hiddenTop = h - platterH * 0.5f;
+            // Row 0's own top (same formula `drawCatalog` uses for `y0`), minus the same gap every catalog row
+            // keeps from the one above it (CAT_ROW_GAP), minus the shelf's own height: the shelf's *bottom* lands
+            // just above Continue Watching's *top*, with the same rhythm as Continue Watching has above Shows you watch.
+            float row0Top = (catY0() - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
+            // The gap shrinks only to fit the resting layout (row 0 at its docked spot, catRow 0); it must not be a
+            // clamp on the live position, or the shelf would stop while row 0 keeps scrolling up over it.
+            float restRow0Top = (catY0() - catLift()) * k;
+            float rowGap = Math.min(CAT_ROW_GAP * k, Math.max(0, restRow0Top - platterH - 24 * k));
+            // Always row 0's live position minus an offset, so the two move in lockstep (blending by another spring
+            // let Continue Watching slide over the shelf mid-transition). The offset eases from the hidden sliver's to
+            // the docked one while the catalog is still fading in (see `ca` in updateMotion).
+            float hiddenOff = (catY0() * k) - hiddenTop;
+            float dockedOff = rowGap + platterH;
+            float e = smoothstep(0, 0.35f, Ui.clamp(catIn.value));
+            top = row0Top - (hiddenOff + (dockedOff - hiddenOff) * e);
+        }
         platterRect.set(left - side, top, left + width + side, top + th + 2 * pad);
         float x = left, y = top + pad;
         for (int i = 0; i < n; i++) {
@@ -1696,6 +1789,42 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         zone = Z_SHELF;
         for (Spring f : drawerFocus) f.snap(0);   // the drawer goes away: its focus doesn't need to animate
         if (!shelf.isEmpty() && drawerIndex < drawerRects.length) shelfIndex = nearest(tileRects, drawerRects[drawerIndex].centerX());
+    }
+
+    // MARK: - Spotlight's own paging (the shelf doesn't live on its hero screen: Down pages straight to the
+    // drawer/catalog screen in one press, landing on the shelf as that page's first row; Cards mode needs two presses
+    // — Down to the shelf, Down again to open the drawer — and keeps its own shelf position/openDrawer() untouched).
+
+    /** Down from the poster row: one page, not two — the shelf rises as this page's first row *and* the catalog rows
+     * (Continue Watching etc.) come in right below it in the same motion, not a second Down-press away. Focus lands
+     * on the shelf (`zone = Z_SHELF`); a further Down moves focus into the already-visible catalog rows via the
+     * ordinary `Z_SHELF` → `openDrawer()` → `enterCatalog()` path (harmless to call again — `catIn` is already at 1,
+     * so that's just a focus change, not a second "opening" animation). */
+    private void openSpotlightPage() {
+        catalogs.refreshIfStale();
+        syncRows();
+        syncBrowse();
+        drawerOpen = true;
+        drawer.target = 1;
+        zone = Z_SHELF;
+        if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, spotlightFocusedRect.centerX());
+        if (!catRows.isEmpty()) {
+            catRowIndex = 0;
+            catIn.target = 1;
+            catRow.target = 0;
+        }
+    }
+
+    /** Up from the shelf (or Back, from anywhere on the drawer/catalog page): closes that page and returns straight
+     * to the poster row, undoing what `openSpotlightPage()` started. */
+    private void closeSpotlightPage() {
+        drawerOpen = false;
+        drawer.target = 0;
+        catIn.target = 0;
+        catRow.target = 0;
+        for (Spring f : drawerFocus) f.snap(0);
+        zone = Z_CARDS;
+        cardIndex = 0;
     }
 
     // MARK: - The input popover (HDMI input, AV input): a choice among the inputs of one kind
@@ -2141,7 +2270,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private float catLift() {
-        return cardsOn() ? CAT_LIFT : CARDS_TOP - 140;
+        float lift = cardsOn() ? CAT_LIFT : CARDS_TOP - 140;
+        // Spotlight's shelf is docked just above row 0 (see layoutShelf): row 0 needs to rest a bit lower than Cards'
+        // does, so there's room for the shelf's full glass pill (not just its tiles) between it and the screen's top edge.
+        return Prefs.spotlightOn() ? lift - SPOTLIGHT_SHELF_GAP : lift;
     }
 
     @Override public void onCatalogs() {
@@ -2991,6 +3123,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closeSheet();
         } else if (trailerOn) {      // Back stops the trailer first
             stopTrailer();
+        } else if (Prefs.spotlightOn() && drawer.value > 0.001f
+                && (zone == Z_CATALOG || zone == Z_DRAWER || zone == WIDGETS || zone == Z_SHELF)) {
+            // Spotlight's drawer/catalog page is one unit (opened and closed together, unlike Cards' shelf, which
+            // stays visible either way) — Back from anywhere on it closes the whole page in one press, straight back
+            // to the poster row, instead of stepping zone-by-zone the way Cards mode's always-visible shelf allows.
+            closeSpotlightPage();
+            retarget(false);
         } else if (zone == Z_BROWSE) {
             leaveBrowse();
             retarget(false);
@@ -3181,10 +3320,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             it = lightButtons.get(topIndex - 3);
             r = topRects[topIndex];
         } else if (zone == Z_CARDS) {
-            Recs.Pick p = cardAt(cardIndex);
+            Recs.Pick p = Prefs.spotlightOn() ? posterAt(cardStart) : cardAt(cardIndex);
             if (p == null || p.pkg == null) return;
             click.open();
-            openPick(p, cardRects[cardIndex]);
+            openPick(p, Prefs.spotlightOn() ? spotlightFocusedRect : cardRects[cardIndex]);
             return;
         } else if (zone == Z_BROWSE) {
             Catalogs.Item listed = browseItem();
@@ -3778,13 +3917,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         heroDirty = statusDirty = true;
     }
 
-    /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
+    /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one.
+     * Spotlight has no tabs: its poster row always pulls from Explore's pool (tab 0), whatever `tab` last was. */
     private void updateCards() {
-        List<Recs.Pick> list = recs.now(TAB_KIND[tab]);
+        List<Recs.Pick> list = Prefs.spotlightOn() ? recs.now(TAB_KIND[0], Recs.SPOTLIGHT_POOL) : recs.now(TAB_KIND[tab]);
         if (!samePicks(list, cards)) {
             startCardTransition(0);
             cards = list;
             cardStart = 0;
+            spotlightRowShift.snap(0);
             carouselTarget = 0;
             carousel.snap(0);
             cardIndex = Math.min(cardIndex, Math.max(0, Math.min(3, list.size()) - 1));
@@ -3794,24 +3935,79 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         // All three tabs preloaded: switching tabs is instant. With more picks (pick_count) only this tab's: the
-        // images are kept in memory for the cards that slide in.
-        for (Recs.Pick p : Config.PICK_COUNT > 3 ? cards : recs.wanted()) recs.backdrop(p);
+        // images are kept in memory for the cards that slide in. Spotlight's pool is wider than its own Backdrop
+        // cache (SPOTLIGHT_POOL vs. Recs.loadImage's `pick_count + 3`): only the full-screen photo of nearby columns
+        // is worth prefetching eagerly — the row's posters themselves load through the separate, lighter `Recs.poster`
+        // cache (drawSpotlight), not this one.
+        if (Prefs.spotlightOn()) {
+            int from = cardStart - 2, to = cardStart + SPOTLIGHT_VISIBLE + 2;
+            for (int i = from; i <= to; i++) {
+                Recs.Pick p = posterAt(i);
+                if (p != null) recs.backdrop(p);
+            }
+        } else {
+            for (Recs.Pick p : Config.PICK_COUNT > 3 ? cards : recs.wanted()) recs.backdrop(p);
+        }
         showCards();
     }
 
     /** The first card's photo as the background, and the cards drawn again. */
     private void showCards() {
-        recs.setView(TAB_KIND[tab], cardStart);     // these cards and the next page get their details
+        recs.setView(TAB_KIND[Prefs.spotlightOn() ? 0 : tab], cardStart);     // these cards and the next page get their details
         Backdrop b = cards.isEmpty() ? null : recs.backdrop(cardAt(0));
         if (cards.isEmpty() || b != null) showBackdrop(b);
         heroDirty = true;
         spoken.focusMoved();    // new picks under the focused card
     }
 
+    /** `i` wrapped into `[0, cards.size())` — safe for a negative `i` too (Java's `%` can return negative). Spotlight's
+     * `cardStart` is an unbounded virtual index (never clamped, never specially wrapped on its own) so that circular
+     * scrolling never needs to "jump" the index or the Spring back around; only lookups wrap. */
+    private int wrapCard(int i) {
+        int n = cards.size();
+        if (n == 0) return -1;
+        return ((i % n) + n) % n;
+    }
+
     /** The pick in card `slot` (0 to 2): with more than three picks they take turns, wrapping around. */
     private Recs.Pick cardAt(int slot) {
         int n = cards.size();
-        return slot < 0 || slot >= Math.min(3, n) ? null : cards.get((cardStart + slot) % n);
+        if (slot < 0 || slot >= Math.min(3, n)) return null;
+        int i = wrapCard(cardStart + slot);
+        return i < 0 ? null : cards.get(i);
+    }
+
+    /** Spotlight's poster row: `cards`, unreordered — column `col` is always the same pick, unlike `cardAt`'s slots,
+     * which rotate. `cardStart` is which column has focus (an unbounded virtual index, not a rotation offset and not
+     * clamped to the pool's real size — `col` wraps circularly via {@link #wrapCard}, the same way `cardAt(0)` already
+     * wraps `cardStart` itself, so `showCards()`/`rotateCards`'s background-driving code needs no Spotlight-specific
+     * branch). */
+    private Recs.Pick posterAt(int col) {
+        int i = wrapCard(col);
+        return i < 0 ? null : cards.get(i);
+    }
+
+    /** Left/right in Spotlight's poster row: the focused pick is always drawn in slot 0 (not a moving focus ring
+     * across a stationary row) — but unlike Cards' instant `rotateCards`, the row slides to it with the catalog poster
+     * rows' smoothness (`spotlightRowShift` is a `Spring`, stepped every frame; only the *target* ever jumps). The row
+     * is circular (infinite scroll): `cardStart` is never clamped, so there's always a previous and a next pick to
+     * scroll to, in either direction, forever — `posterAt`/`wrapCard` map it onto the real pool. */
+    private void scrollSpotlight(int dx) {
+        if (cards.isEmpty()) return;
+        cardStart += dx;
+        spotlightRowShift.target = cardStart;
+        showCards();
+        invalidateAll();
+    }
+
+    /** pick_rotate_seconds, Spotlight: advances to the next column like `scrollSpotlight(1)` — circular, so there's
+     * no "end" to loop back from any more; it just keeps counting up, same as a manual scroll would. */
+    private void autoAdvanceSpotlight() {
+        if (cards.size() < 2) return;
+        cardStart++;
+        spotlightRowShift.target = cardStart;
+        showCards();
+        invalidateAll();
     }
 
     /** Keeps what the cards show now, to fade it out while the new picks come in (called before they change). */
@@ -4116,6 +4312,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
+        if (Prefs.spotlightOn()) {
+            // drawSpotlight paints the full-bleed photo first: weather has to come after it on this same canvas, or
+            // the photo paints straight over it (unlike Cards mode, where the photo is a separate layer underneath).
+            drawSpotlight(c);
+            drawTopWeather(c);
+            if (HomeData.coinCount() > 0) drawQuotes(c);
+            return;
+        }
         drawTopWeather(c);
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
@@ -4159,9 +4363,117 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
 
+    /**
+     * Spotlight: a full-screen photo of the focused pick (`look.spotlightPhoto`, each look's own corner treatment),
+     * its title and meta over the dark side, a heading, and a poster row that drives it — moving focus in the row
+     * (Z_CARDS, `scrollSpotlight`) swaps the photo and title instantly. The row scrolls (`spotlightRowShift`, the
+     * catalog rows' `catShift` pattern) instead of re-sorting the focused pick to the front, and draws one column
+     * past `SPOTLIGHT_VISIBLE` so the next one peeks in at the edge, the same way `drawCatalog` already does.
+     */
+    private Backdrop spotlightLastBackdrop;
+    private int spotlightWarmFor = Integer.MIN_VALUE;
+    private Shader spotlightCorner;
+    private final Paint spotlightCornerPaint = new Paint();
+    private float spotlightCornerW;
+    private String wrapSrc;
+    private float wrapW;
+    private int wrapGen = -1, wrapLineCount = 1;
+    private final String[] wrapLines = new String[2];
+
+    /** Breaks `text` at spaces into at most two lines no wider than `maxW` (the second ellipsized if it still overflows). */
+    private void wrapTitle(String text, android.text.TextPaint p, float maxW) {
+        int cut = p.breakText(text, true, maxW, null);
+        if (cut >= text.length()) {
+            wrapLines[0] = text;
+            wrapLineCount = 1;
+            return;
+        }
+        int sp = text.lastIndexOf(' ', cut);
+        if (sp <= 0) sp = cut;
+        wrapLines[0] = text.substring(0, sp).trim();
+        wrapLines[1] = TextUtils.ellipsize(text.substring(sp).trim(), p, maxW, TextUtils.TruncateAt.END).toString();
+        wrapLineCount = 2;
+    }
+
+    private void drawSpotlight(Canvas c) {
+        Recs.Pick focused = posterAt(cardStart);
+        Backdrop b = focused == null ? null : recs.backdrop(focused);
+        // Neighbours load ahead (backdrop() starts the load and returns null until it's ready), and while the focused
+        // pick's own photo is still loading the previous one stays up rather than a blank background.
+        if (focused != null && cardStart != spotlightWarmFor) {
+            spotlightWarmFor = cardStart;
+            for (int d = -2; d <= 2; d++) if (d != 0) recs.backdrop(posterAt(cardStart + d));
+        }
+        if (b != null) spotlightLastBackdrop = b;
+        else if (spotlightLastBackdrop != null) b = spotlightLastBackdrop;
+        look.spotlightPhoto(c, screen, b, dark());
+        // A dark corner behind the top-right buttons, so they stay readable over any photo.
+        if (spotlightCorner == null || spotlightCornerW != w) {
+            spotlightCornerW = w;
+            spotlightCorner = new RadialGradient(w, 0, 760 * k, new int[] {0xB8000000, 0x70000000, 0},
+                    new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP);
+        }
+        spotlightCornerPaint.setShader(spotlightCorner);
+        c.drawRect(screen, spotlightCornerPaint);
+        if (focused != null) {
+            float titleW = Math.min(HERO_TITLE_W, CONTENT_R - MARGIN) * k;
+            fitPaint.set(lSpotlightTitle);
+            if (!focused.title.equals(wrapSrc) || wrapW != titleW || wrapGen != Ui.generation) {
+                wrapSrc = focused.title;
+                wrapW = titleW;
+                wrapGen = Ui.generation;
+                wrapTitle(wrapSrc, fitPaint, titleW);
+            }
+            // A long title wraps to a second line (the last line stays on the baseline the meta hangs from, so the
+            // block grows upward); only a title too long for two lines is cut with an ellipsis.
+            float lineH = 72 * k;
+            for (int i = 0; i < wrapLineCount; i++)
+                c.drawText(wrapLines[i], MARGIN * k, SPOTLIGHT_TITLE_Y * k - (wrapLineCount - 1 - i) * lineH, lSpotlightTitle);
+            if (focused.meta != null && !focused.meta.isEmpty()) {
+                fitPaint.set(lSpotlightMeta);
+                String meta = TextUtils.ellipsize(focused.meta, fitPaint, titleW, TextUtils.TruncateAt.END).toString();
+                c.drawText(meta, MARGIN * k, (SPOTLIGHT_TITLE_Y + SPOTLIGHT_META_GAP) * k, lSpotlightMeta);
+            }
+        }
+        c.drawText(Ui.tr("Top picks for you"), MARGIN * k, SPOTLIGHT_HEADING_Y * k, lSpotlightHeading);
+        float x0 = MARGIN * k, top = SPOTLIGHT_ROW_TOP * k, pw = SPOTLIGHT_POSTER_W * k, ph = SPOTLIGHT_POSTER_H * k,
+                gap = SPOTLIGHT_POSTER_GAP * k, r = TILE_RADIUS * k;
+        // Circular: one column peeks in at the *start* too, not just the end (the row never runs out in either
+        // direction), so the window is one wider on the left than Cards-era code needed.
+        int first = (int) Math.floor(spotlightRowShift.value) - 1, last = first + SPOTLIGHT_VISIBLE + 2;
+        for (int col = first; col <= last; col++) {
+            Recs.Pick p = posterAt(col);
+            if (p == null) continue;
+            float x = x0 + (col - spotlightRowShift.value) * (pw + gap);
+            cardRect.set(x, top, x + pw, top + ph);
+            if (cardRect.right < 0 || cardRect.left > w) continue;      // fully off-screen: not even partially drawn
+            if (col == cardStart) spotlightFocusedRect.set(cardRect);
+            float f = col == cardStart ? Ui.clamp(cardFocus[0].value) : 0;
+            float s = 1 + look.m.cardGrow * f;
+            float cx = cardRect.centerX(), cy = cardRect.centerY() - look.m.cardLift * k * f;
+            cell.set(cx - pw * s / 2, cy - ph * s / 2, cx + pw * s / 2, cy + ph * s / 2);
+            float rr = r * s;
+            // TMDB's poster art, not the textless backdrop: the title is already baked into the image, so there's no
+            // caption to draw over it (unlike the Cards-mode cards, which caption a textless backdrop).
+            Bitmap img = recs.poster(p, Math.round(pw));
+            if (img != null) {
+                roundImage(c, img, cell, rr);
+            } else {
+                fill.setShader(null);
+                fill.setColor(look.color(Look.PLACEHOLDER, dark()));
+                c.drawRoundRect(cell, rr, rr, fill);
+            }
+            if (!look.focusRing(c, cell, rr, f, dark(), 1) && f > 0.01f) {
+                rim.setShader(null);
+                rim.setColor(Ui.alpha(0xFFFFFFFF, 0.7f * f));
+                c.drawRoundRect(cell, rr, rr, rim);
+            }
+        }
+    }
+
     /** The picks carousel and its tabs: needs the TMDB key, and the person hasn't turned it off (Settings > TMDB). */
     private boolean picksOn() {
-        return Recs.hasKey(getContext()) && Prefs.picks();
+        return Recs.hasKey(getContext()) && Prefs.picksOn();
     }
 
     private long topWeatherAt = -1;
@@ -4331,11 +4643,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (zone) {
             case Z_SHELF:
                 // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.
-                if (dy >= 0) return false;
+                if (dy >= 0) return false;      // down/sideways: move()'s own Z_SHELF case (left-right, openDrawer()) handles it
                 if (cards.isEmpty()) {
-                    if (!picksOn() && lightButtons.isEmpty()) return true;   // no tabs and no buttons above
+                    if ((!picksOn() || Prefs.spotlightOn()) && lightButtons.isEmpty()) return true;   // no tabs and no buttons above
                     zone = Z_TOP;
-                    topIndex = picksOn() ? tab : 3;
+                    topIndex = picksOn() && !Prefs.spotlightOn() ? tab : 3;
+                } else if (Prefs.spotlightOn()) {
+                    closeSpotlightPage();
                 } else {
                     zone = Z_CARDS;
                     cardIndex = 0;
@@ -4343,13 +4657,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_CARDS:
                 if (dx != 0) {
-                    // The focus stays on the first card: right brings the next pick into it (the cards move left), left
-                    // the previous one, in a circle.
                     if (cards.size() < 2) return true;
-                    rotateCards(dx);
+                    if (Prefs.spotlightOn()) scrollSpotlight(dx);    // the row scrolls; focus doesn't re-sort to the front
+                    else rotateCards(dx);                            // Cards' 3 cards rotate the focused one to the front
                 } else if (dy < 0) {
                     zone = Z_TOP;
-                    topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
+                    // As on Apple TV: moving up to the tabs focuses the selected tab. Spotlight has no tabs, so Up
+                    // from the poster row goes straight to the corner buttons (if any; else moveLight(Z_TOP) with no
+                    // buttons and dy<0 already returns true below, keeping focus put).
+                    topIndex = Prefs.spotlightOn() ? 3 : tab;
+                } else if (Prefs.spotlightOn()) {
+                    openSpotlightPage();
                 } else {
                     zone = Z_SHELF;
                     if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
@@ -4357,7 +4675,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_TOP:
                 if (dx != 0) {
-                    int next = Math.max(picksOn() ? 0 : 3, Math.min(2 + lightButtons.size(), topIndex + dx));
+                    int next = Math.max(picksOn() && !Prefs.spotlightOn() ? 0 : 3, Math.min(2 + lightButtons.size(), topIndex + dx));
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it

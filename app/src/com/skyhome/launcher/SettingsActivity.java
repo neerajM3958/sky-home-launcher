@@ -582,7 +582,7 @@ public class SettingsActivity extends Activity {
             String error = recs.optString("error");
             int count = recs.optInt("count");
             if (!hasKey) line = Ui.tr("No TMDB key: set one in Sky Home Launcher › Integrations.");
-            else if (!Prefs.picks()) line = Prefs.picksOffForMemory() ? Ui.tr("Off by default: this TV is short of memory.") : Ui.tr("Off: the home screen shows no picks.");
+            else if (!Prefs.picksOn()) line = Prefs.picksStyleOffForMemory() ? Ui.tr("Off by default: this TV is short of memory.") : Ui.tr("Off: the home screen shows no picks.");
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
@@ -1158,9 +1158,15 @@ public class SettingsActivity extends Activity {
         private String[] tmdbValues() {
             int on = 0;
             for (String key : Prefs.catalogRows()) if (Catalogs.title(key) != null) on++;
-            return new String[] {regionValue(), onOff(Prefs.picks()), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
+            return new String[] {regionValue(), picksStyleLabel(), Prefs.recommendFromApps() ? Ui.tr("My apps") : Ui.tr("Anything popular"),
                     onOff(Prefs.flatrateOnly()), onOff(Prefs.flatrateOnly() && Prefs.includeRentBuy()), languagesValue(), hiddenValue(),
                     onOff(Prefs.hideAnimation()), Ui.trf("{i} of {n}", "i", on, "n", Catalogs.ALL.length)};
+        }
+
+        /** "Picks carousel" row's value: Off, Cards (today's 3-card row) or Spotlight (the full-screen carousel). */
+        private String picksStyleLabel() {
+            String v = Prefs.picksStyle();
+            return v.equals(Prefs.PICKS_SPOTLIGHT) ? Ui.tr("Spotlight") : v.equals(Prefs.PICKS_CARDS) ? Ui.tr("Cards") : Ui.tr("Off");
         }
 
         private void drawTmdb(Canvas c) {
@@ -1818,7 +1824,11 @@ public class SettingsActivity extends Activity {
                 return;
             }
             if (screen == TMDB) {
-                if (focus == TMDB_PICKS) Prefs.setPicks(!Prefs.picks());
+                if (focus == TMDB_PICKS) {
+                    String[] styles = {Prefs.PICKS_OFF, Prefs.PICKS_CARDS, Prefs.PICKS_SPOTLIGHT};
+                    int at = java.util.Arrays.asList(styles).indexOf(Prefs.picksStyle());
+                    Prefs.setPicksStyle(styles[(Math.max(0, at) + dir + styles.length) % styles.length]);
+                }
                 else if (focus == TMDB_FROM) Prefs.setRecommendFromApps(!Prefs.recommendFromApps());
                 else if (focus == TMDB_STREAM) Prefs.setFlatrateOnly(!Prefs.flatrateOnly());
                 else if (focus == RENT_BUY_ROW && !disabledRow(RENT_BUY_ROW)) Prefs.setIncludeRentBuy(!Prefs.includeRentBuy());
