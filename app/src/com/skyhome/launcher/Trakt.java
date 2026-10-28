@@ -49,7 +49,7 @@ final class Trakt {
     private static final long CHECK_EVERY = 30 * 60_000L;      // one small request tells whether anything changed
     private static final long RETRY_AFTER_FAILURE = 10 * 60_000L;
     // VERSION clears everything, the sign-in too; ROWS_VERSION only the saved rows (when a row is added or changes shape).
-    private static final int VERSION = 1, ROWS_VERSION = 5, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
+    private static final int VERSION = 1, ROWS_VERSION = 6, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
     private static final long YEAR = 365L * 24 * 3600_000L;
 
     private static Trakt instance;
@@ -438,7 +438,10 @@ final class Trakt {
             if (o == null) continue;
             boolean show = "show".equals(o.optString("type"));
             Catalogs.Item it = item(o.optJSONObject(show ? "show" : "movie"), show ? "tv" : "movie");
-            if (it != null) row.items.add(it);
+            if (it != null) {
+                if (show) it.episodes = true;      // a show on the watchlist: its episodes, not "where does this stream"
+                row.items.add(it);
+            }
         }
         return row;
     }

@@ -46,7 +46,7 @@ final class Catalogs {
         int traktId;        // Trakt's own id, for its episode list
         int season, episode, wnKind;
         String episodeTitle = "";
-        boolean episodes;   // OK opens the show's episodes (the "Shows you watch" row) instead of the title's page
+        boolean episodes;   // OK opens the show's episodes ("Shows you watch" and watchlist shows) instead of the title's page
         String stars;       // "★ 7.8", or null
         String posterUrl;   // Trakt's own poster (a whole address); null: `poster` is a TMDB path
         String sub;         // under the title instead of the stars ("S2 · E5"), or null
