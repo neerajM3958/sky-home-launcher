@@ -444,6 +444,49 @@ Continue Watching/Shows you watch/Watchlist rows, each a clean screen with no sh
 catalog rows returns directly to the poster row in one press. Not independently re-verified: real multi-screen
 scrolling and the edge-peek (blocked by the small pool size, see #2 above), and Material's blur treatment.
 
+### 11. Round-5: shelf on page 2, title wrap, corner scrim, backdrop loading
+
+**As built** (all in `HomeView.java` unless noted; verified live on 192.168.0.4):
+
+- **Shelf size and gap.** Tiles are back at Cards' size (the old Spotlight-only `tw *= 0.74` shrink is gone). Only the
+  outer padding shrinks (`pad = 10 * k`) since the shelf is docked right above row 0. `catLift()` is reduced by
+  `SPOTLIGHT_SHELF_GAP = 60` in Spotlight, pushing row 0 (and so the shelf's dock) lower, so the full glass pill fits
+  under the screen's top edge instead of being cut off.
+- **Shelf is "row -1" of the catalog.** Its top is `row0Top - offset`, where `row0Top = (catY0() - catIn * catLift() -
+  catRow * CAT_PITCH) * k` is the same formula `drawCatalog` uses, so it moves in lockstep with Continue Watching
+  and scrolls away with it. The offset eases from the hidden sliver's to the docked one with
+  `smoothstep(0, 0.35, catIn)` (the catalog's own fade-in), not a blend by `drawer.value`: two separate springs let
+  Continue Watching slide over the shelf mid-transition. The docked gap is `CAT_ROW_GAP` (= `CAT_PITCH - 50 -
+  CAT_POSTER_H + 30`, the same space as between Continue Watching and Shows you watch), shrunk once, from the
+  resting layout, to fit the headroom (`restRow0Top - platterH - 24k`). It is never a clamp on the live position,
+  which had pinned the shelf while the rows kept scrolling up over it. This TV has `cardsOn() == false` (the
+  quote-of-the-day feature, unrelated to the picks cards; it picks the smaller `CARDS_TOP - 140` lift), so the gap
+  here is smaller than between the other rows.
+- **Shelf repaint.** `doFrame` invalidated `platter`/`tiles` only when the drawer started or stopped, which is right
+  for Cards (the shelf only moves by its layer's translationY). Spotlight recomputes the rects every frame from
+  `catIn`/`catRow`/`drawer`, so `spotlightShelfMoving = spotlightOn() && (catMoving || drawerMoving)` now invalidates
+  them while those animate (it showed as a stuck shelf).
+- **Sliver kept.** An experiment that hid the sliver on page 1 was reverted at the user's request; the shelf still
+  peeks (about half the platter) on the hero page.
+- **Title wraps.** `wrapTitle` breaks at a space into at most two lines (`breakText`, second line ellipsized), cached
+  by title/width/`Ui.generation` so `onDraw` doesn't allocate. The last line stays on `SPOTLIGHT_TITLE_Y`, so the
+  block grows upward and the meta line stays put.
+- **Top-right scrim.** A `RadialGradient` centred on the top-right corner (built once per width) is drawn over the
+  photo in `drawSpotlight`, so the weather-side buttons stay readable on bright photos. It sits above both looks'
+  `spotlightPhoto`, not inside them. Checked only on dark photos; a real blur there is not done.
+- **Crash fix (`Recs.wanted`).** The circular row lets `cardStart` go negative (Left from the first pick), and
+  `(viewStart + i) % size` then indexed -1. It uses `Math.floorMod` now.
+- **Missing backdrops (The Crown, Criminal Minds).** `wanted()` built its window from `now(viewKind)` (`pick_count`
+  long) while Spotlight's row is `SPOTLIGHT_POOL` (20): picks past the short list never got details or a photo. It now
+  uses `now(viewKind, poolCap())`, and takes that branch whenever Spotlight is on (before, only with `pick_count > 3`).
+  The window also covers two picks behind the focus. In `drawSpotlight`, the neighbours (focus ±2) are warmed with
+  `recs.backdrop()` when the focus moves, and the last good backdrop stays up while the focused one loads instead of
+  a plain colour. The Backdrop cache holds 6 (was 4) in Spotlight. A failed details fetch is now logged per title.
+- **Strings.** "Cards", "Spotlight" and "Top picks for you" are translated in all 24 catalogues (`translate.py
+  --check` passes, as CI needs). Not native-reviewed.
+
+Not done: a real blur behind the top-right buttons; Material's look wasn't re-checked on the TV this round.
+
 ## What changes for you
 
 | | Off | Cards (today) | Spotlight (new) |
