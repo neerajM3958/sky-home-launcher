@@ -1203,9 +1203,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** How dark it is: 0 = day, 1 = night (in between during the transition). Spotlight's chrome (weather, buttons,
      * shelf) always sits over a photo with a dark corner treatment, by day or by night (Look.spotlightPhoto), so it
-     * leans toward the night palette even in the day theme instead of using low-contrast ink on a bright scrim. */
+     * leans toward the night palette even in the day theme instead of using low-contrast ink on a bright scrim. That
+     * is only the hero page: the drawer and catalog pages sit on the look's own background, so by the time they are
+     * open this is the real day/night value again (a white Material page stays white by day). */
     private float dark() {
-        return Prefs.spotlightOn() && picksOn() ? Math.max(night, 0.7f) : night;
+        if (!Prefs.spotlightOn() || !picksOn()) return night;
+        return night + (Math.max(night, 0.7f) - night) * (1 - Ui.clamp(drawer.value));
     }
 
     /** The day or the night value of a glass surface (until those move into GlassLook). */
