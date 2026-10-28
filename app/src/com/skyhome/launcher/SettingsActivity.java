@@ -165,7 +165,8 @@ public class SettingsActivity extends Activity {
         private boolean hasKey, stremioOn;      // stremioOn: the Stremio app is on the TV (looked up every few seconds, not per frame)
         private final List<String[]> langRows = new ArrayList<>();     // the Languages screen: {code, name}, "all" first
         private final List<String[]> hiddenRows = new ArrayList<>();     // the Hidden services screen: {key, name}
-        private final List<String[]> appsOffRows = new ArrayList<>();    // Apps turned off: {package, name}
+        private final List<String[]> appsOffRows = new ArrayList<>();    // Apps turned off: {package, name}; "" = the "Show more" row
+        private final java.util.Set<String> appsManaged = new java.util.HashSet<>();   // appsOffRows' packages Sky Home Launcher actually tracks (the rest came from "Show more" and aren't picked yet)
         private int[] keyIds = Prefs.KEYS;      // the remote buttons: the brand's, then the ones added (Prefs.allKeys)
         private static final int MAX_ADDED = 8;
         private final List<String> torLangRows = new ArrayList<>();      // the Torrentio languages screen: Torrentio's names
@@ -289,7 +290,9 @@ public class SettingsActivity extends Activity {
                 }
                 case APPS_OFF: {
                     int at = pickScroll + row;
-                    return at < appsOffRows.size() ? appsOffRows.get(at)[1] + ", " + appsOffValue(at) : "";
+                    if (at >= appsOffRows.size()) return "";
+                    String label = appsOffRows.get(at)[1];
+                    return appsManaged.contains(appsOffRows.get(at)[0]) ? label + ", " + appsOffValue(at) : label;
                 }
                 case TORRENTIO: {
                     String[] labels = torrentioLabels(), values = torrentioValues();
@@ -1481,18 +1484,36 @@ public class SettingsActivity extends Activity {
         private void openAppsOff() {
             appsOffRows.clear();
             appsOffRows.addAll(HomeMode.debloatApps(getContext()));
+            appsOffRows.addAll(HomeMode.customOffApps(getContext()));
+            appsManaged.clear();
             appsKept.clear();
-            for (String[] row : appsOffRows) if (HomeMode.keepsOn(getContext(), row[0])) appsKept.add(row[0]);
+            for (String[] row : appsOffRows) {
+                appsManaged.add(row[0]);
+                if (HomeMode.keepsOn(getContext(), row[0])) appsKept.add(row[0]);
+            }
+            if (!HomeMode.moreApps(getContext()).isEmpty()) appsOffRows.add(new String[] {"", Ui.tr("Show more")});
             pickScroll = 0;
             focus = 0;
             screen = APPS_OFF;
             for (Spring s : pop) s.snap(0);
         }
 
+        /** OK: the "Show more" row reveals every other app safe to turn off; a fresh one from there is picked (starts
+         * turned off); an already-managed one (the brand's own, or picked before) toggles Kept on/Turned off. */
         private void toggleAppsOff() {
             int at = pickScroll + focus;
             if (at >= appsOffRows.size()) return;
             String pkg = appsOffRows.get(at)[0];
+            if (pkg.isEmpty()) {
+                appsOffRows.remove(at);
+                appsOffRows.addAll(HomeMode.moreApps(getContext()));
+                return;
+            }
+            if (!appsManaged.contains(pkg)) {
+                HomeMode.addTurnOff(getContext(), pkg);        // applied at once, in the background
+                appsManaged.add(pkg);
+                return;
+            }
             boolean keep = appsKept.add(pkg);
             if (!keep) appsKept.remove(pkg);
             HomeMode.setKeepOn(getContext(), pkg, keep);       // applied at once, in the background
@@ -1504,15 +1525,18 @@ public class SettingsActivity extends Activity {
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
                 int at = pickScroll + i;
+                String pkg = appsOffRows.get(at)[0];
                 float y = (LIST_TOP + 20 + i * (LIST_ROW_H + LIST_ROW_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + LIST_ROW_H * k);
                 float f = drawRowBackground(c, i);
-                boolean kept = appsKept.contains(appsOffRows.get(at)[0]);
                 rowLabel.setColor(blend(0xF2FFFFFF, INK, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 c.drawText(appsOffRows.get(at)[1], rowRect.left + 30 * k, base, rowLabel);
-                rowValue.setColor(blend(kept ? 0xF2FFFFFF : 0x8CFFFFFF, kept ? INK : 0x991C1C1E, f));
-                c.drawText(appsOffValue(at), rowRect.right - 30 * k, base, rowValue);
+                if (appsManaged.contains(pkg)) {
+                    boolean kept = appsKept.contains(pkg);
+                    rowValue.setColor(blend(kept ? 0xF2FFFFFF : 0x8CFFFFFF, kept ? INK : 0x991C1C1E, f));
+                    c.drawText(appsOffValue(at), rowRect.right - 30 * k, base, rowValue);
+                }
             }
             String text = appsOffRows.isEmpty() ? Ui.tr("No apps to turn off on this TV.")
                     : Ui.tr("OK keeps an app on, or lets Sky Home Launcher turn it off.");

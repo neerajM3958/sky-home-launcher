@@ -210,6 +210,42 @@ final class HomeMode {
         return out;
     }
 
+    /** Apps the person picked themselves (Apps turned off > Show more), as {package, name}, by name. */
+    static List<String[]> customOffApps(Context c) {
+        List<String[]> out = new ArrayList<>();
+        android.content.pm.PackageManager pm = c.getPackageManager();
+        for (String pkg : stringList(state(c), "turnOff")) {
+            if (Arrays.asList(DEBLOAT).contains(pkg) || !mayTurnOff(pkg)) continue;
+            try {
+                android.content.pm.ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
+                out.add(new String[] {pkg, String.valueOf(info.loadLabel(pm))});
+            } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+                // not on this TV any more
+            }
+        }
+        Collections.sort(out, (a, b) -> a[1].compareToIgnoreCase(b[1]));
+        return out;
+    }
+
+    /**
+     * Every other app on the TV safe to turn off (Apps turned off > Show more), as {package, name}, by name.
+     * mayTurnOff alone only keeps the switch from bricking the TV (Android's own pieces, factory menus); it still
+     * lets through background services and system internals (Bluetooth, Android Accessibility Suite…) nobody
+     * turning off apps by hand means to see. Restricted to apps with their own icon (HomeApps.launchable: the same
+     * check the Shelf picker uses), the same bar a person already uses to judge "is this something I use".
+     */
+    static List<String[]> moreApps(Context c) {
+        List<String[]> out = new ArrayList<>();
+        Set<String> known = new HashSet<>(Arrays.asList(DEBLOAT));
+        known.addAll(stringList(state(c), "turnOff"));
+        for (String[] app : HomeApps.launchable(c)) {
+            if (known.contains(app[0]) || !mayTurnOff(app[0])) continue;
+            out.add(app);
+        }
+        Collections.sort(out, (a, b) -> a[1].compareToIgnoreCase(b[1]));
+        return out;
+    }
+
     static boolean keepsOn(Context c, String pkg) {
         return stringList(state(c), "keepOn").contains(pkg);
     }
@@ -219,12 +255,29 @@ final class HomeMode {
      * (:home); the main process does the work, in a job (ModeJob.KEEP).
      */
     static void setKeepOn(Context c, String pkg, boolean keep) {
-        if (!pkg.matches("[\\w.]+") || !Arrays.asList(DEBLOAT).contains(pkg)) return;
+        if (!pkg.matches("[\\w.]+")) return;
         synchronized (FILE_LOCK) {
             JSONObject s = state(c);
+            if (!Arrays.asList(DEBLOAT).contains(pkg) && !stringList(s, "turnOff").contains(pkg)) return;
             Set<String> set = new HashSet<>(stringList(s, "keepOn"));
             if (keep ? !set.add(pkg) : !set.remove(pkg)) return;
             try { s.put("keepOn", new JSONArray(sorted(set))); } catch (JSONException e) { return; }
+            save(c, s);
+        }
+        ModeJob.schedule(c, ModeJob.KEEP, null, 0);
+    }
+
+    /**
+     * Adds `pkg` to the apps the person picked themselves to turn off (Apps turned off > Show more) and applies it
+     * at once, the same way setKeepOn does.
+     */
+    static void addTurnOff(Context c, String pkg) {
+        if (!pkg.matches("[\\w.]+") || !mayTurnOff(pkg) || Arrays.asList(DEBLOAT).contains(pkg)) return;
+        synchronized (FILE_LOCK) {
+            JSONObject s = state(c);
+            Set<String> set = new HashSet<>(stringList(s, "turnOff"));
+            if (!set.add(pkg)) return;
+            try { s.put("turnOff", new JSONArray(sorted(set))); } catch (JSONException e) { return; }
             save(c, s);
         }
         ModeJob.schedule(c, ModeJob.KEEP, null, 0);
@@ -389,7 +442,7 @@ final class HomeMode {
             JSONObject started = state(c);
             started.put("mode", FREE).put("homeReverted", false).put("setupHome", setupHome);
             save(c, started);
-            List<String> targets = targets(home, dream, setupHome);
+            List<String> targets = targets(c, home, dream, setupHome);
             Set<String> disabled = new HashSet<>(stringList(state(c), "disabled"));
             Set<String> present = packages(adb, "");
             Set<String> keptOff = new HashSet<>(stringList(state(c), "keptOff"));
@@ -397,7 +450,7 @@ final class HomeMode {
             // list lives in the TV's settings too, since an uninstall erases our state file).
             Set<String> ours = recorded(adb);
             for (String pkg : packages(adb, "-d")) {
-                if (targets(home, dream, true).contains(pkg) && !disabled.contains(pkg) && !ours.contains(pkg)) keptOff.add(pkg);
+                if (targets(c, home, dream, true).contains(pkg) && !disabled.contains(pkg) && !ours.contains(pkg)) keptOff.add(pkg);
             }
             keptOff.removeAll(ours);
             JSONObject before = state(c);
@@ -464,8 +517,9 @@ final class HomeMode {
             busy(c, Ui.tr("Turning the apps back on…"));
             String home = originalHome(s);
             Set<String> toEnable = new HashSet<>(stringList(s, "disabled"));
-            for (String pkg : targets(home, originalDream(s), true)) {
-                if (!Arrays.asList(DEBLOAT).contains(pkg) && !Arrays.asList(ASSISTANT).contains(pkg)) toEnable.add(pkg);
+            for (String pkg : targets(c, home, originalDream(s), true)) {
+                if (!Arrays.asList(DEBLOAT).contains(pkg) && !Arrays.asList(ASSISTANT).contains(pkg)
+                        && !stringList(s, "turnOff").contains(pkg)) toEnable.add(pkg);
             }
             toEnable.removeAll(stringList(s, "keptOff"));
             Set<String> present = packages(adb, "");
@@ -648,7 +702,7 @@ final class HomeMode {
                 String dream = originalDream(s);
                 // In the switch's order (Google TV's setup app before its home screen), then the rest.
                 List<String> order = new ArrayList<>();
-                for (String pkg : targets(home, dream, s.optBoolean("setupHome", true))) {
+                for (String pkg : targets(app, home, dream, s.optBoolean("setupHome", true))) {
                     if (!reverted || !(pkg.equals(homePkg) || pkg.equals(GOOGLE_SETUP) || pkg.equals(packageOf(dream)))) {
                         wanted.add(pkg);
                         order.add(pkg);
@@ -731,7 +785,7 @@ final class HomeMode {
      * screen off and it still on, its RecoveryActivity takes the Home button, and a restart there factory-reset a Xiaomi
      * (CleanYourTV, MiTV-MOSR4). Android's bare "fallback home" is never turned off.
      */
-    private static List<String> targets(String home, String dream, boolean setupHome) {
+    private static List<String> targets(Context c, String home, String dream, boolean setupHome) {
         List<String> out = new ArrayList<>();
         String homePkg = home.contains("FallbackHome") ? null : packageOf(home);
         if (setupHome) out.add(GOOGLE_SETUP);
@@ -741,6 +795,7 @@ final class HomeMode {
         // screensaver=false keeps the TV's own screensaver: then it stays on.
         if (Config.OWN_SCREENSAVER && dreamPkg != null && !dreamPkg.equals(PKG) && !dreamPkg.equals(homePkg)) out.add(dreamPkg);
         out.addAll(Arrays.asList(DEBLOAT));
+        out.addAll(stringList(state(c), "turnOff"));      // the person's own picks (Apps turned off > Show more)
         if (Config.DISABLE_ASSISTANT) out.addAll(Arrays.asList(ASSISTANT));
         return out;
     }
