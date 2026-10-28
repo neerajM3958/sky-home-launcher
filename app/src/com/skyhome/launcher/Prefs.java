@@ -202,7 +202,7 @@ final class Prefs {
 
     /**
      * The picks carousel's style: "off", "cards" (the row of 3 cards under the tabs, today's look) or "spotlight"
-     * (the full-screen carousel). On (cards) unless the TV is short of memory (shortOfMemory) and the person hasn't
+     * (the full-screen carousel). Spotlight unless the TV is short of memory (shortOfMemory) and the person hasn't
      * chosen. Off, none are fetched or shown; the tabs go and the shelf and catalogs stay.
      */
     static final String PICKS_OFF = "off", PICKS_CARDS = "cards", PICKS_SPOTLIGHT = "spotlight";
@@ -210,7 +210,7 @@ final class Prefs {
     static String picksStyle() {
         if (app == null) return PICKS_OFF;
         SharedPreferences s = sp();
-        if (!s.contains("picks")) return shortOfMemory() ? PICKS_OFF : PICKS_CARDS;
+        if (!s.contains("picks")) return shortOfMemory() ? PICKS_OFF : PICKS_SPOTLIGHT;
         try {
             return s.getString("picks", PICKS_CARDS);
         } catch (ClassCastException e) {          // migrating an old boolean value

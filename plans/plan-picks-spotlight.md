@@ -485,6 +485,11 @@ scrolling and the edge-peek (blocked by the small pool size, see #2 above), and 
 - **Strings.** "Cards", "Spotlight" and "Top picks for you" are translated in all 24 catalogues (`translate.py
   --check` passes, as CI needs). Not native-reviewed.
 
+- **Default style.** With nothing chosen, `Prefs.picksStyle()` now returns Spotlight (was Cards) on TVs that aren't
+  short of memory; short-of-memory TVs still default to Off. Existing installs keep what they had (a saved value
+  wins, and an old on/off boolean still migrates to Cards/Off), so only fresh installs and TVs that never opened the
+  setting see Spotlight. This supersedes the "leave the default untouched" recommendation in step 1.
+
 Not done: a real blur behind the top-right buttons; Material's look wasn't re-checked on the TV this round.
 
 ## What changes for you
