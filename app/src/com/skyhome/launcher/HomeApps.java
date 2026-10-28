@@ -488,7 +488,9 @@ final class HomeApps {
             case APP:
                 intent = launchIntent(a.getPackageManager(), it.pkg);
                 plain = intent;
-                if (plain != null) plain.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                // REORDER_TO_FRONT: a task started another way (a title's deep link) isn't recognised as the app's launcher
+                // task, so without it a running app got a second copy of its main activity on top, starting from scratch.
+                if (plain != null) plain.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 if (intent != null && it.uri != null) {
                     intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.uri)).addCategory(Intent.CATEGORY_BROWSABLE).setPackage(it.pkg);
                 }
