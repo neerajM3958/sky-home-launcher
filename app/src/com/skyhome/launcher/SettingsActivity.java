@@ -1701,6 +1701,7 @@ public class SettingsActivity extends Activity {
             l.add("Solana");
             if (dollar()) l.add(Ui.tr("Dollar"));
             l.add(Ui.tr("Memory card"));
+            l.add(Ui.tr("Reset hidden titles"));
             return l.toArray(new String[0]);
         }
 
@@ -1725,6 +1726,8 @@ public class SettingsActivity extends Activity {
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < memCardRow(); i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
             v[memCardRow()] = onOff(Prefs.memoryCard());
+            int hidden = Prefs.hiddenTiles().size();      // posters hidden from Continue Watching and the other rows; OK brings them back
+            v[memCardRow() + 1] = hidden == 0 ? "—" : String.valueOf(hidden);
             return v;
         }
 
@@ -1909,6 +1912,10 @@ public class SettingsActivity extends Activity {
                 case TRAILER_ROW: Prefs.setTrailers(!Prefs.trailers()); break;
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
+                    if (row == memCardRow() + 1) {
+                        if (dir > 0 && !Prefs.hiddenTiles().isEmpty()) Catalogs.get(getContext()).unhideAll();
+                        return;
+                    }
                     if (row == memCardRow()) {
                         Prefs.setMemoryCard(!Prefs.memoryCard());
                         if (Prefs.memoryCard()) MemoryCard.start(getContext()); else MemoryCard.stop(getContext());

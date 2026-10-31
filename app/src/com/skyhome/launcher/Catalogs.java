@@ -44,6 +44,8 @@ final class Catalogs {
         double rating;
         String imdb;        // Trakt's rows know it already: Stremio's page needs no TMDB request
         int traktId;        // Trakt's own id, for its episode list
+        long playbackId;    // Trakt's id of a paused play (Continue Watching), to take it off the list; 0 for the rest
+        int markSeason, markEpisode;    // the episode a Continue Watching tile stands for, to mark it watched; 0 for the rest
         int season, episode, wnKind;
         String episodeTitle = "";
         boolean episodes;   // OK opens the show's episodes ("Shows you watch" and watchlist shows) instead of the title's page
@@ -152,7 +154,8 @@ final class Catalogs {
 
     /** A new list each time the rows change: the home screen compares it by reference. TMDB's follow the order the person set, and a row turned off goes at once. */
     private void rebuild() {
-        List<Row> all = withWatchShows(withWatchNext(new ArrayList<>(Trakt.get(context).rows())));
+        // Hidden last: a hidden Trakt tile must not let its Watch Next twin (dropped by listed()) fill the gap.
+        List<Row> all = withoutHidden(withWatchShows(withWatchNext(new ArrayList<>(Trakt.get(context).rows()))));
         List<Row> tmdb = new ArrayList<>();
         if (Recs.hasKey(context)) {
             for (String k : keys()) for (Row r : rows) if (r.key.equals(k)) tmdb.add(r);
@@ -214,6 +217,100 @@ final class Catalogs {
         if (at < 0) { int ci=-1; for(int i=0;i<trakt.size();i++) if(Trakt.CONTINUE.equals(trakt.get(i).key)){ci=i;break;} trakt.add(ci<0?0:ci+1,row); }
         else trakt.set(at,row);
         return trakt;
+    }
+
+    // MARK: - Tile actions: Remove (Trakt takes it off the list) and Hide (this launcher forgets it)
+
+    static final int HIDE = 0, REMOVE = 1;
+    /** The answer to an action beyond Trakt's DONE, DENIED and FAILED: the tile was hidden here. */
+    static final int HIDDEN = 3;
+
+    /** The row's key and the tile's identity, so hiding a title from one row leaves it in the others. */
+    static String hideKey(String rowKey, Item it) {
+        String who;
+        if (it.launch != null) who = "wn:" + it.appPkg + "|" + WatchNext.normalize(it.title) + "|" + it.kind;
+        else if (it.traktId > 0) who = it.kind + ":t" + it.traktId;
+        else if (it.id > 0) who = it.kind + ":m" + it.id;
+        else who = it.kind + ":n" + WatchNext.normalize(it.title);
+        return rowKey + "|" + who;
+    }
+
+    /** REMOVE where Trakt has a plain "take it off" for this tile (the watchlist, a paused play); HIDE for the rest. */
+    int actionFor(String rowKey, Item it) {
+        if (it.launch != null || it.traktId <= 0 || !Trakt.get(context).canWrite()) return HIDE;
+        if (Trakt.WATCHLIST.equals(rowKey)) return REMOVE;
+        if (Trakt.CONTINUE.equals(rowKey) && it.playbackId > 0) return REMOVE;
+        return HIDE;
+    }
+
+    /**
+     * Does what actionFor says. `done` (main thread) gets Trakt.DONE, Trakt.FAILED, or HIDDEN when the tile was hidden
+     * here, including when Trakt refused the removal (then it won't offer Remove again).
+     */
+    void act(String rowKey, Item it, java.util.function.IntConsumer done) {
+        if (actionFor(rowKey, it) == HIDE) {
+            hide(rowKey, it);
+            done.accept(HIDDEN);
+            return;
+        }
+        java.util.function.IntConsumer after = r -> {
+            if (r == Trakt.DENIED) {
+                hide(rowKey, it);
+                done.accept(HIDDEN);
+                return;
+            }
+            // A paused play off the list may leave the show as its next episode; hiding it keeps it gone until it is watched again.
+            if (r == Trakt.DONE && Trakt.CONTINUE.equals(rowKey)) hide(rowKey, it);
+            done.accept(r);
+        };
+        if (Trakt.WATCHLIST.equals(rowKey)) Trakt.get(context).removeFromWatchlist(it, after);
+        else Trakt.get(context).removePlayback(it, after);
+    }
+
+    /**
+     * Whether "Mark as watched" is offered: a movie in Continue Watching or the Watchlist, or the episode a Continue Watching
+     * tile stands for. Not whole shows (that would mark every episode), nor the TV's apps' tiles (they can't be told).
+     */
+    boolean canMark(String rowKey, Item it) {
+        if (it.launch != null || it.traktId <= 0 || !Trakt.get(context).canWrite()) return false;
+        if ("tv".equals(it.kind)) return Trakt.CONTINUE.equals(rowKey) && it.markSeason > 0 && it.markEpisode > 0;
+        return Trakt.CONTINUE.equals(rowKey) || Trakt.WATCHLIST.equals(rowKey);
+    }
+
+    /** Marks the tile watched on Trakt. `done` (main thread) gets Trakt.DONE, DENIED or FAILED. */
+    void mark(String rowKey, Item it, java.util.function.IntConsumer done) {
+        Trakt.get(context).markWatched(rowKey, it, done);
+    }
+
+    private void hide(String rowKey, Item it) {
+        // Not before the tile's own last activity (Trakt's clock, not the TV's): only newer activity brings it back.
+        Prefs.hideTile(hideKey(rowKey, it), Math.max(System.currentTimeMillis(), it.at));
+        rebuild();
+        notifyListeners();
+    }
+
+    void unhideAll() {
+        Prefs.unhideAllTiles();
+        rebuild();
+        notifyListeners();
+    }
+
+    /** The rows without what the person hid, unless it has been watched since. New rows: the ones given are not touched. */
+    private List<Row> withoutHidden(List<Row> all) {
+        Map<String, Long> hidden = Prefs.hiddenTiles();
+        if (hidden.isEmpty()) return all;
+        List<Row> out = new ArrayList<>();
+        for (Row row : all) {
+            Row kept = new Row();
+            kept.key = row.key;
+            kept.title = row.title;
+            for (Item it : row.items) {
+                Long at = hidden.get(hideKey(row.key, it));
+                if (at == null || it.at > at) kept.items.add(it);
+            }
+            if (!kept.items.isEmpty()) out.add(kept);
+        }
+        return out;
     }
 
     /** Trakt's list already has the title: by TMDB id when both know it, else by name. */

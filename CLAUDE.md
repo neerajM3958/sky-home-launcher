@@ -158,6 +158,15 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   Both Watch Next rows follow `Prefs.watchNext`. `TmdbEpisodes` keeps the last 30 show lists and displays a saved list before
   refreshing it. Same-name search results use a year when the provider title contains one; unresolved ambiguity leaves the
   show out. `EpisodeList.Episode.resume` marks the resume row and matching episode; keep these outside `EpisodeList.all`.
+- Holding OK on a poster of Continue Watching, Shows you watch or Watchlist opens a one-action menu beside it (`HomeView.openTileMenu`,
+  on the input popover): *Remove* where Trakt has a plain take-off (`Trakt.removeFromWatchlist`, `removePlayback`: `DELETE /sync/playback/{id}`,
+  `Item.playbackId`), else *Hide*: `Prefs.hiddenTiles` (key from `Catalogs.hideKey`, per row, with the time), filtered last in
+  `Catalogs.rebuild()`; a tile returns when its activity (`Item.at`) is newer than the hide. Nothing is written to Trakt's hidden or dropped lists
+  or its history. If Trakt refuses a change (401/403), `writeDenied` is kept in the `trakt` prefs until the next sign-in and the menu offers *Hide*.
+  *Home Settings > Reset hidden titles* clears the list. A second row, *Mark as watched* (`Catalogs.canMark`, `Trakt.markWatched`:
+  `POST /sync/history` with the movie, or the episode in `Item.markSeason`/`markEpisode`), is offered for movies in Continue Watching
+  and the Watchlist and for Continue Watching's episodes, never for whole shows or the TV's apps' tiles; it also takes the paused play
+  and the watchlist entry off, and fetches the lists again so the next episode shows up.
 - *Remote Buttons > Added buttons* lets the person add any button: the screen asks `RemoteKeyService` (the only place that sees
   keys no app gets) through two small files (`remote-learn.req`, `.res`) for the next key that isn't needed to move around
   (`RemoteKeys.needed`), saved as `learn=` lines in `remote-keys.txt` by key code and scan code, and works on any brand. The
