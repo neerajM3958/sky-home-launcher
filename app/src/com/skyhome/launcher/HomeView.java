@@ -36,7 +36,6 @@ import android.view.accessibility.AccessibilityNodeProvider;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -97,7 +96,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float GRID_W = 300, GRID_H = 169, GRID_GAP = 40, GRID_ROW = 239, GRID_TOP = 196, GRID_RADIUS = 22;
     private static final int SMOKE = 0xFF111113, INK = 0xFF1C1C1E, WHITE = 0xFFF5F5F7;
     private static final int UP_COLOR = 0xFF30D158, DOWN_COLOR = 0xFFFF453A;
-    private static final long TOAST_MS = 6000, FADE_MS = 800;
+    private static final long FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
     // The input popover (1920-wide units): the panel's width, its rows, and the layer that holds it with room for the shadow.
@@ -261,10 +260,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int gridIndex;
     private long toggledAt;
 
-    // Toasts
-    private final ArrayDeque<String> toasts = new ArrayDeque<>();
-    private StaticLayout toast;
-    private long toastAt;
+    // Toasts (HomeToasts)
+    private final HomeToasts toasts;
 
     // Frames
     private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
@@ -285,7 +282,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint labelPaint, metaPaint, clockPaint, buttonPaint, tipPaint, quotePaint, staleQuote;
     private Paint rowTitle, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
     private Paint pricePaint, changePaint, sheetTitle;
-    private TextPaint gridLabel, toastPaint;
+    private TextPaint gridLabel;
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint imagePaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -351,7 +348,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case BROWSE: catalogPage.draw(c); break;
                 case SHEET: drawSheet(c); break;
                 case POP: drawPopover(c); break;
-                default: drawToast(c); break;
+                default: toasts.draw(c); break;
             }
             scene.setOffset(0, 0);
         }
@@ -441,6 +438,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer = new Layer(a, SHEET);
         popLayer = new Layer(a, POP);
         toastLayer = new Layer(a, TOAST);
+        toasts = new HomeToasts(this, scene, toastLayer);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
@@ -733,7 +731,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetTitle.setTextAlign(Paint.Align.CENTER);
         gridLabel = new TextPaint(Ui.text(Ui.medium, 24 * k, 0x99FFFFFF));
         gridLabel.setTextAlign(Paint.Align.CENTER);
-        toastPaint = new TextPaint(Ui.text(Ui.medium, 26 * k, 0xF2FFFFFF));
+        toasts.layout(k, w);
         shadow.setMaskFilter(new BlurMaskFilter(SHADOW_BLUR * k, BlurMaskFilter.Blur.NORMAL));
         shadowSoft.setMaskFilter(new BlurMaskFilter(12 * k, BlurMaskFilter.Blur.NORMAL));
         shadowDeep.setMaskFilter(new BlurMaskFilter(DEEP_BLUR * k, BlurMaskFilter.Blur.NORMAL));
@@ -765,7 +763,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean widgetsMoving = widgetsPage.tick(dt);
         boolean catMoving = watchingPage.tick(dt);
         boolean browseMoving = catalogPage.tick(dt);
-        boolean toastFading = tickToast(up);
+        boolean toastFading = toasts.tick(up);
         heroMoving |= tickCards(up);
         heroMoving |= carousel.step(dt);
         boolean bgFading = tickBackgroundFade(up);
@@ -801,7 +799,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Busy: something is moving, or the sheet or a page under the first is open.
         boolean busy = tilesMoving || heroMoving || gridMoving || pagerMoving
                 || sheetMoving || popMoving || popOpen || widgetsMoving || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || pager.current() != topSlot || toast != null || !toasts.isEmpty();
+                || pager.current() != topSlot || toasts.busy();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
@@ -1023,7 +1021,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (bgFadeAt == 0) return false;
         float e = fadeEase(bgFadeAt, up);
         if (bgTo != null && bgFrom != null && glassOf(bgFrom) != null && glassOf(bgTo) != null) {
-            if (drawerLayer.getVisibility() == VISIBLE || toast != null) {
+            if (drawerLayer.getVisibility() == VISIBLE || toasts.onScreen()) {
                 int[] from = frostOf(bgFrom), to = frostOf(bgTo);
                 for (int i = 0; i < frostMix.length; i++) frostMix[i] = mix(from[i], to[i], e);
                 scene.setFrost(frostMix);
@@ -2156,57 +2154,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Toasts
 
     void showToast(String text) {
-        toasts.add(text);
+        toasts.show(text);
         announceForAccessibility(text);
         wake();
-    }
-
-    /** Advances the toast queue; returns true while a toast fades in or out (animation). */
-    private boolean tickToast(long up) {
-        if (toast != null && up - toastAt > TOAST_MS) {
-            toast = null;
-            toastLayer.invalidate();
-        }
-        if (toast == null && toastPaint != null) {
-            String next = toasts.poll();
-            if (next != null) {
-                toast = layout(next);
-                toastAt = up;
-            }
-        }
-        if (toast == null) return false;
-        long age = up - toastAt;
-        boolean fading = age < 350 || age > TOAST_MS - 450;
-        if (fading) toastLayer.invalidate();
-        return fading;
-    }
-
-    private void drawToast(Canvas c) {
-        if (toast == null) return;
-        float age = (SystemClock.uptimeMillis() - toastAt) / 1000f;
-        float a = Math.min(Ui.clamp(age / 0.3f), Ui.clamp((TOAST_MS / 1000f - age) / 0.4f));
-        if (a <= 0) return;
-        float padX = 28 * k, padY = 18 * k, icon = 26 * k, iconW = Symbols.width(getContext(), "bell", icon);
-        float tw = toast.getWidth() + iconW + 16 * k, th = toast.getHeight();
-        float toastTop = 64 * k - (1 - a) * 16 * k;
-        tmp.set((w - tw) / 2f - padX, toastTop, (w + tw) / 2f + padX, toastTop + th + 2 * padY);
-        int save = c.saveLayerAlpha(tmp.left - 4, tmp.top - 4, tmp.right + 4, tmp.bottom + 4, Math.round(255 * a));
-        float radius = Math.min(tmp.height() / 2, 32 * k);
-        if (!look.toast(c, tmp, radius, dark())) scene.glass(c, tmp, radius, SMOKE, 0.55f, 0, 0, 0.02f, 1);
-        toastPaint.setColor(look.toastInk(dark()));
-        Symbols.draw(getContext(), c, "bell", tmp.left + padX + iconW / 2, tmp.centerY(), icon, toastPaint.getColor());
-        c.translate(tmp.left + padX + iconW + 16 * k, tmp.top + padY);
-        toast.draw(c);
-        c.restoreToCount(save);
-    }
-
-    private StaticLayout layout(String text) {
-        int max = Math.round(720 * k);
-        int width = (int) Math.min(max, Math.ceil(Layout.getDesiredWidth(text, toastPaint)));
-        return StaticLayout.Builder.obtain(text, 0, text.length(), toastPaint, Math.max(1, width))
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .build();
     }
 
     /** New notices from the main process (mode switches, the check after the TV boots): those from the last 24 h. */
