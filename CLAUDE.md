@@ -10,6 +10,9 @@ renamed throughout, and with LG/Samsung support and the companion website droppe
 Before you push, run `tools/check.sh`: the Google TV build and `translate.py --check`. Every pull request runs it
 too (`.github/workflows/check.yml`).
 
+Python: on Windows run it as `py` (there's no `python3` there), e.g. `py tools/translate.py --check`. `tools/check.sh`
+calls `python3`, so on Windows its translation check fails with "Python was not found": run that line with `py`.
+
 The person you're helping may not be technical. Keep it short and friendly, say what you're about to do on their TV
 before you do it, and let them do the taps on the TV.
 

@@ -7,7 +7,7 @@ position moves others (Spotlight's shelf is placed from the catalog's row 0: `la
 slow and risky. This plan splits it into pages on a small layout framework, so each page lays itself out on its own
 and a change in one cannot move another.
 
-Status (2026-10-31): steps 1 and 2 done (baseline: Skyworth 4K Google TV Stick, Android 14, Spotlight + Material look, 94.8% janky frames, 90th percentile 121 ms; the moving background redraws ten times a second, so the absolute numbers are high on this stick).
+Status (2026-11-01): steps 1, 2, 3 and 5 done (3 and 5 together: the framework was built for page 4, its first user). Baseline: Skyworth 4K Google TV Stick, Android 14, Spotlight + Material look, 94.8% janky frames, 90th percentile 121 ms; the moving background redraws ten times a second, so the absolute numbers are high on this stick. Not yet in the framework: the pager and `HomeLayer` (step 7); `drawPoster`, `drawCard` and `roundImage` are still `HomeView` methods the pages call (they move to a shared painter in step 6, when page 3 needs them too).
 
 ## The pages
 
@@ -124,7 +124,7 @@ Each one gives its rows and nodes to the page's column. The 33 `spotlightOn()` c
 
 ### Guard rails (so a change doesn't break something else)
 
-- **`Layout.check(page)`** runs after every layout. It logs (`AppLog.w`) any two sibling nodes that overlap, and any
+- **`LayoutCheck.check(page)` (not `Layout`: HomeView already imports `android.text.Layout`)** runs after every layout. It logs (`AppLog.w`) any two sibling nodes that overlap, and any
   node outside the safe area that isn't marked `bleed` (the backdrop and Spotlight's photo are). It's cheap, and it
   doesn't run per frame.
 - **The bounds view.** `adb shell setprop debug.skyhome.bounds 1`, then reinstall: every node draws its frame outline
@@ -185,8 +185,8 @@ screenshots to the step before. Every step is its own commit, so any one can be 
    - the `WIDGETS` zone (TalkBack's way to the drawer cards; page 2's widgets become a focus row instead).
 
    Expected result: no visible change.
-3. **Framework.** Add `HomeGrid`, `Node`, `Column`/`Row`, `FocusRow`, `HomeLayer`, `HomePage`, the pager,
-   `Layout.check` and the bounds view. Nothing uses them yet.
+3. **Framework.** Add `HomeGrid`, `Node`, `Stack` (row and column), `FocusRow`, `HomeLayer`, `HomePage`, the pager,
+   `LayoutCheck` and the bounds view. Done together with step 5.
 4. **Overlays out:** `AppsSheet`, `Popover`, `Toasts`. No visible change.
 5. **Page 4, `HomeCatalogPage`,** with `PosterRow`: browse, details, backdrop cross-fade, trailer and its listener.
    This is the most self-contained part today. `HomeView` routes `Z_BROWSE` to it.
@@ -203,7 +203,7 @@ screenshots to the step before. Every step is its own commit, so any one can be 
 
 ## What to check on the TV (each step from 5)
 
-- **Every page in each picks style and look, by day and by night.** No overlaps, and `Layout.check` logs nothing.
+- **Every page in each picks style and look, by day and by night.** No overlaps, and `LayoutCheck` logs nothing.
 - **Moving around:** Up and Down through every row and page and back; Left and Right at both ends of every row; Back
   from every page.
 - **Hold OK:** on a shelf app (reorder), in All Apps (shelf toggle), on a poster (menu), and on page 4 (trailer).
