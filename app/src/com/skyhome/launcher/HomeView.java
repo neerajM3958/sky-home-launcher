@@ -88,9 +88,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // poster row above the shelf. Positions tuned on-TV, not fixed by a grid. Posters are TMDB poster art (2:3, the
     // title baked in); the row scrolls (spotlightRowShift) instead of re-sorting the focused pick to the front, and
     // draws one column past SPOTLIGHT_VISIBLE so the next one peeks in. The shelf is at the foot of the page, as in
-    // Cards, so the title and the row sit 150 higher than when the shelf lived on the page below.
-    private static final float SPOTLIGHT_TITLE_Y = 376, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_Y = 502,
-            SPOTLIGHT_ROW_TOP = 526, SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20;
+    // Cards: the block rests on it (placeTop), and the title and heading hang from the row's top.
+    private static final float SPOTLIGHT_TITLE_ABOVE = 150, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_ABOVE = 24,
+            SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20;
     private static final int SPOTLIGHT_VISIBLE = 11;
     // "All Apps" sheet.
     private static final int COLUMNS = 5, VISIBLE_ROWS = 3;
@@ -339,7 +339,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             shadows.dither = dark() > 0.5f;
             switch (kind) {
                 case SKY: drawSky(c); break;
-                case HERO: drawLightTop(c); break;
+                case HERO:
+                    drawLightTop(c);
+                    LayoutCheck.drawBounds(c, topRoot, k);
+                    break;
                 case STATUS: drawLightButtons(c); break;
                 case PLATTER: drawPlatter(c); break;
                 case TILES: drawTiles(c); break;
@@ -1119,22 +1122,69 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void layoutShelf() {
         int n = shelf.size();
-        float pad = SHELF_PAD * k, side = look.m.shelfPad * k, gap = look.m.shelfGap * k;
+        float gap = look.m.shelfGap * k;
         float full = (CONTENT_R - MARGIN) * k;
         // Tiles in the TV banners' own 16:9, so an app's art is never stretched; never taller than L_TILE_H. The glass
         // keeps its bottom edge, so with more apps it only gets lower.
         float fit = (full - Math.max(0, n - 1) * gap) / Math.max(1, n);
-        float tw = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
-        float th = tw * 9f / 16;
-        float width = n * tw + Math.max(0, n - 1) * gap, left = look.m.shelfFill ? MARGIN * k : (w - width) / 2f;
-        float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
+        shelfTileW = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
+        shelfTileH = shelfTileW * 9f / 16;
+        crispLogos.clear();
+        placeTop();
+    }
+
+    // MARK: - Page 1's layout: one column (top bar, tabs, cards or Spotlight's block, shelf) placed by nodes
+
+    /** Spotlight's block, its poster row's foot `SPOTLIGHT_SHELF_GAP` above the shelf's glass (1920-wide units). */
+    private static final float SPOTLIGHT_BLOCK_H = 500, SPOTLIGHT_SHELF_GAP = 52;
+    /** Below the shelf's glass, to the screen's foot. */
+    private static final float SHELF_FOOT = 60;
+    private float shelfTileW, shelfTileH;
+    /** Spotlight's poster row's top now (pixels): its heading and the title hang from it. */
+    private float spotlightRowTop;
+    private Node topRoot, tabsNode, cardsNode, spotlightNode, shelfNode;
+
+    /**
+     * Page 1 as one column between the margins: the top bar (weather and buttons) down to the tabs; in Cards the tabs,
+     * then the cards; in Spotlight its title, heading and poster row, resting on the shelf; the shelf at the foot. The
+     * shelf, tabs, cards and Spotlight's row are placed from the nodes, and LayoutCheck logs any two that overlap.
+     */
+    private void placeTop() {
+        if (w == 0) return;
+        Look.Metrics m = look.m;
+        boolean cardsStyle = picksOn() && !Prefs.spotlightOn(), spotlight = picksOn() && Prefs.spotlightOn();
+        float platterH = shelf.isEmpty() ? 0 : shelfTileH + 2 * SHELF_PAD * k;
+        tabsNode = new Node("tabs").size(Node.FILL, m.tabH * k).when(cardsStyle);
+        cardsNode = new Node("cards").size(Node.FILL, m.cardH * k).when(cardsStyle);
+        spotlightNode = new Node("spotlight").size(Node.FILL, SPOTLIGHT_BLOCK_H * k).when(spotlight);
+        shelfNode = new Node("shelf").size(Node.FILL, platterH).when(!shelf.isEmpty());
+        Node column = Stack.column("page 1", 0,
+                Node.space(0, HomeGrid.SAFE_TOP * k),
+                new Node("weather and buttons").size(Node.FILL, (m.tabTop - HomeGrid.SAFE_TOP) * k),
+                tabsNode,
+                Node.space(0, (m.cardsTop - m.tabTop - m.tabH) * k).when(cardsStyle),
+                cardsNode,
+                Node.space(0, 0).flex(),
+                spotlightNode,
+                Node.space(0, SPOTLIGHT_SHELF_GAP * k).when(spotlight),
+                shelfNode,
+                Node.space(0, SHELF_FOOT * k)).flex();
+        topRoot = Stack.row("top", 0, Node.space(MARGIN * k, 0), column, Node.space((HomeGrid.W - CONTENT_R) * k, 0));
+        topRoot.place(0, 0, w, h);
+        LayoutCheck.check("top", topRoot, new RectF(MARGIN * k, HomeGrid.SAFE_TOP * k, CONTENT_R * k, HomeGrid.SAFE_BOTTOM * k));
+        spotlightRowTop = spotlightNode.frame.bottom - SPOTLIGHT_POSTER_H * k;
+        // The shelf: the glass is the node; the tiles sit inside it, centred (or from the margin when they fill it).
+        int n = shelf.size();
+        float pad = SHELF_PAD * k, side = m.shelfPad * k, gap = m.shelfGap * k, tw = shelfTileW, th = shelfTileH;
+        float width = n * tw + Math.max(0, n - 1) * gap, left = m.shelfFill ? MARGIN * k : (w - width) / 2f;
+        float top = shelfNode.frame.top;
         platterRect.set(left - side, top, left + width + side, top + th + 2 * pad);
         float x = left, y = top + pad;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n && i < tileRects.length; i++) {
             tileRects[i].set(x, y, x + tw, y + th);
             x += tw + gap;
         }
-        crispLogos.clear();
+        layoutLight();
     }
 
     /** Shelf layer: the glass bar and its shadow (it only changes with the background). */
@@ -2981,7 +3031,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (lTab == null) return;
         // Text tabs; the focus pill extends 26 px past the text (the first tab's text starts at the margin).
         Look.Metrics m = look.m;
-        float pad = m.tabPad * k, tabTop = m.tabTop * k, tabBottom = (m.tabTop + m.tabH) * k;
+        // The tabs' and cards' tops are their nodes' (placeTop); before the first layout, the look's own.
+        boolean placed = tabsNode != null && tabsNode.visible();
+        float pad = m.tabPad * k, tabTop = placed ? tabsNode.frame.top : m.tabTop * k, tabBottom = tabTop + m.tabH * k;
         float icon = m.tabIcon > 0 ? (m.tabIcon + 14) * k : 0;
         float x = MARGIN * k - pad;
         for (int i = 0; i < 3; i++) {
@@ -2994,7 +3046,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             topRects[3 + i].set(right - b, cy - b / 2, right, cy + b / 2);
             right -= b + m.buttonGap * k;
         }
-        float top = m.cardsTop * k, ch = m.cardH * k, g = m.cardGap * k, left = MARGIN * k, tall = m.tallW * k;
+        float top = placed ? cardsNode.frame.top : m.cardsTop * k, ch = m.cardH * k, g = m.cardGap * k, left = MARGIN * k, tall = m.tallW * k;
         float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g;
         cardRects[0].set(left, top, left + wide, top + ch);
         cardRects[1].set(cardRects[0].right + g, top, cardRects[0].right + g + tall, top + ch);
@@ -3517,15 +3569,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // block grows upward); only a title too long for two lines is cut with an ellipsis.
             float lineH = 72 * k;
             for (int i = 0; i < wrapLineCount; i++)
-                c.drawText(wrapLines[i], MARGIN * k, SPOTLIGHT_TITLE_Y * k - (wrapLineCount - 1 - i) * lineH, lSpotlightTitle);
+                c.drawText(wrapLines[i], MARGIN * k, spotlightRowTop - SPOTLIGHT_TITLE_ABOVE * k - (wrapLineCount - 1 - i) * lineH, lSpotlightTitle);
             if (focused.meta != null && !focused.meta.isEmpty()) {
                 fitPaint.set(lSpotlightMeta);
                 String meta = TextUtils.ellipsize(focused.meta, fitPaint, titleW, TextUtils.TruncateAt.END).toString();
-                c.drawText(meta, MARGIN * k, (SPOTLIGHT_TITLE_Y + SPOTLIGHT_META_GAP) * k, lSpotlightMeta);
+                c.drawText(meta, MARGIN * k, spotlightRowTop + (SPOTLIGHT_META_GAP - SPOTLIGHT_TITLE_ABOVE) * k, lSpotlightMeta);
             }
         }
-        c.drawText(Ui.tr("Top picks for you"), MARGIN * k, SPOTLIGHT_HEADING_Y * k, lSpotlightHeading);
-        float x0 = MARGIN * k, top = SPOTLIGHT_ROW_TOP * k, pw = SPOTLIGHT_POSTER_W * k, ph = SPOTLIGHT_POSTER_H * k,
+        c.drawText(Ui.tr("Top picks for you"), MARGIN * k, spotlightRowTop - SPOTLIGHT_HEADING_ABOVE * k, lSpotlightHeading);
+        float x0 = MARGIN * k, top = spotlightRowTop, pw = SPOTLIGHT_POSTER_W * k, ph = SPOTLIGHT_POSTER_H * k,
                 gap = SPOTLIGHT_POSTER_GAP * k, r = TILE_RADIUS * k;
         // Circular: one column peeks in at the *start* too, not just the end (the row never runs out in either
         // direction), so the window is one wider on the left than Cards-era code needed.

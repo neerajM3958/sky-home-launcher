@@ -27,6 +27,7 @@ class Node {
     boolean flex;
     /** May reach outside the safe area: a full-screen backdrop, a row that slides off screen. */
     boolean bleed;
+    private boolean shown = true;
     private Painter painter;
 
     Node(String name) {
@@ -61,9 +62,15 @@ class Node {
         return this;
     }
 
+    /** Shown only `when` (a style or a setting that has it): hidden, it takes no room and draws nothing. */
+    Node when(boolean when) {
+        shown = when;
+        return this;
+    }
+
     /** A hidden node takes no room and draws nothing, so its neighbours need no `if` for it. */
     boolean visible() {
-        return true;
+        return shown;
     }
 
     float prefW() {
