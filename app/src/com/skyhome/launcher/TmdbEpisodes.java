@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.TmdbApi;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -59,8 +60,7 @@ final class TmdbEpisodes {
     }
 
     private List<EpisodeList.Episode> fetch(int id) throws Exception {
-        Recs recs = Recs.get(context);
-        JSONObject show = recs.get("/tv/" + id + "?language=" + Recs.lang());
+        JSONObject show = TmdbApi.get(Prefs.tmdbKey(), "/tv/" + id + "?language=" + Recs.lang());
         int seasons = show.optInt("number_of_seasons");
         int count = seasons + 1;        // Season 0 contains specials.
         List<EpisodeList.Episode> out = new ArrayList<>();
@@ -74,7 +74,7 @@ final class TmdbEpisodes {
                 if (season > start) path.append(',');
                 path.append("season/").append(season);
             }
-            JSONObject response = recs.get(path.toString());
+            JSONObject response = TmdbApi.get(Prefs.tmdbKey(), path.toString());
             for (int seasonNumber = start; seasonNumber < end; seasonNumber++) {
                 JSONObject season = response.optJSONObject("season/" + seasonNumber);
                 JSONArray episodes = season == null ? null : season.optJSONArray("episodes");

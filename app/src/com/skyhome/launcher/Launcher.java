@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.TmdbApi;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -281,7 +282,7 @@ final class Launcher {
     }
 
     private Info fetch(String kind, int id) throws Exception {
-        return parse(recs.get("/" + kind + "/" + id + "?append_to_response=watch/providers,external_ids"));
+        return parse(TmdbApi.get(Prefs.tmdbKey(), "/" + kind + "/" + id + "?append_to_response=watch/providers,external_ids"));
     }
 
     private static Info parse(JSONObject o) {

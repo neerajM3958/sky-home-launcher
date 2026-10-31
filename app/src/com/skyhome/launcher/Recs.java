@@ -1,5 +1,8 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
+import com.skyhome.launcher.api.TmdbApi;
+import com.skyhome.launcher.api.WatchmodeApi;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -10,14 +13,10 @@ import android.os.Looper;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -57,7 +56,6 @@ final class Recs {
 
     interface Listener { void onRecs(); }
 
-    private static final String API = "https://api.themoviedb.org/3";
     /** The backdrops: on a 720p UI, TMDB's 1280-wide copy shows the same and is lighter to download and decode. */
     private static final String IMAGES = "https://image.tmdb.org/t/p/" + (Backdrop.W <= 1280 ? "w1280" : "original");
     /** TMDB's Animation genre (movies and shows: cartoons and anime), left out with hide_animation=true. */
@@ -214,7 +212,7 @@ final class Recs {
         File f = new File(c.getFilesDir(), "recs-status.json");
         if (!f.exists() || !hasKey(c)) return new JSONObject();
         try (FileInputStream in = new FileInputStream(f)) {
-            return new JSONObject(read(in));
+            return new JSONObject(Http.read(in));
         } catch (Exception e) {
             return new JSONObject();
         }
@@ -683,15 +681,15 @@ final class Recs {
         //    filtered to the TV's services: one request each. The details (which service, runtime) come later, only for
         //    the titles that are shown.
         List<Pick> hotMovies = new ArrayList<>(), hotShows = new ArrayList<>();
-        JSONArray hotM = get("/discover/movie?vote_count.gte=100" + common).getJSONArray("results");
-        JSONArray hotS = get("/discover/tv?vote_count.gte=50" + common).getJSONArray("results");
+        JSONArray hotM = TmdbApi.get(Prefs.tmdbKey(), "/discover/movie?vote_count.gte=100" + common).getJSONArray("results");
+        JSONArray hotS = TmdbApi.get(Prefs.tmdbKey(), "/discover/tv?vote_count.gte=50" + common).getJSONArray("results");
         for (int i = 0; i < hotM.length(); i++) add(hotMovies, hotM.getJSONObject(i), "movie");
         for (int i = 0; i < hotS.length(); i++) add(hotShows, hotS.getJSONObject(i), "tv");
         // 2. Recent releases on the TV's services: movies from the past year and shows with a new episode in the
         //    past 3 months.
-        JSONArray movies = get("/discover/movie?vote_count.gte=30&primary_release_date.gte=" + day(-365)
+        JSONArray movies = TmdbApi.get(Prefs.tmdbKey(), "/discover/movie?vote_count.gte=30&primary_release_date.gte=" + day(-365)
                 + "&primary_release_date.lte=" + day(0) + common).getJSONArray("results");
-        JSONArray shows = get("/discover/tv?vote_count.gte=20&air_date.gte=" + day(-90) + "&air_date.lte=" + day(0)
+        JSONArray shows = TmdbApi.get(Prefs.tmdbKey(), "/discover/tv?vote_count.gte=20&air_date.gte=" + day(-90) + "&air_date.lte=" + day(0)
                 + common).getJSONArray("results");
         List<Pick> newMovies = new ArrayList<>(), newShows = new ArrayList<>();
         for (int i = 0; i < movies.length(); i++) add(newMovies, movies.getJSONObject(i), "movie");
@@ -752,7 +750,7 @@ final class Recs {
         for (String[] s : SERVICES) any |= installed(s[2]);
         if (!any) throw new IOException(NO_KNOWN_APPS);
         Map<Integer, String[]> services = new HashMap<>();
-        JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
+        JSONArray providers = TmdbApi.get(Prefs.tmdbKey(), "/watch/providers/movie?language=" + lang() + "&watch_region=" + region()).getJSONArray("results");
         for (int i = 0; i < providers.length(); i++) {
             JSONObject o = providers.getJSONObject(i);
             String[] s = service(o.optString("provider_name"), o.optInt("provider_id"));
@@ -841,7 +839,7 @@ final class Recs {
     /** Several requests at once (four at a time); the answers come back in the order of the paths. */
     JSONObject[] getAll(String... paths) throws Exception {
         List<java.util.concurrent.Future<JSONObject>> pending = new ArrayList<>();
-        for (String path : paths) pending.add(net.submit(() -> get(path)));
+        for (String path : paths) pending.add(net.submit(() -> TmdbApi.get(Prefs.tmdbKey(), path)));
         JSONObject[] out = new JSONObject[paths.length];
         for (int i = 0; i < out.length; i++) {
             try {
@@ -993,7 +991,7 @@ final class Recs {
      * it at once, with no request of its own).
      */
     private void fetchBackdrop(Pick p) throws Exception {
-        JSONObject o = get("/" + p.kind + "/" + p.id + "?append_to_response=images,watch/providers,external_ids&include_image_language=null");
+        JSONObject o = TmdbApi.get(Prefs.tmdbKey(), "/" + p.kind + "/" + p.id + "?append_to_response=images,watch/providers,external_ids&include_image_language=null");
         String best = bestBackdrop(o.optJSONObject("images"));
         if (best != null) p.backdrop = best;
         p.detailed = true;
@@ -1006,7 +1004,7 @@ final class Recs {
             fetchBackdrop(p);
             return;
         }
-        JSONObject o = get("/" + p.kind + "/" + p.id
+        JSONObject o = TmdbApi.get(Prefs.tmdbKey(), "/" + p.kind + "/" + p.id
                 + "?language=" + lang() + "&append_to_response=watch/providers,images,external_ids&include_image_language=null," + Ui.language.replaceAll("-.*", "") + ",en");
         p.title = title(p, o);
         String best = bestBackdrop(o.optJSONObject("images"));
@@ -1056,7 +1054,7 @@ final class Recs {
         if (lang.equals("en") || own.isEmpty() || !own.equals(o.optString("original_" + field))
                 || lang.equals(original) || "en".equals(original)) return own;
         try {
-            String english = get("/" + p.kind + "/" + p.id + "?language=en-US").optString(field);
+            String english = TmdbApi.get(Prefs.tmdbKey(), "/" + p.kind + "/" + p.id + "?language=en-US").optString(field);
             return english.isEmpty() ? own : english;
         } catch (Exception e) {
             return own;
@@ -1170,10 +1168,10 @@ final class Recs {
         if (System.currentTimeMillis() < linkRetryAt) return null;
         try {
             String link = "";
-            JSONArray found = new JSONObject(watchmode("/search/?search_field=tmdb_" + kind + "_id&search_value=" + id))
+            JSONArray found = new JSONObject(WatchmodeApi.get(Prefs.watchmodeKey(), "/search/?search_field=tmdb_" + kind + "_id&search_value=" + id))
                     .optJSONArray("title_results");
             if (found != null && found.length() > 0) {
-                JSONArray sources = new JSONArray(watchmode("/title/" + found.getJSONObject(0).getInt("id") + "/sources/?regions=" + region()));
+                JSONArray sources = new JSONArray(WatchmodeApi.get(Prefs.watchmodeKey(), "/title/" + found.getJSONObject(0).getInt("id") + "/sources/?regions=" + region()));
                 String[] service = null;
                 for (String[] s : SERVICES) if (s[1].equals(serviceKey)) service = s;
                 int best = Integer.MAX_VALUE;
@@ -1195,7 +1193,7 @@ final class Recs {
             cache.edit().putString("wm2:" + kind + id + serviceKey, link).apply();
             return link.isEmpty() ? null : link;
         } catch (Exception e) {
-            if ("Watchmode returned HTTP 401".equals(e.getMessage())) {
+            if (e instanceof IOException && Http.code((IOException) e) == 401) {
                 cache.edit().putInt("wm:refused", Prefs.watchmodeKey().hashCode()).apply();
             }
             linkRetryAt = System.currentTimeMillis() + 10 * 60_000L;   // quota or network: not again right away
@@ -1208,46 +1206,6 @@ final class Recs {
     static String serviceKeyOf(String pkg) {
         for (String[] s : SERVICES) if (s[2].equals(pkg)) return s[1];
         return null;
-    }
-
-    private static String watchmode(String path) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL("https://api.watchmode.com/v1" + path + (path.contains("?") ? "&" : "?")
-                + "apiKey=" + URLEncoder.encode(Prefs.watchmodeKey(), "UTF-8")).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(10000);
-        try {
-            int code = c.getResponseCode();
-            if (code != 200) throw new IOException("Watchmode returned HTTP " + code);
-            return read(c.getInputStream());
-        } finally {
-            c.disconnect();
-        }
-    }
-
-    /** A TMDB request (the key is added); Launcher asks for a title's streaming services with it. */
-    JSONObject get(String path) throws IOException, org.json.JSONException {
-        String key = readKey();
-        if (key == null) throw new IOException("no TMDB key");
-        boolean bearer = key.startsWith("eyJ");   // read access token (v4) or API key (v3)
-        String url = API + path + (bearer ? "" : (path.contains("?") ? "&" : "?") + "api_key=" + URLEncoder.encode(key, "UTF-8"));
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(8000);
-        c.setRequestProperty("Accept", "application/json");
-        if (bearer) c.setRequestProperty("Authorization", "Bearer " + key);
-        try {
-            int code = c.getResponseCode();
-            if (code == 401) throw new IOException("TMDB rejected the key");
-            if (code != 200) throw new IOException("TMDB returned HTTP " + code);
-            return new JSONObject(read(c.getInputStream()));
-        } finally {
-            c.disconnect();
-        }
-    }
-
-    private String readKey() {
-        String key = Prefs.tmdbKey();
-        return key.isEmpty() ? null : key;
     }
 
     // MARK: - Images (built once, kept on disk at the size drawn; the ones near the focus kept ready in memory)
@@ -1287,24 +1245,8 @@ final class Recs {
 
     /** Downloads to `part` (a file of its own), or throws. */
     private static File download(String url, File part) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(20000);
-        try {
-            if (c.getResponseCode() != 200) throw new IOException("image: HTTP " + c.getResponseCode());
-            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-                byte[] buffer = new byte[16384];
-                int n;
-                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-            }
-            return part;
-        } catch (IOException e) {
-            //noinspection ResultOfMethodCallIgnored
-            part.delete();
-            throw e;
-        } finally {
-            c.disconnect();
-        }
+        Http.to(url).timeouts(8000, 20000).label("image").download(part);
+        return part;
     }
 
     /** Decodes at the smallest power-of-two reduction still at least `width` wide. */
@@ -1505,13 +1447,5 @@ final class Recs {
             out.add(p);
         }
         return out;
-    }
-
-    private static String read(InputStream in) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int n;
-        while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-        return out.toString(StandardCharsets.UTF_8.name());
     }
 }

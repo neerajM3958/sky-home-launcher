@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.TmdbApi;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -214,7 +215,7 @@ final class WatchNext {
         }
         try {
             String query = title.replaceAll("\\(\\d{4}\\)\\s*$", "").trim();     // TMDB's search finds nothing with the year still in the text
-            JSONObject r = Recs.get(c).get("/search/" + kind + "?query=" + URLEncoder.encode(query, "UTF-8")
+            JSONObject r = TmdbApi.get(Prefs.tmdbKey(), "/search/" + kind + "?query=" + URLEncoder.encode(query, "UTF-8")
                     + "&language=" + Recs.lang() + "&include_adult=false");
             JSONArray list = r.optJSONArray("results");
             String want = normalize(title);
