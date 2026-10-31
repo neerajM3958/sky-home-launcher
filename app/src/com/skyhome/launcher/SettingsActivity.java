@@ -592,8 +592,8 @@ public class SettingsActivity extends Activity {
             else if (error.equals(Recs.NO_KNOWN_APPS)) line = Ui.tr("None of the TV's streaming apps can give picks.");
             else if (error.equals(Recs.NO_APPS)) line = Ui.trf("TMDB has none of the TV's apps in {region}.", "region", Regions.name(Recs.region()));
             else if (!error.isEmpty()) line = Ui.trf("Error: {error}.", "error", error);
-            else if (count > 0 && !Prefs.recommendFromApps()) line = Ui.trf("On · {n} titles, 3 new ones every hour.", "n", count);
-            else if (count > 0) line = Ui.trf("On · {n} titles from the TV's apps, 3 new ones every hour.", "n", count);
+            else if (count > 0 && !Prefs.recommendFromApps()) line = Ui.trf("On · {n} titles, a new list every day.", "n", count);
+            else if (count > 0) line = Ui.trf("On · {n} titles from the TV's apps, a new list every day.", "n", count);
             else line = Ui.tr("Fetching titles…");
             c.drawText(TextUtils.ellipsize(line, notice, 790 * k, TextUtils.TruncateAt.END).toString(), x, y + 42 * k, notice);
             version.setTextAlign(Paint.Align.LEFT);

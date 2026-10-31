@@ -459,37 +459,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             checkNotices();
             updatePalette();
             checkNight(true);
-            updatePicks();      // three new ones every hour
+            if (!Prefs.spotlightOn() && zone != Z_CARDS) recs.publish();   // a new daily list: not under the focus
+            if (zone != Z_BROWSE) catalogs.publish();      // the day's TMDB rows: only while the browse screen isn't open
+            updatePicks();
             updateSleep();
             handler.postDelayed(this, 15_000);
-        }
-    };
-
-    // TEMP (memory investigation, remove after): logs every bitmap cache's byte count every 20s, plus native heap total.
-    private final Runnable debugMemory = new Runnable() {
-        @Override public void run() {
-            if (!running) return;
-            long[] posters = catalogs.debugPosterBytes();
-            long[] tiles = HomeApps.debugTileBytes();
-            long[] logos = HomeApps.debugLogoBytes();
-            long[] symbols = Symbols.debugBytes();
-            long[] badges = ServiceBadge.debugBytes();
-            long[] shad = shadows.debugBytes();
-            long[] picks = recs.debugImageBytes();
-            long[] details2 = details.debugBackdropBytes();
-            long backdropBytes = (bgFrom != null ? bgFrom.debugBytes() : 0) + (bgTo != null ? bgTo.debugBytes() : 0);
-            long crispBytes = 0;
-            for (Bitmap b : crispLogos.values()) if (b != null) crispBytes += b.getAllocationByteCount();
-            long known = posters[0] + tiles[0] + logos[0] + symbols[0] + badges[0] + shad[0] + backdropBytes + picks[0] + crispBytes + details2[0];
-            long nativeHeap = android.os.Debug.getNativeHeapAllocatedSize();
-            AppLog.w(String.format(java.util.Locale.ROOT,
-                    "mem: posters %dKB(%d) tiles %dKB(%d) logos %dKB(%d) symbols %dKB(%d) badges %dKB(%d) shadows %dKB(%d) "
-                            + "backdrop %dKB(%d+%d) picks %dKB(%d) crisp %dKB(%d) details %dKB(%d) | known %dKB / native heap %dKB",
-                    posters[0] / 1024, posters[1], tiles[0] / 1024, tiles[1], logos[0] / 1024, logos[1],
-                    symbols[0] / 1024, symbols[1], badges[0] / 1024, badges[1], shad[0] / 1024, shad[1],
-                    backdropBytes / 1024, bgFrom != null ? 1 : 0, bgTo != null ? 1 : 0, picks[0] / 1024, picks[1],
-                    crispBytes / 1024, crispLogos.size(), details2[0] / 1024, details2[1], known / 1024, nativeHeap / 1024));
-            handler.postDelayed(this, 20_000);
         }
     };
 
@@ -543,7 +517,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cardRects[i] = new RectF();
         }
         setLightButtons(HomeApps.topButtons(a));
-        recs.setLight(true);
         // Spotlight's shelf doesn't live on this screen (it's the drawer/catalog page's first row, not the bottom of
         // the hero screen) — starting focus there, as every other style does, would land on something invisible.
         if (Prefs.spotlightOn()) zone = Z_CARDS;
@@ -578,7 +551,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.refreshIfStale();
         catalogs.refreshWatchNext(false);
         handler.postDelayed(tick, 15_000);
-        handler.postDelayed(debugMemory, 5_000);   // TEMP (memory investigation, remove after)
         if (look.m.animatedBackground) handler.postDelayed(drift, 100);
         if (Config.PICK_ROTATE_SECONDS > 0) handler.postDelayed(rotate, Config.PICK_ROTATE_SECONDS * 1000L);
         checkNotices();
@@ -608,7 +580,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         Choreographer.getInstance().removeFrameCallback(this);
         handler.removeCallbacks(tick);
-        handler.removeCallbacks(debugMemory);   // TEMP (memory investigation, remove after)
         handler.removeCallbacks(drift);
         handler.removeCallbacks(rotate);
         handler.removeCallbacks(reloadSoon);
@@ -617,6 +588,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogs.removeListener(this);
         details.removeListener(this);
         closePop(true);
+        recs.publish();     // a new daily list waiting: shown while the home screen is away
+        catalogs.publish();
     }
 
     void destroy() {
@@ -632,6 +605,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         zone = Prefs.spotlightOn() ? Z_CARDS : Z_SHELF;   // Spotlight's shelf isn't on this screen (see constructor)
         shelfIndex = 0;
         sheetOpen = false;
+        if (drawerOpen) catalogsClosed();
         drawerOpen = false;
         if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; catRow.target = 0; }   // close its page too
         closePop(!animated);
@@ -1767,7 +1741,25 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         drawerDirty = true;
     }
 
+    /** How long the catalog posters stay decoded after the drawer closes: a quick close and reopen stays instant. */
+    private static final long POSTERS_KEEP_MS = 10_000;
+    private final Runnable dropPosters = this::dropPosters;
+
+    /** The drawer (and the browse screen in it) has been closed a while: its posters go; they're read back from disk. */
+    private void dropPosters() {
+        if (drawerOpen) return;
+        catalogs.trim();
+        AppLog.w("catalog posters dropped (drawer closed)");
+    }
+
+    /** The drawer closed: its posters are dropped in a few seconds, unless it opens again first. */
+    private void catalogsClosed() {
+        handler.removeCallbacks(dropPosters);
+        handler.postDelayed(dropPosters, POSTERS_KEEP_MS);
+    }
+
     private void openDrawer() {
+        handler.removeCallbacks(dropPosters);
         catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
         syncRows();
         syncBrowse();
@@ -1791,6 +1783,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void closeDrawer() {
         drawerOpen = false;
+        catalogsClosed();
         drawer.target = 0;
         catIn.target = 0;
         catRow.target = 0;
@@ -1809,6 +1802,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * ordinary `Z_SHELF` → `openDrawer()` → `enterCatalog()` path (harmless to call again — `catIn` is already at 1,
      * so that's just a focus change, not a second "opening" animation). */
     private void openSpotlightPage() {
+        handler.removeCallbacks(dropPosters);
         catalogs.refreshIfStale();
         syncRows();
         syncBrowse();
@@ -1827,6 +1821,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * to the poster row, undoing what `openSpotlightPage()` started. */
     private void closeSpotlightPage() {
         drawerOpen = false;
+        catalogsClosed();
         drawer.target = 0;
         catIn.target = 0;
         catRow.target = 0;
@@ -2371,25 +2366,67 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     @Override public void onDetails() {
         if (browseShown == null) return;
-        browseInfo = details.info(browseShown.kind, browseShown.id);
+        browseInfo = details.known(browseShown.kind, browseShown.id);
+        if (browseInfo == null) return;
+        // The details' answer also told Launcher where it streams: the badge looks again in what is kept.
+        if (browseShown.servicePkg == null) browseShown.serviceAsked = 0;
+        dropBrowseBackdrop();
         browseTextGen = -1;
         browseDirty = true;
         scheduleAutoTrailer();
         wake();
     }
 
-    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus where it was when it can. */
+    /** The focused row in the new rows: the one with the same key, else the same place (within the new rows). */
+    private static int sameRow(List<Catalogs.Row> old, int index, List<Catalogs.Row> rows) {
+        if (index < old.size()) {
+            for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(old.get(index).key)) return i;
+        }
+        return Math.min(index, Math.max(0, rows.size() - 1));
+    }
+
+    /**
+     * Each new row's focused column: on the title that had the focus in the row with the same key, when it is still
+     * there; else the same column (within the new row). A row that changed never moves the focus to another title.
+     */
+    private static int[] sameTitles(List<Catalogs.Row> old, int[] oldCols, List<Catalogs.Row> rows) {
+        Map<String, String> focused = new HashMap<>();
+        Map<String, Integer> column = new HashMap<>();
+        for (int i = 0; i < old.size() && i < oldCols.length; i++) {
+            Catalogs.Row r = old.get(i);
+            if (r.items.isEmpty()) continue;
+            int c = Math.min(oldCols[i], r.items.size() - 1);
+            focused.put(r.key, Catalogs.hideKey(r.key, r.items.get(c)));
+            column.put(r.key, c);
+        }
+        int[] cols = new int[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            Catalogs.Row r = rows.get(i);
+            String who = focused.get(r.key);
+            int c = -1;
+            for (int j = 0; who != null && j < r.items.size() && c < 0; j++) if (who.equals(Catalogs.hideKey(r.key, r.items.get(j)))) c = j;
+            if (c < 0) {
+                Integer was = column.get(r.key);
+                c = Math.min(was == null ? (i < oldCols.length ? oldCols[i] : 0) : was, Math.max(0, r.items.size() - 1));
+            }
+            cols[i] = c;
+        }
+        return cols;
+    }
+
+    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus on the same title when it can. */
     private void syncRows() {
         List<Catalogs.Row> rows = catalogs.rows();
         if (rows == catRows) return;
+        List<Catalogs.Row> old = catRows;
         catRows = rows;
         catShift = new Spring[rows.size()];
         for (int i = 0; i < catShift.length; i++) catShift[i] = new Spring(0.34f, 1f, 0);
-        int[] cols = new int[rows.size()];
-        for (int i = 0; i < cols.length && i < catCol.length; i++) cols[i] = Math.min(catCol[i], Math.max(0, rows.get(i).items.size() - 1));
-        catCol = cols;
+        int focusedRow = sameRow(old, catRowIndex, rows);
+        catCol = sameTitles(old, catCol, rows);
+        int[] cols = catCol;
         for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        catRowIndex = Math.min(catRowIndex, Math.max(0, rows.size() - 1));
+        catRowIndex = focusedRow;
         if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
         else if (zone == Z_CATALOG) catRow.target = catScrollTarget();
     }
@@ -2493,8 +2530,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String catalogService(Catalogs.Item it, boolean focused) {
         if (it.appPkg != null) return it.appPkg;
         if (it.id <= 0) return null;
-        if (it.serviceAsked < 1 || (focused && it.serviceAsked < 2 && it.servicePkg == null)) {
-            boolean fetch = focused && it.serviceAsked < 2;
+        if (focused) {      // TMDB is asked only once the focus rests on it (holding an arrow asks for nothing on the way)
+            String key = it.kind + it.id;
+            if (!key.equals(restKey)) {
+                restKey = key;
+                restAt = SystemClock.uptimeMillis();
+                handler.removeCallbacks(rested);
+                handler.postDelayed(rested, REST_MS + 10);
+            }
+        }
+        boolean rest = focused && SystemClock.uptimeMillis() - restAt >= REST_MS;
+        // On the browse screen the details' answer brings where it streams: asked only when it came from disk without it.
+        boolean waitDetails = it == browseShown && zone == Z_BROWSE && browseInfo == null;
+        if (it.serviceAsked < 1 || (rest && !waitDetails && it.serviceAsked < 2 && it.servicePkg == null)) {
+            boolean fetch = rest && !waitDetails && it.serviceAsked < 2;
             it.serviceAsked = fetch ? 2 : 1;
             Launcher.get(activity).service(it.kind, it.id, fetch, pkg -> {
                 it.servicePkg = pkg;
@@ -2503,6 +2552,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         return it.servicePkg;
     }
+
+    private String restKey = "";
+    private long restAt;
+    private final Runnable rested = this::markBadges;
 
     /** The app a pick opens in: its own, or (picks from anything popular) what Launcher finds, asked once per pick. */
     private String pickService(Recs.Pick p) {
@@ -2577,14 +2630,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void syncBrowse() {
         List<Catalogs.Row> rows = catalogs.browseRows();
         if (rows == browseRows) return;
+        List<Catalogs.Row> old = browseRows;
         browseRows = rows;
         browseShift = new Spring[rows.size()];
         for (int i = 0; i < browseShift.length; i++) browseShift[i] = new Spring(0.34f, 1f, 0);
-        int[] cols = new int[rows.size()];
-        for (int i = 0; i < cols.length && i < browseCol.length; i++) cols[i] = Math.min(browseCol[i], Math.max(0, rows.get(i).items.size() - 1));
-        browseCol = cols;
+        int focusedRow = sameRow(old, browseRowIndex, rows);
+        browseCol = sameTitles(old, browseCol, rows);
+        int[] cols = browseCol;
         for (int i = 0; i < cols.length; i++) browseShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        browseRowIndex = Math.min(browseRowIndex, Math.max(0, rows.size() - 1));
+        browseRowIndex = focusedRow;
         browsePos.snap(browseRowIndex);
         if (zone == Z_BROWSE) {
             if (rows.isEmpty()) leaveBrowse();
@@ -2655,24 +2709,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return c < 0 ? null : items.get(c);
     }
 
-    /** The focused title changed: ask for its details (and its neighbours', so the next press is quick) and remake the text. */
+    /**
+     * The focused title changed: shows what is already known about it, and asks for its details (and its neighbours',
+     * so the next press is quick) once the focus rests there (holding an arrow asks for nothing on the way).
+     */
     private void touchBrowse() {
         Catalogs.Item it = browseItem();
         browseShown = it;
-        browseInfo = it == null ? null : details.info(it.kind, it.id);
-        if (it != null) {
-            List<Catalogs.Item> items = browseRows.get(browseRowIndex).items;
-            int c = browseCol[browseRowIndex];
-            for (int d = -1; d <= 1; d += 2) {
-                if (c + d >= 0 && c + d < items.size()) details.info(items.get(c + d).kind, items.get(c + d).id);
-            }
-        }
-        if (browseInfo != null && browseInfo.backdrop.isEmpty() && browseBack != null) {      // no picture for this one: the old one goes
-            browsePrev = browseBack;
-            browseBack = null;
-            browseSwap.snap(0);
-            browseSwap.target = 1;
-        }
+        browseInfo = it == null ? null : details.known(it.kind, it.id);
+        browseRested = null;
+        handler.removeCallbacks(askDetails);
+        if (it != null) handler.postDelayed(askDetails, REST_MS);
+        dropBrowseBackdrop();
         browseTextGen = -1;
         browseDirty = true;
         String key = it == null ? "" : it.kind + it.id;
@@ -2683,6 +2731,38 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         scheduleAutoTrailer();
         wake();
+    }
+
+    /** How long the focus stays on a title before TMDB is asked about it. */
+    private static final long REST_MS = 150;
+
+    private final Runnable askDetails = this::askDetails;
+    private Catalogs.Item browseRested;     // the title the focus has rested on (its picture may be asked for)
+
+    private void askDetails() {
+        Catalogs.Item it = browseShown;
+        if (it == null || zone != Z_BROWSE) return;
+        browseRested = it;
+        browseInfo = details.info(it.kind, it.id);
+        List<Catalogs.Item> items = browseRows.isEmpty() ? null : browseRows.get(browseRowIndex).items;
+        int c = browseCol.length > browseRowIndex ? browseCol[browseRowIndex] : -1;
+        for (int d = -1; items != null && d <= 1; d += 2) {
+            if (c + d >= 0 && c + d < items.size()) details.info(items.get(c + d).kind, items.get(c + d).id);
+        }
+        dropBrowseBackdrop();
+        browseTextGen = -1;
+        browseDirty = true;
+        wake();
+    }
+
+    /** No picture for the focused title: the old one goes. */
+    private void dropBrowseBackdrop() {
+        if (browseInfo != null && browseInfo.backdrop.isEmpty() && browseBack != null) {
+            browsePrev = browseBack;
+            browseBack = null;
+            browseSwap.snap(0);
+            browseSwap.target = 1;
+        }
     }
 
     /** Where poster `i` of row `r` is on the browse screen now. */
@@ -2726,7 +2806,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawBrowseDetails(Canvas c) {
         browseStage(stage);
         float r = 12 * k;
-        if (browseInfo != null) {
+        // The picture only once the focus rests (askDetails): a quick scroll asks for none of the titles it passes.
+        if (browseInfo != null && browseRested == browseShown) {
             Bitmap want = details.backdrop(browseInfo);
             if (want != null && want != browseBack) {
                 browsePrev = browseBack;
@@ -4011,11 +4092,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         List<Recs.Pick> list = Prefs.spotlightOn() ? recs.now(TAB_KIND[0], Recs.SPOTLIGHT_POOL) : recs.now(TAB_KIND[tab]);
         if (!samePicks(list, cards)) {
             startCardTransition(0);
+            // The daily list keeps each staying title in its place (Recs.publish): the row stays where it was.
+            if (cards.isEmpty() || list.isEmpty()) {
+                cardStart = 0;
+                spotlightRowShift.snap(0);
+                carouselTarget = 0;
+                carousel.snap(0);
+            }
             cards = list;
-            cardStart = 0;
-            spotlightRowShift.snap(0);
-            carouselTarget = 0;
-            carousel.snap(0);
             cardIndex = Math.min(cardIndex, Math.max(0, Math.min(3, list.size()) - 1));
             if (zone == Z_CARDS && list.isEmpty()) {
                 zone = Z_SHELF;
@@ -4023,13 +4107,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         // All three tabs preloaded: switching tabs is instant. With more picks (pick_count) only this tab's: the
-        // images are kept in memory for the cards that slide in. Spotlight's pool is wider than its own Backdrop
-        // cache (SPOTLIGHT_POOL vs. Recs.loadImage's `pick_count + 3`): only the full-screen photo of nearby columns
-        // is worth prefetching eagerly — the row's posters themselves load through the separate, lighter `Recs.poster`
-        // cache (drawSpotlight), not this one.
+        // images are kept in memory for the cards that slide in. Spotlight keeps only the full-screen photos of the
+        // focus ±1 in memory (Recs.nearby); the row's posters load through the separate, lighter `Recs.poster` cache
+        // (drawSpotlight).
+        recs.setView(TAB_KIND[Prefs.spotlightOn() ? 0 : tab], cardStart);
         if (Prefs.spotlightOn()) {
-            int from = cardStart - 2, to = cardStart + SPOTLIGHT_VISIBLE + 2;
-            for (int i = from; i <= to; i++) {
+            for (int i = cardStart - 1; i <= cardStart + 1; i++) {
                 Recs.Pick p = posterAt(i);
                 if (p != null) recs.backdrop(p);
             }
@@ -4282,6 +4365,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void selectTab(int index) {
         if (index == tab) return;
         tab = index;
+        cardStart = 0;              // another tab's list: its first card
+        carouselTarget = 0;
+        carousel.snap(0);
         updateCards();
         recs.refreshIfStale();      // the new tab's cards may still need their details
         heroDirty = true;
@@ -4490,7 +4576,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // pick's own photo is still loading the previous one stays up rather than a blank background.
         if (focused != null && cardStart != spotlightWarmFor) {
             spotlightWarmFor = cardStart;
-            for (int d = -2; d <= 2; d++) if (d != 0) recs.backdrop(posterAt(cardStart + d));
+            for (int d = -1; d <= 1; d++) if (d != 0) recs.backdrop(posterAt(cardStart + d));
         }
         if (b != null) spotlightLastBackdrop = b;
         else if (spotlightLastBackdrop != null) b = spotlightLastBackdrop;
@@ -4633,11 +4719,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Backdrop b = p == null ? null : recs.backdrop(p);
         Bitmap img = b == null ? null : (i == 0 ? b.wide : b.tall);
         float shown = 1;
-        if (img != null) {
-            // The picture fades in over its placeholder (not again while the whole card is already fading in).
+        if (img != null && b.fresh) {
+            // A picture just downloaded fades in over its placeholder (not again while the whole card is already fading
+            // in); one read from disk shows at once.
             long now = SystemClock.uptimeMillis();
-            if (p.shownAt == 0) p.shownAt = cardMixAt != 0 && now - cardMixAt < look.m.cardFadeMs ? now - look.m.imageFadeMs : now;
-            if (!Ui.LEGACY && look.m.imageFadeMs > 0) shown = Ui.clamp((now - p.shownAt) / (float) look.m.imageFadeMs);
+            if (b.shownAt == 0) b.shownAt = cardMixAt != 0 && now - cardMixAt < look.m.cardFadeMs ? now - look.m.imageFadeMs : now;
+            if (!Ui.LEGACY && look.m.imageFadeMs > 0) shown = Ui.clamp((now - b.shownAt) / (float) look.m.imageFadeMs);
             if (shown < 1) {
                 cardsAnimating = true;
                 wake();

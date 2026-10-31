@@ -33,8 +33,9 @@ import java.util.concurrent.Executors;
 
 /**
  * The poster rows under the drawer's weather and quotes cards (config.properties "catalogs"): one TMDB list request per
- * row, saved for a few hours, with posters loaded only when a row is near the screen. A title opens through Launcher
- * (its own app, its Play Store page, or Stremio), like every other card.
+ * row, once a day, with posters loaded only when a row is near the screen. A day's new rows are prepared in the
+ * background (their first posters on disk) and shown when the browse screen isn't open ({@link #publish}). A title
+ * opens through Launcher (its own app, its Play Store page, or Stremio), like every other card.
  */
 final class Catalogs {
     static final class Item {
@@ -67,7 +68,7 @@ final class Catalogs {
 
     interface Listener { void onCatalogs(); }
 
-    private static final long EVERY = 6 * 3600_000L;
+    private static final long EVERY = 24 * 3600_000L;
     private static final int VERSION = 1, MAX_POSTERS = 40;
     private static final String IMAGES = "https://image.tmdb.org/t/p/w342";
     private static final int ANIMATION = 16;
@@ -83,25 +84,36 @@ final class Catalogs {
     private final SharedPreferences cache;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService lists = Executors.newSingleThreadExecutor(r -> daemon(r, "catalogs"));
-    private final ExecutorService images = Executors.newFixedThreadPool(2, r -> daemon(r, "posters"));
+    /** Posters missing from disk: downloaded and saved, two at a time (never in the way of a read from disk). */
+    private final ExecutorService fetch = Executors.newFixedThreadPool(2, r -> daemon(r, "posters"));
+    /** Posters read from disk, the last asked first (after a quick scroll, the ones on screen now come first). */
+    private final ExecutorService decode = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.LinkedBlockingDeque<Runnable>() {
+                @Override public boolean offer(Runnable r) { return offerFirst(r); }
+            }, r -> daemon(r, "poster-decode"));
     private final ExecutorService watching = Executors.newSingleThreadExecutor(r -> daemon(r, "watch-next"));
     private volatile List<Item> watchNext = new ArrayList<>();    // what the TV's apps say you were watching, newest first
     private volatile List<Item> watchShows = new ArrayList<>();
     private volatile boolean watchNextBusy, watchNextAgain;
     private volatile long watchNextAt;
     private final List<Listener> listeners = new ArrayList<>();
+    /** Decoded posters (GPU memory), by path and width. Not recycled when dropped: a row may be drawing one this very frame. */
     private final Map<String, Bitmap> posters = new LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
-            if (size() <= MAX_POSTERS) return false;
-            // A frame or two may still be in flight on the RenderThread with this bitmap, so free it from the main
-            // thread after they've had time to finish, instead of recycling it out from under them here.
-            Bitmap b = eldest.getValue();
-            main.postDelayed(b::recycle, 1000);
-            return true;
+            return size() > MAX_POSTERS;
         }
     };
     private final Set<String> pending = new HashSet<>();
+    /** When each poster was last asked for (a frame drew it): a read waiting in the queue is skipped once it's off screen. */
+    private final Map<String, Long> asked = new LinkedHashMap<String, Long>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+            return size() > 200;
+        }
+    };
+    /** The posters on disk (`cacheDir/posters`, about 20 KB each at the size drawn); past this the least recently used go. */
+    private static final long DISK_BUDGET = 20L << 20;
     private volatile List<Row> rows = new ArrayList<>();      // TMDB's
+    private volatile List<Row> next;                          // TMDB's next rows, ready and waiting for publish()
     private volatile List<Row> shown = new ArrayList<>();     // Trakt's rows (when connected) and Continue Watching
     private volatile List<Row> browse = new ArrayList<>();    // TMDB's rows
     private volatile String shownFor = "";                   // what wanted() was when `shown` was built
@@ -122,10 +134,13 @@ final class Catalogs {
         try {
             String saved = cache.getString("rows", null);
             if (saved != null && wanted().equals(cache.getString("wanted", ""))) rows = parse(new JSONArray(saved));
+            String waiting = cache.getString("next", null);
+            if (waiting != null && !rows.isEmpty()) next = parse(new JSONArray(waiting));
             at = cache.getLong("at", 0);
             language = cache.getString("language", "");
         } catch (Exception ignored) {
         }
+        fetch.execute(this::removeOldCache);
         Trakt.get(c).setListener(() -> { rebuild(); notifyListeners(); });
         rebuild();
         try {       // an app changes its entries: read them again
@@ -519,8 +534,28 @@ final class Catalogs {
                     if (!row.items.isEmpty()) next.add(row);
                 }
                 if (next.isEmpty()) throw new IOException("TMDB returned no titles");
-                rows = next;
-                rebuild();
+                boolean changed = rows.isEmpty() || !language.equals(Ui.language) || !wanted().equals(cache.getString("wanted", ""));
+                if (changed) {      // nothing shown yet, or the settings changed: at once
+                    rows = next;
+                    this.next = null;
+                    rebuild();
+                } else {            // the day's new rows: their first posters on disk, then shown when the browse screen isn't open
+                    int width = rowPosterWidth();
+                    for (Row row : next) {
+                        for (int i = 0; i < row.items.size() && i < 10; i++) {
+                            Item it = row.items.get(i);
+                            File f = posterFile(it, width);
+                            if (f.exists()) continue;
+                            try {
+                                save(it, width, f).recycle();
+                            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                                AppLog.w("poster: " + e.getMessage());
+                            }
+                        }
+                    }
+                    this.next = next;
+                    AppLog.w("catalogs: next rows ready");
+                }
                 at = System.currentTimeMillis();
                 language = Ui.language;
                 failedAt = 0;
@@ -566,19 +601,47 @@ final class Catalogs {
 
     private void save(List<String> keys) {
         try {
-            JSONArray a = new JSONArray();
-            for (Row row : rows) {
-                JSONArray items = new JSONArray();
-                for (Item it : row.items) {
-                    items.put(new JSONObject().put("id", it.id).put("kind", it.kind).put("title", it.title).put("poster", it.poster)
-                            .put("rating", it.rating));
-                }
-                a.put(new JSONObject().put("key", row.key).put("items", items));
-            }
-            cache.edit().putString("rows", a.toString()).putString("wanted", wanted()).putLong("at", at)
-                    .putString("language", language).apply();
+            SharedPreferences.Editor e = cache.edit().putString("rows", toJson(rows).toString()).putString("wanted", wanted())
+                    .putLong("at", at).putString("language", language);
+            List<Row> waiting = next;
+            if (waiting != null) e.putString("next", toJson(waiting).toString());
+            else e.remove("next");
+            e.apply();
         } catch (Exception ignored) {
         }
+    }
+
+    private static JSONArray toJson(List<Row> list) throws org.json.JSONException {
+        JSONArray a = new JSONArray();
+        for (Row row : list) {
+            JSONArray items = new JSONArray();
+            for (Item it : row.items) {
+                items.put(new JSONObject().put("id", it.id).put("kind", it.kind).put("title", it.title).put("poster", it.poster)
+                        .put("rating", it.rating));
+            }
+            a.put(new JSONObject().put("key", row.key).put("items", items));
+        }
+        return a;
+    }
+
+    /**
+     * Shows the day's new TMDB rows, if they're waiting (HomeView calls it only while the browse screen isn't open, so
+     * no title changes under the focus).
+     */
+    void publish() {
+        List<Row> waiting = next;
+        if (waiting == null) return;
+        next = null;
+        rows = waiting;
+        rebuild();
+        lists.execute(() -> save(keys()));
+        AppLog.w("catalogs: new rows shown");
+        notifyListeners();
+    }
+
+    /** The width the rows draw a poster at (HomeView: CAT_POSTER_W × 1.25 at the UI's scale), for posters saved ahead. */
+    static int rowPosterWidth() {
+        return Math.round(Backdrop.W / 1920f * 180 * 1.25f);
     }
 
     private static List<Row> parse(JSONArray a) {
@@ -611,115 +674,207 @@ final class Catalogs {
         main.post(() -> { for (Listener l : new ArrayList<>(listeners)) l.onCatalogs(); });
     }
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the decoded poster cache.
-    long[] debugPosterBytes() {
-        synchronized (posters) {
-            long bytes = 0;
-            for (Bitmap b : posters.values()) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, posters.size()};
-        }
-    }
+    // MARK: - Posters (saved at the size drawn; the ones on screen stay decoded in GPU memory)
 
-    // MARK: - Posters (w342 on disk; the ones near the screen stay decoded in memory)
-
-    /** The decoded poster at about `width` pixels, or null: it is loaded in the background and the listeners are told when it is ready. */
+    /**
+     * The decoded poster at `width` pixels, or null: it is read from disk (or downloaded and saved at that size) in the
+     * background and the listeners are told when it is ready. Each width is its own file and entry (the rows draw them
+     * at 225 px at 1080p, the episodes screen at 400).
+     */
     Bitmap poster(Item it, int width) {
+        String key = it.poster + "@" + width;
         synchronized (posters) {
-            Bitmap b = posters.get(it.poster);
+            asked.put(key, SystemClock.uptimeMillis());
+            Bitmap b = posters.get(key);
             if (b != null) return b;
-            if (!pending.add(it.poster)) return null;
+            if (!pending.add(key)) return null;
         }
-        images.execute(() -> {
+        decode.execute(() -> {
+            boolean handed = false;
             try {
-                File f = new File(new File(context.getCacheDir(), "catalogs"), it.poster.replace("/", ""));
-                boolean appArt = it.poster.startsWith("wn-");      // an app's own picture, often wide
-                if (!f.exists()) {
-                    if (it.posterUrl != null && !it.posterUrl.startsWith("http")) copy(it.posterUrl, f);      // content:, android.resource: (an app's own picture)
-                    else download(it.posterUrl != null ? it.posterUrl : IMAGES + it.poster, f);
+                // Scrolled past while it waited (no frame drew it lately): skipped; a frame that still shows it asks again.
+                Long last;
+                synchronized (posters) { last = asked.get(key); }
+                if (last == null || SystemClock.uptimeMillis() - last > 500) {
+                    notifyListeners();
+                    return;
                 }
-                // Trakt's posters are larger than TMDB's w342: decoded at half or a quarter of their size when that is still enough.
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeFile(f.getPath(), bounds);
-                BitmapFactory.Options decode = new BitmapFactory.Options();
-                int sample = 1;
-                // A wide picture is cut to the portrait card, so what counts is its height.
-                while (sample < 8 && (appArt ? bounds.outHeight / (sample * 2) >= width * 15 / 8 : bounds.outWidth / (sample * 2) >= width * 5 / 4)) sample *= 2;
-                decode.inSampleSize = sample;
-                Bitmap b = BitmapFactory.decodeFile(f.getPath(), decode);
-                if (appArt && b != null && b.getWidth() * 3 > b.getHeight() * 2 + 2) {
-                    int cut = b.getHeight() * 2 / 3;
-                    Bitmap tall = Bitmap.createBitmap(b, (b.getWidth() - cut) / 2, 0, cut, b.getHeight());
-                    if (tall != b) b.recycle();
-                    b = tall;
-                }
-                if (b != null && b.getWidth() > width * 5 / 4) {     // kept at the size it is drawn at: a quarter of the memory
-                    Bitmap small = Bitmap.createScaledBitmap(b, width, Math.round(b.getHeight() * (float) width / b.getWidth()), true);
-                    if (small != b) b.recycle();
-                    b = small;
-                }
-                if (b == null) {
+                File f = posterFile(it, width);
+                if (f.exists()) {
+                    Bitmap b = hardware(f);
+                    if (b != null) {
+                        touch(f);
+                        keep(key, b);
+                        return;
+                    }
                     //noinspection ResultOfMethodCallIgnored
-                    f.delete();
-                    throw new IOException("unreadable poster");
+                    f.delete();     // unreadable: made again
                 }
-                synchronized (posters) { posters.put(it.poster, b); }
-                notifyListeners();
-            } catch (IOException | RuntimeException | OutOfMemoryError e) {
-                AppLog.w("poster: " + e.getMessage());
+                handed = true;
+                fetch.execute(() -> {
+                    try {
+                        keep(key, Backdrop.gpu(save(it, width, f)));
+                    } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                        AppLog.w("poster: " + e.getMessage());
+                    } finally {
+                        synchronized (posters) { pending.remove(key); }
+                    }
+                });
             } finally {
-                synchronized (posters) { pending.remove(it.poster); }
+                if (!handed) synchronized (posters) { pending.remove(key); }
             }
         });
         return null;
     }
 
-    /** An app's picture from its own address (Watch Next art: content: or android.resource:), saved like a download. */
-    private void copy(String uri, File f) throws IOException {
+    /** The drawer has been closed a while, or memory is short: the decoded posters go (read back from disk when shown). */
+    void trim() {
+        synchronized (posters) { posters.clear(); }
+    }
+
+    private void keep(String key, Bitmap b) {
+        synchronized (posters) { posters.put(key, b); }
+        notifyListeners();
+    }
+
+    private File dir() {
+        return new File(context.getCacheDir(), "posters");
+    }
+
+    private File posterFile(Item it, int width) {
+        return new File(dir(), it.poster.replace("/", "") + "-" + width + ".jpg");
+    }
+
+    private static Bitmap hardware(File f) {
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inPreferredConfig = Bitmap.Config.HARDWARE;
+        return BitmapFactory.decodeFile(f.getPath(), opts);
+    }
+
+    /**
+     * Downloads (or copies, for an app's own picture) the poster, cuts a wide app picture to the portrait card, scales it
+     * to `width` and saves it as `f`; returns it decoded (software). The download itself isn't kept.
+     */
+    private Bitmap save(Item it, int width, File f) throws IOException {
         //noinspection ResultOfMethodCallIgnored
-        f.getParentFile().mkdirs();
-        File part = new File(f.getPath() + ".part");
+        dir().mkdirs();
+        File raw = new File(f.getPath() + ".src." + Thread.currentThread().getId() + ".part");
+        try {
+            if (it.posterUrl != null && !it.posterUrl.startsWith("http")) copy(it.posterUrl, raw);      // content:, android.resource: (an app's own picture)
+            else download(it.posterUrl != null ? it.posterUrl : IMAGES + it.poster, raw);
+            boolean appArt = it.poster.startsWith("wn-");      // an app's own picture, often wide
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(raw.getPath(), bounds);
+            BitmapFactory.Options decode = new BitmapFactory.Options();
+            int sample = 1;
+            // Trakt's posters are larger than TMDB's w342; a wide picture is cut to the portrait card, so what counts is its height.
+            while (sample < 8 && (appArt ? bounds.outHeight / (sample * 2) >= width * 3 / 2 : bounds.outWidth / (sample * 2) >= width)) sample *= 2;
+            decode.inSampleSize = sample;
+            Bitmap b = BitmapFactory.decodeFile(raw.getPath(), decode);
+            if (b == null) throw new IOException("unreadable poster");
+            if (appArt && b.getWidth() * 3 > b.getHeight() * 2 + 2) {
+                int cut = b.getHeight() * 2 / 3;
+                Bitmap tall = Bitmap.createBitmap(b, (b.getWidth() - cut) / 2, 0, cut, b.getHeight());
+                if (tall != b) b.recycle();
+                b = tall;
+            }
+            if (b.getWidth() > width) {     // kept at the size it is drawn at
+                Bitmap small = Bitmap.createScaledBitmap(b, width, Math.round(b.getHeight() * (float) width / b.getWidth()), true);
+                if (small != b) b.recycle();
+                b = small;
+            }
+            File part = new File(f.getPath() + ".part");
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                if (!b.compress(Bitmap.CompressFormat.JPEG, 88, out)) throw new IOException("couldn't encode the poster");
+            }
+            if (!part.renameTo(f)) {
+                //noinspection ResultOfMethodCallIgnored
+                part.delete();
+                throw new IOException("couldn't save the poster");
+            }
+            prune();
+            return b;
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            raw.delete();
+        }
+    }
+
+    /** An app's picture from its own address (Watch Next art: content: or android.resource:). */
+    private void copy(String uri, File to) throws IOException {
         try (InputStream in = context.getContentResolver().openInputStream(Uri.parse(uri));
-             FileOutputStream out = new FileOutputStream(part)) {
+             FileOutputStream out = new FileOutputStream(to)) {
             if (in == null) throw new IOException("no picture at " + uri);
             byte[] buffer = new byte[16384];
             int n;
             while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-        } catch (IOException | RuntimeException e) {
-            //noinspection ResultOfMethodCallIgnored
-            part.delete();
-            throw e instanceof IOException ? (IOException) e : new IOException(e.getMessage());
+        } catch (RuntimeException e) {
+            throw new IOException(e.getMessage());
         }
-        if (!part.renameTo(f)) throw new IOException("couldn't save the picture");
     }
 
-    private static void download(String url, File f) throws IOException {
-        //noinspection ResultOfMethodCallIgnored
-        f.getParentFile().mkdirs();
-        File part = new File(f.getPath() + ".part");
+    private static void download(String url, File to) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setRequestProperty("User-Agent", "SkyHomeLauncher");
         c.setConnectTimeout(8000);
         c.setReadTimeout(20000);
-        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-            byte[] buffer = new byte[16384];
-            int n;
-            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-        } catch (IOException e) {
-            //noinspection ResultOfMethodCallIgnored
-            part.delete();
-            throw e;
+        try {
+            if (c.getResponseCode() != 200) throw new IOException("poster: HTTP " + c.getResponseCode());
+            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(to)) {
+                byte[] buffer = new byte[16384];
+                int n;
+                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+            }
         } finally {
             c.disconnect();
         }
-        if (!part.renameTo(f)) throw new IOException("couldn't save the poster");
-        File[] all = f.getParentFile().listFiles();     // the newest 300 stay
-        if (all != null && all.length > 300) {
-            Arrays.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-            for (int i = 0; i < all.length - 300; i++) {
+    }
+
+    /** The poster was just drawn: the disk cache drops the least recently used first. */
+    static void touch(File f) {
+        long now = System.currentTimeMillis();
+        //noinspection ResultOfMethodCallIgnored
+        if (now - f.lastModified() > 3600_000L) f.setLastModified(now);
+    }
+
+    /** Keeps the posters on disk under DISK_BUDGET, the least recently used going first; a .part left by a stopped download goes after 10 minutes. */
+    private synchronized void prune() {
+        prune(dir(), DISK_BUDGET);
+    }
+
+    /** Keeps `dir` under `budget` bytes, the least recently used files going first (Details uses it too). */
+    static void prune(File dir, long budget) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        long stale = System.currentTimeMillis() - 10 * 60_000L, total = 0;
+        List<File> kept = new ArrayList<>();
+        for (File f : files) {
+            if (f.getName().endsWith(".part")) {
                 //noinspection ResultOfMethodCallIgnored
-                all[i].delete();
+                if (f.lastModified() < stale) f.delete();
+                continue;
             }
+            kept.add(f);
+            total += f.length();
         }
+        if (total <= budget) return;
+        java.util.Collections.sort(kept, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        for (int i = 0; i < kept.size() && total > budget; i++) {
+            total -= kept.get(i).length();
+            //noinspection ResultOfMethodCallIgnored
+            kept.get(i).delete();
+        }
+    }
+
+    /** The folder of the earlier cache (posters as downloaded): replaced by `posters`. */
+    private void removeOldCache() {
+        File old = new File(context.getCacheDir(), "catalogs");
+        File[] files = old.listFiles();
+        if (files == null) return;
+        //noinspection ResultOfMethodCallIgnored
+        for (File f : files) f.delete();
+        //noinspection ResultOfMethodCallIgnored
+        old.delete();
     }
 }

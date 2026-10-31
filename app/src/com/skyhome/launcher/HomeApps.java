@@ -141,23 +141,6 @@ final class HomeApps {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) { return size() > MAX_LOGOS; }
     };   // key → colored logo with no background
 
-    // TEMP (memory investigation, remove after): byte count and entry count of each cache.
-    static long[] debugTileBytes() {
-        synchronized (HomeApps.class) {
-            long bytes = 0;
-            for (Bitmap b : TILES.values()) if (b != null) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, TILES.size()};
-        }
-    }
-
-    static long[] debugLogoBytes() {
-        synchronized (LOGOS) {
-            long bytes = 0;
-            for (Bitmap b : LOGOS.values()) if (b != null) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, LOGOS.size()};
-        }
-    }
-
     /**
      * Home screen apps. `extract`: also lifts the logos that are not on disk yet (slow: background only); without it,
      * those apps keep their TV art until the next load.

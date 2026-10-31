@@ -28,8 +28,8 @@ import java.util.concurrent.Executors;
 
 /**
  * What the browse screen shows about the focused title: description, genres, runtime, rating, its backdrop and its
- * trailers. One TMDB request per title (kept for a week), one backdrop picture; both load in the
- * background and the listeners are told on the main thread.
+ * trailers. One TMDB request per title (kept for a week; the same answer tells Launcher where it streams), one backdrop
+ * picture (saved at the size drawn); both load in the background and the listeners are told on the main thread.
  */
 final class Details {
     static final class Info {
@@ -40,7 +40,9 @@ final class Details {
     interface Listener { void onDetails(); }
 
     private static final long FRESH_MS = 7 * 24 * 3600_000L;
-    private static final int VERSION = 3, KEEP = 200, TRAILERS = 4;
+    private static final int VERSION = 3, KEEP = 400, TRAILERS = 4;
+    /** The backdrops on disk (`cacheDir/details-images`, about 60 KB each at the size drawn); past this the least recently used go. */
+    private static final long IMAGES_BUDGET = 30L << 20;
     private static final String IMAGES = "https://image.tmdb.org/t/p/" + (Backdrop.W <= 1280 ? "w780" : "w1280");
     // The browse screen's details card (HomeView.browseStage(): height 440, width 440*16/9, in 1920-wide units):
     // decoding at its own display size instead of the downloaded file's full size (#memory-management, item 6).
@@ -77,7 +79,7 @@ final class Details {
             return size() > 40;
         }
     };
-    // Not recycled on eviction: HomeView's browseBack/browsePrev can hold a reference to any of these for as long as
+    // In GPU memory. Not recycled on eviction: HomeView's browseBack/browsePrev can hold a reference to any of these for as long as
     // a cross-fade is still showing it, well outside this map's own eviction order (#memory-management, item 5: the
     // identical mistake in Recs.images raced that kind of reference and crashed the renderer).
     private final Map<String, Bitmap> backdrops = new LinkedHashMap<String, Bitmap>(4, 0.75f, true) {
@@ -86,19 +88,25 @@ final class Details {
         }
     };
     private final Set<String> asking = new HashSet<>(), loading = new HashSet<>();
+    /** The last backdrop asked for: one still waiting in the queue for another title is skipped (the focus moved on). */
+    private volatile String wanted = "";
     private final List<Listener> listeners = new ArrayList<>();
-
-    // TEMP (memory investigation, remove after): byte count and entry count of the browse screen's backdrop cache.
-    long[] debugBackdropBytes() {
-        synchronized (backdrops) {
-            long bytes = 0;
-            for (Bitmap b : backdrops.values()) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, backdrops.size()};
-        }
-    }
 
     private Details(Context c) {
         context = c;
+        images.execute(this::removeOldImages);
+    }
+
+    /** Backdrops the earlier cache kept with the details (TMDB's w1280 as downloaded): replaced by `details-images`. */
+    private void removeOldImages() {
+        File[] old = new File(context.getCacheDir(), "details").listFiles((d, name) -> name.startsWith("b"));
+        //noinspection ResultOfMethodCallIgnored
+        for (int i = 0; old != null && i < old.length; i++) old[i].delete();
+    }
+
+    /** Memory is short and the home screen is away: the decoded backdrops go (read back from disk when shown). */
+    void trim() {
+        synchronized (backdrops) { backdrops.clear(); }
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
@@ -106,6 +114,12 @@ final class Details {
 
     private static String key(String kind, int id) {
         return kind + id + "-" + Recs.lang() + "-" + Recs.region();
+    }
+
+    /** What is already in memory about the title, or null; asks for nothing. */
+    Info known(String kind, int id) {
+        if (id <= 0) return null;
+        synchronized (infos) { return infos.get(key(kind, id)); }
     }
 
     /** What is known about the title now, or null; it is fetched in the background (and the listeners told) when it is not. */
@@ -142,8 +156,9 @@ final class Details {
     }
 
     private Info fetch(String kind, int id) throws Exception {
-        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang() + "&append_to_response=videos&include_video_language="
-                + Ui.language.replaceAll("-.*", "") + ",en,null");
+        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang()
+                + "&append_to_response=videos,watch/providers,external_ids&include_video_language=" + Ui.language.replaceAll("-.*", "") + ",en,null");
+        Launcher.get(context).remember(kind, id, o);      // where it streams, for the badge and OK: no request of its own
         Info info = new Info();
         info.at = System.currentTimeMillis();
         info.tagline = o.optString("tagline");
@@ -201,6 +216,7 @@ final class Details {
     Bitmap backdrop(Info info) {
         if (info == null || info.backdrop.isEmpty()) return null;
         String path = info.backdrop;
+        wanted = path;
         synchronized (backdrops) {
             Bitmap b = backdrops.get(path);
             if (b != null) return b;
@@ -208,26 +224,17 @@ final class Details {
         }
         images.execute(() -> {
             try {
-                File f = new File(new File(context.getCacheDir(), "details"), "b" + path.replace("/", "_"));
-                if (!f.exists()) download(IMAGES + path, f);
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeFile(f.getPath(), bounds);
-                BitmapFactory.Options decode = new BitmapFactory.Options();
-                int sample = 1;
-                while (sample < 8 && bounds.outWidth / (sample * 2) >= BACKDROP_W * 5 / 4) sample *= 2;
-                decode.inSampleSize = sample;
-                Bitmap b = BitmapFactory.decodeFile(f.getPath(), decode);
-                if (b != null && b.getWidth() > BACKDROP_W * 5 / 4) {
-                    Bitmap small = Bitmap.createScaledBitmap(b, BACKDROP_W, Math.round(b.getHeight() * (float) BACKDROP_W / b.getWidth()), true);
-                    if (small != b) b.recycle();
-                    b = small;
+                if (!path.equals(wanted)) return;      // the focus moved on: asked again if it comes back
+                File dir = new File(context.getCacheDir(), "details-images");
+                File f = new File(dir, path.replace("/", "") + "-" + BACKDROP_W + ".jpg");
+                Bitmap b = null;
+                if (f.exists()) {
+                    BitmapFactory.Options opts = new BitmapFactory.Options();
+                    opts.inPreferredConfig = Bitmap.Config.HARDWARE;
+                    b = BitmapFactory.decodeFile(f.getPath(), opts);
+                    if (b != null) Catalogs.touch(f);
                 }
-                if (b == null) {
-                    //noinspection ResultOfMethodCallIgnored
-                    f.delete();
-                    throw new IOException("unreadable backdrop");
-                }
+                if (b == null) b = Backdrop.gpu(save(IMAGES + path, f));
                 synchronized (backdrops) { backdrops.put(path, b); }
                 notifyListeners();
             } catch (IOException | RuntimeException | OutOfMemoryError e) {
@@ -243,33 +250,51 @@ final class Details {
         main.post(() -> { for (Listener l : new ArrayList<>(listeners)) l.onDetails(); });
     }
 
-    private static void download(String url, File f) throws IOException {
+    /** Downloads the backdrop, scales it to the size drawn, saves that as `f` and returns it (software); the download isn't kept. */
+    private static Bitmap save(String url, File f) throws IOException {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
-        File part = new File(f.getPath() + ".part");
+        File raw = new File(f.getPath() + ".src.part");
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setRequestProperty("User-Agent", "SkyHomeLauncher");
         c.setConnectTimeout(8000);
         c.setReadTimeout(20000);
-        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-            byte[] buffer = new byte[16384];
-            int n;
-            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-        } catch (IOException e) {
-            //noinspection ResultOfMethodCallIgnored
-            part.delete();
-            throw e;
+        try {
+            if (c.getResponseCode() != 200) throw new IOException("backdrop: HTTP " + c.getResponseCode());
+            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(raw)) {
+                byte[] buffer = new byte[16384];
+                int n;
+                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+            }
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(raw.getPath(), bounds);
+            BitmapFactory.Options decode = new BitmapFactory.Options();
+            int sample = 1;
+            while (sample < 8 && bounds.outWidth / (sample * 2) >= BACKDROP_W) sample *= 2;
+            decode.inSampleSize = sample;
+            Bitmap b = BitmapFactory.decodeFile(raw.getPath(), decode);
+            if (b == null) throw new IOException("unreadable backdrop");
+            if (b.getWidth() > BACKDROP_W) {
+                Bitmap small = Bitmap.createScaledBitmap(b, BACKDROP_W, Math.round(b.getHeight() * (float) BACKDROP_W / b.getWidth()), true);
+                if (small != b) b.recycle();
+                b = small;
+            }
+            File part = new File(f.getPath() + ".part");
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                if (!b.compress(Bitmap.CompressFormat.JPEG, 88, out)) throw new IOException("couldn't encode the backdrop");
+            }
+            if (!part.renameTo(f)) {
+                //noinspection ResultOfMethodCallIgnored
+                part.delete();
+                throw new IOException("couldn't save the backdrop");
+            }
+            Catalogs.prune(f.getParentFile(), IMAGES_BUDGET);
+            return b;
         } finally {
             c.disconnect();
-        }
-        if (!part.renameTo(f)) throw new IOException("couldn't save the backdrop");
-        File[] all = f.getParentFile().listFiles();         // the newest KEEP stay
-        if (all != null && all.length > KEEP) {
-            java.util.Arrays.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-            for (int i = 0; i < all.length - KEEP; i++) {
-                //noinspection ResultOfMethodCallIgnored
-                all[i].delete();
-            }
+            //noinspection ResultOfMethodCallIgnored
+            raw.delete();
         }
     }
 
@@ -308,6 +333,14 @@ final class Details {
                 out.write(text.getBytes(StandardCharsets.UTF_8));
             }
             if (!part.renameTo(f)) throw new IOException("couldn't save");
+            File[] all = f.getParentFile().listFiles();         // the newest KEEP stay
+            if (all != null && all.length > KEEP) {
+                java.util.Arrays.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+                for (int i = 0; i < all.length - KEEP; i++) {
+                    //noinspection ResultOfMethodCallIgnored
+                    all[i].delete();
+                }
+            }
         } catch (Exception e) {
             AppLog.w("couldn't keep the details: " + e.getMessage());
         }

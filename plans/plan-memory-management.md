@@ -614,7 +614,12 @@ app code can directly force smaller — it's inherent to how much more content c
 
 ---
 
-## TEMP debug code still in the tree — not yet reverted (2026-10-27)
+## TEMP debug code — removed (2026-10-31)
+
+Removed on branch `improve-picks` (the `mem:` log line and every `debug…Bytes()` helper below). To measure again,
+`dumpsys meminfo com.skyhome.launcher:home` and `dumpsys gfxinfo` need nothing in the app; for per-cache numbers, add
+the helpers back from git history (commit before the removal). The list below is what was there.
+
 
 Deliberately kept in: the investigation isn't fully closed (the All Apps grid's GPU growth, flagged at the end of
 item 9, is still unexplained) and this instrumentation is what a future session would need to chase it. Each is

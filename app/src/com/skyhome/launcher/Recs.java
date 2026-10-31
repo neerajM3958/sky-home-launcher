@@ -36,8 +36,12 @@ import java.util.concurrent.Executors;
 /**
  * Home screen picks ("This morning / afternoon / tonight"): what's trending this week plus recent releases, only from
  * the streaming apps installed on the TV (Netflix, Prime Video, Disney+, Max, Apple TV, Okko, Hulu, Paramount+, Peacock,
- * Globoplay...), via TMDB (an open movie database that knows what streams where in each country). Three per hour.
- * "Watch" opens the service's app.
+ * Globoplay...), via TMDB (an open movie database that knows what streams where in each country). "Watch" opens the
+ * service's app.
+ *
+ * The list is fetched once a day. The next day's is prepared in the background (details and images on disk) and shown
+ * only when the picks aren't in view ({@link #publish}): the titles that stay keep their places, and the new ones take
+ * the places of those that left, with their images already there.
  *
  * Each person uses their own free TMDB key (config.properties "tmdb_key", built into the app). It never goes to the log.
  */
@@ -46,7 +50,6 @@ final class Recs {
         int id;
         String kind;            // "movie" or "tv"
         String title, backdrop, poster, meta = "", app, pkg;
-        long shownAt;           // when its picture was first drawn (UI thread): the picture fades in from then
         boolean detailed;
         String servicePkg;      // routed picks: the app it opens in, for the card's icon (null not known yet, "" none; UI thread)
         boolean serviceAsked;
@@ -59,13 +62,13 @@ final class Recs {
     private static final String IMAGES = "https://image.tmdb.org/t/p/" + (Backdrop.W <= 1280 ? "w1280" : "original");
     /** TMDB's Animation genre (movies and shows: cartoons and anime), left out with hide_animation=true. */
     private static final int ANIMATION = 16;
-    private static final long LIST_EVERY = 6 * 3600_000L;
+    private static final long LIST_EVERY = 24 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
     private static final int CACHE_VERSION = 14;
-    /** Spotlight's poster row pool (HomeView.updateCards) — bigger than pick_count's default, so the image and poster
-     * caches below are sized to hold the whole circular pool, not just `pick_count + 3`: with a smaller cache, the
-     * row's own real working set (every pick the circular scroll ever revisits) would keep evicting itself and
-     * re-downloading/re-decoding, visible as the backdrop and posters blinking every few seconds. */
+    /** Spotlight's poster row pool (HomeView.updateCards) — bigger than pick_count's default, so the poster cache below
+     * holds the whole circular pool: with a smaller one, the row's own working set (every pick the circular scroll
+     * revisits) would keep evicting itself, visible as the posters blinking. The full-screen photos are only kept for
+     * the focus ±1 (they're read back from disk quickly). */
     static final int SPOTLIGHT_POOL = 20;
 
     private static int poolCap() {
@@ -141,31 +144,44 @@ final class Recs {
 
     private final Context context;
     private final SharedPreferences cache;
-    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService io = Executors.newSingleThreadExecutor();     // the list and the details, one at a time
+    /** Images missing from disk: downloaded and built, two at a time (never in the way of a read from disk). */
+    private final ExecutorService fetch = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "picks-fetch");
+        t.setDaemon(true);
+        return t;
+    });
+    /** Images read from disk, the last asked first (the focus moved: what it is on now comes before what it passed). */
+    private final ExecutorService decode = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.LinkedBlockingDeque<Runnable>() {
+                @Override public boolean offer(Runnable r) { return offerFirst(r); }
+            }, r -> {
+                Thread t = new Thread(r, "picks-decode");
+                t.setDaemon(true);
+                return t;
+            });
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Listener> listeners = new ArrayList<>();
-    private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
+    /** Built and ready to draw, the least recently drawn first; limited by bytes ({@link #budget}). */
+    private final Map<String, Backdrop> images = new LinkedHashMap<>(16, 0.75f, true);
     private final java.util.Set<String> pending = new java.util.HashSet<>();
+    /** The style the images in memory were built for (Spotlight has the full photo, Cards the cards). */
+    private volatile boolean spotlight = Prefs.spotlightOn();
     // Spotlight's poster row: TMDB's poster art (the title baked in), not the textless backdrop — a small, separate
     // cache (w342, like Catalogs' poster rows) since it's a different image from the same title's backdrop.
     private static final String POSTER_IMAGES = "https://image.tmdb.org/t/p/w342";
-    private final Map<String, Bitmap> posters = new LinkedHashMap<>();
+    private final Map<String, Bitmap> posters = new LinkedHashMap<>(16, 0.75f, true);
     private final java.util.Set<String> posterPending = new java.util.HashSet<>();
+    /** One build of an image at a time (the refresh and the screen may both want it). */
+    private final Map<String, Object> building = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The images on disk (`cacheDir/picks`): about 600 KB a title; past this the least recently used go. */
+    private static final long DISK_BUDGET = 40L << 20;
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the picks' Backdrop cache.
-    long[] debugImageBytes() {
-        synchronized (images) {
-            long bytes = 0;
-            for (Backdrop b : images.values()) bytes += b.debugBytes();
-            return new long[] {bytes, images.size()};
-        }
-    }
     private volatile List<Pick> picks = new ArrayList<>();
-    private volatile int period = -1;
+    private volatile List<Pick> next;   // the next list, ready (details and images on disk) and waiting for publish()
     private volatile long listAt;
     private volatile boolean fetching;
     private volatile String error = "";
-    private volatile boolean light;     // light design: builds only the cards (all three tabs' cards fit in memory)
     private volatile long failedAt, keyStamp, linkRetryAt;
     private volatile String listLanguage = "";   // language used for the saved titles, genres and texts
 
@@ -176,12 +192,14 @@ final class Recs {
         try {
             String saved = cache.getString("picks", null);
             if (saved != null) picks = parse(new JSONArray(saved));
-            period = cache.getInt("period", -1);
+            String waiting = cache.getString("next", null);
+            if (waiting != null) next = parse(new JSONArray(waiting));
             listAt = cache.getLong("listAt", 0);
             listLanguage = cache.getString("language", cache.getBoolean("english", false) ? "en" : "pt");
             keyStamp = cache.getLong("keyStamp", 0);
         } catch (Exception ignored) {
         }
+        io.execute(this::removeOldCache);
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
@@ -229,19 +247,19 @@ final class Recs {
         return hour >= 5 && hour < 12 ? MANHA : hour >= 12 && hour < 18 ? TARDE : NOITE;
     }
 
-    /** This hour's picks (the first is the featured one; the arrows switch to the others). */
+    /** Today's picks (the first is the featured one; the arrows switch to the others). */
     List<Pick> now() {
         return now(null);
     }
 
-    /** This hour's picks (pick_count, 3 by default), movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
+    /** Today's picks (pick_count, 3 by default), movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
     List<Pick> now(String kind) {
         return now(kind, Config.PICK_COUNT);
     }
 
     /** Like {@link #now(String)}, but with its own count instead of `pick_count` — Spotlight's poster row wants more
      * titles on screen than Cards' 3-card rotation, without changing Cards' own pace or `pick_count` (and its memory
-     * budgets, which key off it: `Recs.loadImage`/`loadPoster`'s cache sizes). Pulled from the same already-fetched
+     * budgets, which key off it: the poster cache's size). Pulled from the same already-fetched
      * `picks` pool TMDB's list call already returned (no extra request), just capped differently. */
     List<Pick> now(String kind, int count) {
         List<Pick> list = new ArrayList<>();
@@ -252,13 +270,12 @@ final class Recs {
                     && (!p.detailed || (p.pkg != null && have.computeIfAbsent(p.pkg, this::installed)))) list.add(p);   // app missing: skip
         }
         if (list.isEmpty()) return list;
-        long hour = System.currentTimeMillis() / 3600_000L;
-        // Three per hour (pick_count: more, that the home screen slides through), never two from the same franchise
+        // The same all day, in the list's order (it changes with the daily list), never two from the same franchise
         // ("Law & Order" and "Law & Order: Special…").
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (int i = 0; i < list.size() && out.size() < count; i++) {
-            Pick p = list.get((int) ((hour * 3 + i) % list.size()));
+            Pick p = list.get(i);
             if (seen.add(franchise(p.title))) out.add(p);
         }
         return out;
@@ -279,23 +296,88 @@ final class Recs {
         return name != null ? name : p.app;
     }
 
-    /** The pick's ready backdrop (or null: builds it in the background and notifies when it's ready). */
+    /**
+     * The pick's ready backdrop, or null: reads it from disk (or downloads and builds it) in the background and notifies
+     * when it's ready. A read is skipped when the pick is no longer near the focus by the time its turn comes.
+     */
     Backdrop backdrop(Pick p) {
         if (p == null || p.backdrop == null || !p.detailed) return null;   // the details choose the image: wait for them
+        boolean spot = Prefs.spotlightOn();
+        if (spot != spotlight) {        // the style changed: the images in memory have the other style's parts
+            spotlight = spot;
+            synchronized (images) { images.clear(); }
+            if (!spot) synchronized (posters) { posters.clear(); }    // only Spotlight's row draws them
+        }
         final String key = p.backdrop;    // the details may swap the image midway
         synchronized (images) {
             Backdrop b = images.get(key);
             if (b != null) return b;
             if (!pending.add(key)) return null;
         }
-        io.execute(() -> {
+        decode.execute(() -> {
+            boolean handed = false;
             try {
-                loadImage(p);
+                if (!near(key) || spot != spotlight) return;
+                Backdrop b = Backdrop.load(base(key), spot);
+                if (b != null) {
+                    touch(key);
+                    keep(key, b, spot);
+                    return;
+                }
+                handed = true;
+                fetch.execute(() -> {
+                    try {
+                        keep(key, build(key, spot, true), spot);
+                    } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                        AppLog.w("recommendation image: " + e.getMessage());
+                    } finally {
+                        synchronized (images) { pending.remove(key); }
+                    }
+                });
             } finally {
-                synchronized (images) { pending.remove(key); }
+                if (!handed) synchronized (images) { pending.remove(key); }
             }
         });
         return null;
+    }
+
+    /** Puts a ready image in memory (dropping the least recently drawn past the budget) and tells the screen. */
+    private void keep(String key, Backdrop b, boolean spot) {
+        if (b == null || spot != spotlight) return;
+        synchronized (images) {
+            images.put(key, b);
+            // Not recycled when dropped: HomeView's bgFrom/bgTo can hold any of these for as long as that pick stays
+            // the background (plans/plan-memory-management.md, item 5: recycling here crashed the renderer).
+            long total = 0;
+            for (Backdrop o : images.values()) total += o.bytes();
+            java.util.Iterator<Backdrop> it = images.values().iterator();
+            while (total > budget(spot) && images.size() > 1 && it.hasNext()) {
+                Backdrop o = it.next();
+                if (o == b) continue;
+                total -= o.bytes();
+                it.remove();
+            }
+        }
+        notifyListeners();
+    }
+
+    /** Memory for ready images: Spotlight 3 (the focus ±1, ~5.5 MB each at 1080p with the 1280×720 photo), Cards the three tabs' 9 cards (~4.7 MB each). */
+    private static long budget(boolean spot) {
+        return (spot ? 18L : 48L) << 20;
+    }
+
+    /** The picks whose image is worth having in memory now: the focus ±1 in Spotlight, otherwise the cards that may show next. */
+    private List<Pick> nearby() {
+        if (!Prefs.spotlightOn()) return wanted();
+        List<Pick> out = new ArrayList<>();
+        List<Pick> list = now(viewKind, poolCap());
+        for (int i = -1; i <= 1 && !list.isEmpty(); i++) out.add(list.get(Math.floorMod(viewStart + i, list.size())));
+        return out;
+    }
+
+    private boolean near(String backdrop) {
+        for (Pick p : nearby()) if (backdrop.equals(p.backdrop)) return true;
+        return false;
     }
 
     /** The pick's poster (TMDB's poster art, the title baked in), decoded at about `width` px — or null: loads in the
@@ -309,25 +391,56 @@ final class Recs {
             if (b != null) return b;
             if (!posterPending.add(key)) return null;
         }
-        io.execute(() -> {
+        decode.execute(() -> {
+            boolean handed = false;
             try {
-                loadPoster(p, width);
+                if (posterFile(key).exists()) {
+                    loadPoster(key, width);
+                    return;
+                }
+                handed = true;
+                fetch.execute(() -> {
+                    try {
+                        downloadPoster(key);
+                        loadPoster(key, width);
+                    } catch (IOException e) {
+                        AppLog.w("poster: " + e.getMessage());
+                    } finally {
+                        synchronized (posters) { posterPending.remove(key); }
+                    }
+                });
             } finally {
-                synchronized (posters) { posterPending.remove(key); }
+                if (!handed) synchronized (posters) { posterPending.remove(key); }
             }
         });
         return null;
     }
 
     private boolean hasImage(Pick p) {
-        return p.backdrop != null && imageFile(p).exists();
+        return p.backdrop != null && Backdrop.photoFile(base(p.backdrop)).exists();
     }
 
-    private File imageFile(Pick p) {
-        return new File(new File(context.getCacheDir(), "recs"), p.backdrop.replace("/", ""));
+    /** The picks' images on disk: Android may empty it (low storage), and then they're fetched again. */
+    private File dir() {
+        return new File(context.getCacheDir(), "picks");
     }
 
-    /** With a key: fetches the list if stale or the time of day (morning/afternoon/night) changed; then the details. */
+    /** "/abc.jpg" → "abc": what the files of a TMDB image start with (Backdrop adds ".jpg", ".frost.png"…). */
+    private static String stem(String path) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        int dot = name.indexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private File base(String path) {
+        return new File(dir(), stem(path));
+    }
+
+    /**
+     * With a key: fetches the list once a day (or when a setting it depends on changed); then the details and images of
+     * what's on screen. A daily list is prepared whole and waits for {@link #publish}; a first list, or one for changed
+     * settings, shows at once.
+     */
     void refreshIfStale() {
         if (!hasKey(context) || !Prefs.picksOn() || fetching) return;
         long now = System.currentTimeMillis();
@@ -335,9 +448,8 @@ final class Recs {
         boolean newKey = stamp != keyStamp;
         long sinceFail = now - failedAt;    // negative = the clock went back: don't wait
         if (!newKey && failedAt != 0 && sinceFail >= 0 && sinceFail < 10 * 60_000L) return;
-        int p = period(now);
-        boolean stale = newKey || p != period || now - listAt > LIST_EVERY || now < listAt || picks.isEmpty()
-                || !listLanguage.equals(Ui.language);
+        boolean changed = newKey || picks.isEmpty() || !listLanguage.equals(Ui.language);
+        boolean stale = changed || now - listAt > LIST_EVERY || now < listAt;
         boolean missing = false;
         for (Pick pick : wanted()) missing |= !pick.detailed || !hasImage(pick);
         if (!stale && !missing) return;
@@ -345,7 +457,18 @@ final class Recs {
         fetching = true;
         io.execute(() -> {
             try {
-                if (stale) fetchList(p);
+                if (stale) {
+                    AppLog.w("picks: fetching the list (" + (newKey ? "settings changed" : picks.isEmpty() ? "none yet"
+                            : changed ? "language changed" : "daily") + ")");
+                    List<Pick> list = fetchList();
+                    if (changed) {
+                        picks = list;
+                        next = null;
+                    } else {
+                        next = prepare(list);
+                    }
+                    save();
+                }
                 // One failing title doesn't stop the others; whatever has no app on the TV is not downloaded.
                 int failures = 0, tried = 0;
                 String last = "";
@@ -353,7 +476,7 @@ final class Recs {
                     tried++;
                     try {
                         if (!pick.detailed) fetchDetails(pick);
-                        if (pick.pkg != null) download(pick);
+                        if (pick.pkg != null && pick.backdrop != null) build(pick.backdrop, Prefs.spotlightOn(), false);
                     } catch (Exception e) {
                         failures++;
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -381,15 +504,6 @@ final class Recs {
         });
     }
 
-    /** Home screen design: the ready images are rebuilt for it (the light design uses cards, not the whole photo). */
-    void setLight(boolean value) {
-        if (value == light) return;
-        light = value;
-        synchronized (images) {
-            images.clear();
-        }
-    }
-
     /**
      * Screensaver: the picks with an app on the TV and an image already on disk, starting with this hour's (the
      * featured one first), never two from the same franchise.
@@ -407,9 +521,9 @@ final class Recs {
         return out;
     }
 
-    /** The pick's original image if it's already on disk (the screensaver loads it in its own way), or null. */
+    /** The pick's photo if it's already on disk (the screensaver loads it in its own way), or null. */
     File readyImage(Pick p) {
-        return hasImage(p) ? imageFile(p) : null;
+        return hasImage(p) ? Backdrop.photoFile(base(p.backdrop)) : null;
     }
 
     /**
@@ -432,7 +546,7 @@ final class Recs {
                 for (Pick p : todo) {
                     try {
                         if (!p.detailed) fetchDetails(p);
-                        if (p.pkg != null) download(p);
+                        if (p.pkg != null && p.backdrop != null) build(p.backdrop, Prefs.spotlightOn(), false);
                     } catch (Exception e) {
                         failures++;
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -449,6 +563,66 @@ final class Recs {
                 notifyListeners();
             }
         });
+    }
+
+    /**
+     * The next list made ready to show (io thread): details for the new titles, every image on disk. Titles whose
+     * details or image failed, or (from the TV's apps) with no app on the TV, are left out, so nothing in it shows
+     * without its picture or disappears later. Throws when nothing is left.
+     */
+    private List<Pick> prepare(List<Pick> list) throws IOException {
+        boolean spot = Prefs.spotlightOn();
+        List<Pick> out = new ArrayList<>();
+        int fresh = 0;
+        String last = "";
+        for (Pick p : list) {
+            try {
+                if (!p.detailed) {
+                    fetchDetails(p);
+                    fresh++;
+                }
+                if (p.pkg == null || p.backdrop == null) continue;
+                build(p.backdrop, spot, false);
+                if (spot && p.poster != null) downloadPoster(p.poster);
+                Launcher.get(context).prefetch(p.kind, p.id);   // a title that stays: where it streams, a day later
+                out.add(p);
+            } catch (Exception e) {
+                last = e.getMessage() == null ? e.toString() : e.getMessage();
+                AppLog.w("next picks: “" + p.title + "”: " + last);
+            }
+        }
+        if (out.isEmpty()) throw new IOException(last.isEmpty() ? "TMDB returned no recommendations" : last);
+        AppLog.w("picks: next list ready, " + out.size() + " titles, " + fresh + " new");
+        return out;
+    }
+
+    /**
+     * Shows the list prepared by the daily refresh, if one is waiting. HomeView calls it only while the picks aren't in
+     * view (the home screen is away, or the focus is elsewhere), so no title changes under the focus. The titles that
+     * stay keep their places (and their objects); the new ones take the places of those that left, in the new list's
+     * order, and any more go at the end.
+     */
+    void publish() {
+        List<Pick> fresh = next;
+        if (fresh == null) return;
+        next = null;
+        Map<String, Pick> incoming = new LinkedHashMap<>();
+        for (Pick p : fresh) incoming.put(key(p), p);
+        java.util.Set<String> staying = new java.util.HashSet<>();
+        for (Pick o : picks) if (incoming.containsKey(key(o))) staying.add(key(o));
+        List<Pick> added = new ArrayList<>();
+        for (Pick p : fresh) if (!staying.contains(key(p))) added.add(p);
+        java.util.Iterator<Pick> in = added.iterator();
+        List<Pick> out = new ArrayList<>();
+        for (Pick o : picks) {
+            if (staying.contains(key(o))) out.add(o);
+            else if (in.hasNext()) out.add(in.next());
+        }
+        while (in.hasNext()) out.add(in.next());
+        picks = out;
+        AppLog.w("picks: new list shown, " + added.size() + " new titles");
+        io.execute(this::save);
+        notifyListeners();
     }
 
     /** Cards on screen at once: the window that gets details is this page and the next one. */
@@ -498,11 +672,9 @@ final class Recs {
 
     // MARK: - TMDB
 
-    private void fetchList(int p) throws Exception {
-        if (listOnly()) {
-            fetchListOnly(p);
-            return;
-        }
+    /** The new list (not shown yet), with the details already known for the titles in it. */
+    private List<Pick> fetchList() throws Exception {
+        if (listOnly()) return fetchListOnly();
         String ids = installedProviderIds();
         String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + languageFilter() + "&include_adult=false"
                 + "&sort_by=popularity.desc" + "&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
@@ -532,8 +704,7 @@ final class Recs {
         if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
         // Titles still in the list keep their details (same language and same apps), so a refresh asks for new ones only.
         if (listLanguage.equals(Ui.language) && cache.getLong("keyStamp", 0) == keyStamp) {
-            Map<String, Pick> old = new HashMap<>();
-            for (Pick o : picks) if (o.detailed) old.put(key(o), o);
+            Map<String, Pick> old = known();
             for (Pick q : list) {
                 Pick o = old.get(key(q));
                 if (o == null) continue;
@@ -545,10 +716,18 @@ final class Recs {
                 q.detailed = true;
             }
         }
-        picks = list;
-        period = p;
         listAt = System.currentTimeMillis();
         listLanguage = Ui.language;
+        return list;
+    }
+
+    /** The titles with details, from the list on screen and the one waiting, by {@link #key}. */
+    private Map<String, Pick> known() {
+        Map<String, Pick> out = new HashMap<>();
+        List<Pick> waiting = next;
+        if (waiting != null) for (Pick o : waiting) if (o.detailed) out.put(key(o), o);
+        for (Pick o : picks) if (o.detailed) out.put(key(o), o);
+        return out;
     }
 
     /** The discover filter on the titles' original language: "&with_original_language=en%7Chi" (either), or nothing. */
@@ -696,7 +875,7 @@ final class Recs {
         }
     }
 
-    private void fetchListOnly(int p) throws Exception {
+    private List<Pick> fetchListOnly() throws Exception {
         String common = "&language=" + lang() + "&watch_region=" + region() + monetization() + languageFilter()
                 + "&include_adult=false&sort_by=popularity.desc" + (Prefs.hideAnimation() ? "&without_genres=" + ANIMATION : "");
         boolean genres = !loadSavedGenres();
@@ -723,21 +902,17 @@ final class Recs {
         alternate(list, seen, hotMovies, hotShows, 12);
         alternate(list, seen, newMovies, newShows, 24);
         if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
-        Map<String, Pick> old = new HashMap<>();
-        for (Pick o : picks) old.put(key(o), o);
-        for (Pick q : list) {       // a title still in the list keeps the IMDb id it already found
+        Map<String, Pick> old = known();
+        for (Pick q : list) {       // a title still in the list keeps the backdrop it already chose
             Pick o = old.get(key(q));
             if (o != null) {
-                if (o.detailed) {       // its best backdrop was already chosen
-                    q.backdrop = o.backdrop;
-                    q.detailed = true;
-                }
+                q.backdrop = o.backdrop;
+                q.detailed = true;
             }
         }
-        picks = list;
-        period = p;
         listAt = System.currentTimeMillis();
         listLanguage = Ui.language;
+        return list;
     }
 
     private List<Pick> listed(JSONObject answer, String kind) {
@@ -812,11 +987,17 @@ final class Recs {
         return false;
     }
 
-    /** Picks from anything popular: the title's best backdrop (no text over it, closest to 1920 wide), one small request; TMDB's default stays if it has none. */
+    /**
+     * Picks from anything popular: the title's best backdrop (no text over it, closest to 1920 wide; TMDB's default
+     * stays if it has none), and in the same answer where it streams and its IMDb id, which Launcher keeps (so OK opens
+     * it at once, with no request of its own).
+     */
     private void fetchBackdrop(Pick p) throws Exception {
-        String best = bestBackdrop(get("/" + p.kind + "/" + p.id + "/images?include_image_language=null"));
+        JSONObject o = get("/" + p.kind + "/" + p.id + "?append_to_response=images,watch/providers,external_ids&include_image_language=null");
+        String best = bestBackdrop(o.optJSONObject("images"));
         if (best != null) p.backdrop = best;
         p.detailed = true;
+        Launcher.get(context).remember(p.kind, p.id, o);
     }
 
     /** Genre, runtime (or seasons) and the service it's on, among the ones the TV has. */
@@ -860,6 +1041,7 @@ final class Recs {
         if (p.app != null) parts.add(serviceName(p));
         p.meta = String.join(" · ", parts);
         p.detailed = true;
+        Launcher.get(context).remember(p.kind, p.id, o);
     }
 
     /**
@@ -1068,21 +1250,54 @@ final class Recs {
         return key.isEmpty() ? null : key;
     }
 
-    // MARK: - Images (TMDB originals on disk, up to 24 so the whole list fits; this hour's kept ready in memory)
+    // MARK: - Images (built once, kept on disk at the size drawn; the ones near the focus kept ready in memory)
 
-    private void download(Pick p) throws IOException {
-        File f = imageFile(p);
-        if (f.exists()) return;
-        //noinspection ResultOfMethodCallIgnored
-        f.getParentFile().mkdirs();
-        File part = new File(f.getPath() + ".part");
-        HttpURLConnection c = (HttpURLConnection) new URL(IMAGES + p.backdrop).openConnection();
+    /**
+     * Makes sure the image's files for this style are on disk (TMDB's photo is downloaded only when even the saved 16:9
+     * copy is missing, and isn't kept) and returns it ready to draw, or (`keep` false) null. Background threads only.
+     */
+    private Backdrop build(String path, boolean spot, boolean keep) throws IOException {
+        Object lock = building.computeIfAbsent(stem(path), k -> new Object());
+        synchronized (lock) {
+            File base = base(path);
+            if (Backdrop.ready(base, spot)) {
+                if (!keep) return null;
+                Backdrop b = Backdrop.load(base, spot);
+                if (b != null) return b;
+                Backdrop.delete(base);      // unreadable, or made for another UI size: made again
+            }
+            //noinspection ResultOfMethodCallIgnored
+            dir().mkdirs();
+            long started = android.os.SystemClock.uptimeMillis();
+            File photo = Backdrop.photoFile(base);
+            boolean saved = photo.exists();
+            File src = saved ? photo : download(IMAGES + path, new File(base.getPath() + ".src.part"));
+            try {
+                Backdrop b = Backdrop.make(decode(src, Backdrop.W), spot, base, keep);
+                AppLog.w("picks image " + stem(path) + ": " + (saved ? "rebuilt" : "downloaded and built") + " in "
+                        + (android.os.SystemClock.uptimeMillis() - started) + " ms");
+                return b;
+            } finally {
+                //noinspection ResultOfMethodCallIgnored
+                if (!saved) src.delete();
+                if (!saved) prune();
+            }
+        }
+    }
+
+    /** Downloads to `part` (a file of its own), or throws. */
+    private static File download(String url, File part) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(20000);
-        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-            byte[] buffer = new byte[16384];
-            int n;
-            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+        try {
+            if (c.getResponseCode() != 200) throw new IOException("image: HTTP " + c.getResponseCode());
+            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+                byte[] buffer = new byte[16384];
+                int n;
+                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+            }
+            return part;
         } catch (IOException e) {
             //noinspection ResultOfMethodCallIgnored
             part.delete();
@@ -1090,140 +1305,168 @@ final class Recs {
         } finally {
             c.disconnect();
         }
-        if (!part.renameTo(f)) throw new IOException("couldn't save the image");
-        prune(f.getParentFile());
     }
 
-    /** Reads the photo (≥ the UI's width) and builds the backdrop (Backdrop: cards plus frosted and glass versions). */
-    private void loadImage(Pick p) {
-        synchronized (images) {
-            if (images.containsKey(p.backdrop)) return;
-        }
-        File f = imageFile(p);
-        try {
-            download(p);
-            BitmapFactory.Options bounds = new BitmapFactory.Options();
-            bounds.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(f.getPath(), bounds);
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inSampleSize = 1;
-            while (bounds.outWidth / (opts.inSampleSize * 2) >= Backdrop.W) opts.inSampleSize *= 2;
-            Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
-            if (b == null) throw new IOException("unreadable image");
-            AppLog.w("backdrop \u201c" + p.title + "\u201d: " + bounds.outWidth + "×" + bounds.outHeight + " → " + Backdrop.W + "×" + Backdrop.H);
-            boolean forLight = light;
-            Backdrop backdrop = Backdrop.make(b, forLight);
-            if (forLight != light) return;   // the design changed midway: this one is stale
-            synchronized (images) {
-                images.put(p.backdrop, backdrop);
-                // Not recycled on eviction: HomeView's bgFrom/bgTo can hold a reference to any of these — including
-                // the oldest one, which this FIFO eviction always removes first — for as long as that pick stays the
-                // current background (minutes, not frames), well outside this map's own eviction order
-                // (#memory-management, item 5: recycling here raced that reference and crashed the renderer).
-                while (images.size() > (forLight ? Math.max(10, poolCap() + 3) : Prefs.spotlightOn() ? 6 : 4)) images.remove(images.keySet().iterator().next());
-            }
-            notifyListeners();
-        } catch (IOException | RuntimeException | OutOfMemoryError e) {
+    /** Decodes at the smallest power-of-two reduction still at least `width` wide. */
+    private static Bitmap decode(File f, int width) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), bounds);
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = 1;
+        while (bounds.outWidth / (opts.inSampleSize * 2) >= width) opts.inSampleSize *= 2;
+        Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+        if (b == null) throw new IOException("unreadable image");
+        return b;
+    }
+
+    /** The image was just used: the disk cache drops the least recently used first. */
+    private static void touch(File f) {
+        long now = System.currentTimeMillis();
+        //noinspection ResultOfMethodCallIgnored
+        if (now - f.lastModified() > 3600_000L) f.setLastModified(now);
+    }
+
+    private void touch(String backdrop) {
+        touch(Backdrop.photoFile(base(backdrop)));
+    }
+
+    private File posterFile(String path) {
+        return new File(dir(), stem(path) + ".poster.jpg");
+    }
+
+    private void downloadPoster(String path) throws IOException {
+        File f = posterFile(path);
+        if (f.exists()) return;
+        //noinspection ResultOfMethodCallIgnored
+        dir().mkdirs();
+        File part = download(POSTER_IMAGES + path, new File(f.getPath() + "." + Thread.currentThread().getId() + ".part"));
+        if (!part.renameTo(f)) {
             //noinspection ResultOfMethodCallIgnored
-            f.delete();
-            AppLog.w("recommendation image: " + e.getMessage());
+            part.delete();
+            throw new IOException("couldn't save the poster");
         }
+        prune();
     }
 
-    private File posterFile(Pick p) {
-        return new File(new File(context.getCacheDir(), "recs-posters"), p.poster.replace("/", ""));
-    }
-
-    /** Downloads (if needed) and decodes the pick's poster at about `width` px, same pattern as {@link #loadImage}. */
-    private void loadPoster(Pick p, int width) {
+    /** Decodes the saved poster at about `width` px, straight into GPU memory. */
+    private void loadPoster(String path, int width) {
         synchronized (posters) {
-            if (posters.containsKey(p.poster)) return;
+            if (posters.containsKey(path)) return;
         }
-        File f = posterFile(p);
-        try {
-            if (!f.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                f.getParentFile().mkdirs();
-                File part = new File(f.getPath() + ".part");
-                HttpURLConnection c = (HttpURLConnection) new URL(POSTER_IMAGES + p.poster).openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(20000);
-                try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-                    byte[] buffer = new byte[16384];
-                    int n;
-                    while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-                } catch (IOException e) {
-                    //noinspection ResultOfMethodCallIgnored
-                    part.delete();
-                    throw e;
-                } finally {
-                    c.disconnect();
-                }
-                if (!part.renameTo(f)) throw new IOException("couldn't save the poster");
-            }
-            BitmapFactory.Options bounds = new BitmapFactory.Options();
-            bounds.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(f.getPath(), bounds);
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inSampleSize = 1;
-            while (bounds.outWidth / (opts.inSampleSize * 2) >= width) opts.inSampleSize *= 2;
-            Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
-            if (b == null) throw new IOException("unreadable poster");
-            synchronized (posters) {
-                posters.put(p.poster, b);
-                while (posters.size() > Math.max(10, poolCap() + 3)) {
-                    Bitmap old = posters.remove(posters.keySet().iterator().next());
-                    if (old != null) old.recycle();
-                }
-            }
-            notifyListeners();
-        } catch (IOException | RuntimeException | OutOfMemoryError e) {
+        File f = posterFile(path);
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), bounds);
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inPreferredConfig = Bitmap.Config.HARDWARE;
+        opts.inSampleSize = 1;
+        while (bounds.outWidth / (opts.inSampleSize * 2) >= width) opts.inSampleSize *= 2;
+        Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+        if (b == null) {
             //noinspection ResultOfMethodCallIgnored
             f.delete();
-            AppLog.w("poster: " + e.getMessage());
+            AppLog.w("poster: unreadable image");
+            return;
         }
+        touch(f);
+        synchronized (posters) {
+            posters.put(path, b);
+            // Not recycled when dropped: the row may be drawing it this very frame (the UI thread holds no lock).
+            java.util.Iterator<String> it = posters.keySet().iterator();
+            while (posters.size() > Math.max(10, poolCap() + 3) && it.hasNext()) {
+                it.next();
+                it.remove();
+            }
+        }
+        notifyListeners();
     }
 
-    void trim() {
-        // Explore's picks stay: the home screen opens on that tab, so its cards are never gray when you come back.
+    /** The home screen is away or memory is short: only the image on screen stays in memory (the rest is read from disk again). */
+    void trim(boolean posters) {
         java.util.Set<String> keep = new java.util.HashSet<>();
-        for (Pick p : now(null)) if (p.backdrop != null) keep.add(p.backdrop);
+        boolean spot = Prefs.spotlightOn();
+        List<Pick> list = spot ? now(viewKind, poolCap()) : now(viewKind);
+        // On screen: Spotlight's focused photo, or the three cards (the first is also the background).
+        for (int i = 0; i < (spot ? 1 : 3) && !list.isEmpty(); i++) {
+            String b = list.get(Math.floorMod(viewStart + i, list.size())).backdrop;
+            if (b != null) keep.add(b);
+        }
         synchronized (images) {
             images.keySet().retainAll(keep);
         }
+        // Spotlight's posters are on screen too: they go only when memory is short (read back from disk).
+        if (posters) synchronized (this.posters) { this.posters.clear(); }
     }
 
-    private static void prune(File dir) {
-        // A download cut off when the system stopped the app leaves its .part behind.
-        long stale = System.currentTimeMillis() - 10 * 60_000L;
-        File[] parts = dir.listFiles((d, name) -> name.endsWith(".part"));
-        for (int i = 0; parts != null && i < parts.length; i++) {
-            //noinspection ResultOfMethodCallIgnored
-            if (parts[i].lastModified() < stale) parts[i].delete();
+    /**
+     * Keeps the images on disk under DISK_BUDGET: the list's own titles stay, the others go least recently used first.
+     * A download cut off when the system stopped the app leaves a .part behind: gone after 10 minutes.
+     */
+    private synchronized void prune() {
+        File[] files = dir().listFiles();
+        if (files == null) return;
+        long stale = System.currentTimeMillis() - 10 * 60_000L, total = 0;
+        Map<String, List<File>> groups = new HashMap<>();
+        Map<String, Long> used = new HashMap<>();
+        for (File f : files) {
+            String name = f.getName();
+            if (name.endsWith(".part")) {
+                //noinspection ResultOfMethodCallIgnored
+                if (f.lastModified() < stale) f.delete();
+                continue;
+            }
+            int dot = name.indexOf('.');
+            String stem = dot > 0 ? name.substring(0, dot) : name;
+            groups.computeIfAbsent(stem, k -> new ArrayList<>()).add(f);
+            used.merge(stem, f.lastModified(), Math::max);
+            total += f.length();
         }
-        File[] files = dir.listFiles((d, name) -> !name.endsWith(".part"));
-        if (files == null || files.length <= 24) return;
-        Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-        for (int i = 0; i < files.length - 24; i++) {
-            //noinspection ResultOfMethodCallIgnored
-            files[i].delete();
+        if (total <= DISK_BUDGET) return;
+        java.util.Set<String> keep = new java.util.HashSet<>();
+        List<Pick> mine = new ArrayList<>(picks);
+        List<Pick> waiting = next;
+        if (waiting != null) mine.addAll(waiting);
+        for (Pick p : mine) {
+            if (p.backdrop != null) keep.add(stem(p.backdrop));
+            if (p.poster != null) keep.add(stem(p.poster));
+        }
+        List<String> old = new ArrayList<>(groups.keySet());
+        old.removeAll(keep);
+        old.sort((a, b) -> Long.compare(used.get(a), used.get(b)));
+        for (int i = 0; i < old.size() && total > DISK_BUDGET; i++) {
+            for (File f : groups.get(old.get(i))) {
+                total -= f.length();
+                //noinspection ResultOfMethodCallIgnored
+                f.delete();
+            }
         }
     }
+
+    /** The folders of the earlier cache (TMDB's originals as downloaded): replaced by `picks`. */
+    private void removeOldCache() {
+        for (String name : new String[] {"recs", "recs-posters"}) {
+            File[] files = new File(context.getCacheDir(), name).listFiles();
+            if (files == null) continue;
+            //noinspection ResultOfMethodCallIgnored
+            for (File f : files) f.delete();
+            //noinspection ResultOfMethodCallIgnored
+            new File(context.getCacheDir(), name).delete();
+        }
+    }
+
 
     // MARK: - List cache
 
     private void save() {
         try {
-            JSONArray a = new JSONArray();
-            for (Pick p : picks) {
-                a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop)
-                        .put("poster", p.poster == null ? "" : p.poster)
-                        .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
-                        .put("detailed", p.detailed));
-            }
-            SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
+            JSONArray a = toJson(picks);
+            SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putLong("listAt", listAt)
                     .putString("language", listLanguage)
                     .putLong("keyStamp", keyStamp).putInt("version", CACHE_VERSION);
+            List<Pick> waiting = next;
+            if (waiting != null) e.putString("next", toJson(waiting).toString());
+            else e.remove("next");
             // Watchmode links of every title opened are kept; past 600 they start over (the refused-key mark stays).
             List<String> links = new ArrayList<>();
             for (String k : cache.getAll().keySet()) if ((k.startsWith("wm:") || k.startsWith("wm2:")) && !k.equals("wm:refused")) links.add(k);
@@ -1231,6 +1474,17 @@ final class Recs {
             e.apply();
         } catch (Exception ignored) {
         }
+    }
+
+    private static JSONArray toJson(List<Pick> list) throws org.json.JSONException {
+        JSONArray a = new JSONArray();
+        for (Pick p : list) {
+            a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop)
+                    .put("poster", p.poster == null ? "" : p.poster)
+                    .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
+                    .put("detailed", p.detailed));
+        }
+        return a;
     }
 
     private static List<Pick> parse(JSONArray a) {

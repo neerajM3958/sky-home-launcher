@@ -270,8 +270,21 @@ final class Launcher {
         }
     }
 
+    /**
+     * Keeps where a title streams from a TMDB answer the picks already have (one with watch/providers and external_ids
+     * appended), so no request of its own is needed for it today. Background threads only.
+     */
+    void remember(String kind, int id, JSONObject o) {
+        Info info = parse(o);
+        write(file(kind, id), info);
+        synchronized (memory) { memory.put(kind + id + "-" + Recs.region(), info); }
+    }
+
     private Info fetch(String kind, int id) throws Exception {
-        JSONObject o = recs.get("/" + kind + "/" + id + "?append_to_response=watch/providers,external_ids");
+        return parse(recs.get("/" + kind + "/" + id + "?append_to_response=watch/providers,external_ids"));
+    }
+
+    private static Info parse(JSONObject o) {
         Info info = new Info();
         info.at = System.currentTimeMillis();
         String imdb = o.optString("imdb_id");
@@ -286,11 +299,13 @@ final class Launcher {
         for (int t = 0; region != null && t < types.length; t++) {
             JSONArray list = region.optJSONArray(types[t]);
             for (int i = 0; list != null && i < list.length(); i++) {
-                String name = list.getJSONObject(i).optString("provider_name");
+                JSONObject offer = list.optJSONObject(i);
+                if (offer == null) continue;
+                String name = offer.optString("provider_name");
                 boolean seen = false;
                 for (Routing.Offer other : info.offers) seen |= other.name.equals(name);
-                if (!name.isEmpty() && !seen) info.offers.add(new Routing.Offer(name, tiers[t], list.getJSONObject(i).optString("logo_path"),
-                        list.getJSONObject(i).optInt("provider_id")));
+                if (!name.isEmpty() && !seen) info.offers.add(new Routing.Offer(name, tiers[t], offer.optString("logo_path"),
+                        offer.optInt("provider_id")));
             }
         }
         return info;
