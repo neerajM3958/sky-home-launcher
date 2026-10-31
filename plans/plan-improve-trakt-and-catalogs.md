@@ -5,10 +5,26 @@ the browse screen) have some of the problems the picks had (`plan-improve-picks.
 small (TMDB's w342, about 30 KB) and Trakt already checks for changes before fetching. Goal: scrolling with no slow
 frames from posters, fewer TMDB calls while moving the focus, and lists that never change under the focus.
 
-Status (2026-10-31): proposed, not started. Builds on the picks work (branch `improve-picks`): the same patterns
-(GPU decode, a last-asked-first queue, one TMDB call per title, `Launcher.remember`, swap when ready).
+Status (2026-10-31): steps 1–6 built on branch `improve-picks` (after the picks commit) and tested on the Skyworth
+4K Google TV Stick (Android 14, 1080p):
+- Trakt rows and the browse screen draw (posters, badges, details, picture).
+- Posters are GPU bitmaps: the render thread's uploaded images are 2 MB (61 small ones: badges, the picks' small
+  blurred backgrounds), against about 12 MB for the 40 posters before; `:home` Java heap 12.9 MB (was about 25 MB).
+  "Slow bitmap uploads" stayed at about 7 per 8 moves: they come from those small images, not posters.
+- 10 quick Rights on a row not seen before: 3 TMDB requests (the title the focus stopped on and its neighbours, the
+  badge from the same answer), against up to 4 per poster passed before.
+- Trakt: `trakt: fetched what was watched` (the watchlist kept).
+- Not checked: a TMDB rows refresh being published (24 h; the code path is the picks' one), the episodes screen's
+  400 px posters, Android 8 to 11.
+- As built: the "skip when scrolled past" check uses the time each poster was last drawn (500 ms) instead of a
+  `setView`; posters are saved per width (`<path>-<width>.jpg`: the rows' 225 px, the episodes screen's 400 px);
+  the new rows' first 10 posters per row are saved ahead (`Catalogs.rowPosterWidth`).
+- The browse screen's picture is also asked only once the focus rests (`browseRested`): before, titles whose details
+  were in memory had their picture asked on every frame while passed, and `Details.backdrop` skips a queued picture
+  that's no longer the latest asked for.
+- Decisions confirmed as proposed: 24 h, 150 ms, 20 MB / 30 MB.
 
-## Decisions (proposed, to confirm)
+## Decisions
 
 - **TMDB rows refresh every 24 h**, like the picks (now 6 h). TMDB's lists change about once a day (trending is
   "today"). Trakt's rows keep their 30-minute change check.

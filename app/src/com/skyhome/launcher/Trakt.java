@@ -23,9 +23,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -94,7 +96,7 @@ final class Trakt {
         sp = c.getSharedPreferences("trakt", Context.MODE_PRIVATE);
         if (sp.getInt("version", 0) != VERSION) sp.edit().clear().putInt("version", VERSION).apply();
         if (sp.getInt("rowsVersion", 0) != ROWS_VERSION) {
-            sp.edit().remove("rows").remove("stamp").putInt("rowsVersion", ROWS_VERSION).apply();
+            sp.edit().remove("rows").remove("stamp").remove("stampWatched").remove("stampList").putInt("rowsVersion", ROWS_VERSION).apply();
         }
         // checked stays 0: the first look after each start is one request, and refetches only if something changed.
         try {
@@ -399,17 +401,22 @@ final class Trakt {
             boolean changed = false;
             try {
                 JSONObject activity = new JSONObject(get("/sync/last_activities"));
-                String stamp = stamp(activity);
-                if (!stamp.equals(sp.getString("stamp", "")) || sp.getString("rows", null) == null) {
+                // Two stamps: what was watched (Continue Watching, Shows you watch) and the watchlist; only what changed is fetched.
+                String watched = watchedStamp(activity), list = watchlistStamp(activity);
+                boolean all = sp.getString("rows", null) == null;
+                boolean doWatched = all || !watched.equals(sp.getString("stampWatched", ""));
+                boolean doList = all || !list.equals(sp.getString("stampList", ""));
+                if (doWatched || doList) {
+                    Map<String, Catalogs.Row> kept = new HashMap<>();
+                    for (Catalogs.Row r : rows) kept.put(r.key, r);
+                    Catalogs.Row continuing = doWatched ? continueWatching() : kept.get(CONTINUE);
+                    Catalogs.Row shows = doWatched ? showsRow() : kept.get(SHOWS);
+                    Catalogs.Row watchlist = doList ? watchlist() : kept.get(WATCHLIST);
                     List<Catalogs.Row> next = new ArrayList<>();
-                    Row continuing = continueWatching();
-                    if (!continuing.items.isEmpty()) next.add(continuing);
-                    Row shows = showsRow();
-                    if (!shows.items.isEmpty()) next.add(shows);
-                    Row watchlist = watchlist();
-                    if (!watchlist.items.isEmpty()) next.add(watchlist);
+                    for (Catalogs.Row r : new Catalogs.Row[] {continuing, shows, watchlist}) if (r != null && !r.items.isEmpty()) next.add(r);
                     rows = next;
-                    sp.edit().putString("rows", encode(next)).putString("stamp", stamp).apply();
+                    sp.edit().putString("rows", encode(next)).putString("stampWatched", watched).putString("stampList", list).remove("stamp").apply();
+                    AppLog.w("trakt: fetched " + (doWatched && doList ? "every list" : doWatched ? "what was watched" : "the watchlist"));
                     changed = true;
                 }
                 checked = System.currentTimeMillis();
@@ -424,12 +431,17 @@ final class Trakt {
         });
     }
 
-    /** What changes when the lists do: the times of the last play, pause and watchlist change. */
-    private static String stamp(JSONObject a) {
-        JSONObject movies = a.optJSONObject("movies"), episodes = a.optJSONObject("episodes"), watchlist = a.optJSONObject("watchlist");
+    /** What changes when Continue Watching and Shows you watch do: the times of the last play and pause. */
+    private static String watchedStamp(JSONObject a) {
+        JSONObject movies = a.optJSONObject("movies"), episodes = a.optJSONObject("episodes");
         return (movies == null ? "" : movies.optString("watched_at") + movies.optString("paused_at"))
-                + "|" + (episodes == null ? "" : episodes.optString("watched_at") + episodes.optString("paused_at"))
-                + "|" + (watchlist == null ? "" : watchlist.optString("updated_at"));
+                + "|" + (episodes == null ? "" : episodes.optString("watched_at") + episodes.optString("paused_at"));
+    }
+
+    /** What changes when the Watchlist does. */
+    private static String watchlistStamp(JSONObject a) {
+        JSONObject watchlist = a.optJSONObject("watchlist");
+        return watchlist == null ? "" : watchlist.optString("updated_at");
     }
 
     private static final class Candidate {

@@ -460,6 +460,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             updatePalette();
             checkNight(true);
             if (!Prefs.spotlightOn() && zone != Z_CARDS) recs.publish();   // a new daily list: not under the focus
+            if (zone != Z_BROWSE) catalogs.publish();      // the day's TMDB rows: only while the browse screen isn't open
             updatePicks();
             updateSleep();
             handler.postDelayed(this, 15_000);
@@ -618,6 +619,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         details.removeListener(this);
         closePop(true);
         recs.publish();     // a new daily list waiting: shown while the home screen is away
+        catalogs.publish();
     }
 
     void destroy() {
@@ -2372,25 +2374,67 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     @Override public void onDetails() {
         if (browseShown == null) return;
-        browseInfo = details.info(browseShown.kind, browseShown.id);
+        browseInfo = details.known(browseShown.kind, browseShown.id);
+        if (browseInfo == null) return;
+        // The details' answer also told Launcher where it streams: the badge looks again in what is kept.
+        if (browseShown.servicePkg == null) browseShown.serviceAsked = 0;
+        dropBrowseBackdrop();
         browseTextGen = -1;
         browseDirty = true;
         scheduleAutoTrailer();
         wake();
     }
 
-    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus where it was when it can. */
+    /** The focused row in the new rows: the one with the same key, else the same place (within the new rows). */
+    private static int sameRow(List<Catalogs.Row> old, int index, List<Catalogs.Row> rows) {
+        if (index < old.size()) {
+            for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(old.get(index).key)) return i;
+        }
+        return Math.min(index, Math.max(0, rows.size() - 1));
+    }
+
+    /**
+     * Each new row's focused column: on the title that had the focus in the row with the same key, when it is still
+     * there; else the same column (within the new row). A row that changed never moves the focus to another title.
+     */
+    private static int[] sameTitles(List<Catalogs.Row> old, int[] oldCols, List<Catalogs.Row> rows) {
+        Map<String, String> focused = new HashMap<>();
+        Map<String, Integer> column = new HashMap<>();
+        for (int i = 0; i < old.size() && i < oldCols.length; i++) {
+            Catalogs.Row r = old.get(i);
+            if (r.items.isEmpty()) continue;
+            int c = Math.min(oldCols[i], r.items.size() - 1);
+            focused.put(r.key, Catalogs.hideKey(r.key, r.items.get(c)));
+            column.put(r.key, c);
+        }
+        int[] cols = new int[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            Catalogs.Row r = rows.get(i);
+            String who = focused.get(r.key);
+            int c = -1;
+            for (int j = 0; who != null && j < r.items.size() && c < 0; j++) if (who.equals(Catalogs.hideKey(r.key, r.items.get(j)))) c = j;
+            if (c < 0) {
+                Integer was = column.get(r.key);
+                c = Math.min(was == null ? (i < oldCols.length ? oldCols[i] : 0) : was, Math.max(0, r.items.size() - 1));
+            }
+            cols[i] = c;
+        }
+        return cols;
+    }
+
+    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus on the same title when it can. */
     private void syncRows() {
         List<Catalogs.Row> rows = catalogs.rows();
         if (rows == catRows) return;
+        List<Catalogs.Row> old = catRows;
         catRows = rows;
         catShift = new Spring[rows.size()];
         for (int i = 0; i < catShift.length; i++) catShift[i] = new Spring(0.34f, 1f, 0);
-        int[] cols = new int[rows.size()];
-        for (int i = 0; i < cols.length && i < catCol.length; i++) cols[i] = Math.min(catCol[i], Math.max(0, rows.get(i).items.size() - 1));
-        catCol = cols;
+        int focusedRow = sameRow(old, catRowIndex, rows);
+        catCol = sameTitles(old, catCol, rows);
+        int[] cols = catCol;
         for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        catRowIndex = Math.min(catRowIndex, Math.max(0, rows.size() - 1));
+        catRowIndex = focusedRow;
         if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
         else if (zone == Z_CATALOG) catRow.target = catScrollTarget();
     }
@@ -2494,8 +2538,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String catalogService(Catalogs.Item it, boolean focused) {
         if (it.appPkg != null) return it.appPkg;
         if (it.id <= 0) return null;
-        if (it.serviceAsked < 1 || (focused && it.serviceAsked < 2 && it.servicePkg == null)) {
-            boolean fetch = focused && it.serviceAsked < 2;
+        if (focused) {      // TMDB is asked only once the focus rests on it (holding an arrow asks for nothing on the way)
+            String key = it.kind + it.id;
+            if (!key.equals(restKey)) {
+                restKey = key;
+                restAt = SystemClock.uptimeMillis();
+                handler.removeCallbacks(rested);
+                handler.postDelayed(rested, REST_MS + 10);
+            }
+        }
+        boolean rest = focused && SystemClock.uptimeMillis() - restAt >= REST_MS;
+        // On the browse screen the details' answer brings where it streams: asked only when it came from disk without it.
+        boolean waitDetails = it == browseShown && zone == Z_BROWSE && browseInfo == null;
+        if (it.serviceAsked < 1 || (rest && !waitDetails && it.serviceAsked < 2 && it.servicePkg == null)) {
+            boolean fetch = rest && !waitDetails && it.serviceAsked < 2;
             it.serviceAsked = fetch ? 2 : 1;
             Launcher.get(activity).service(it.kind, it.id, fetch, pkg -> {
                 it.servicePkg = pkg;
@@ -2504,6 +2560,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         return it.servicePkg;
     }
+
+    private String restKey = "";
+    private long restAt;
+    private final Runnable rested = this::markBadges;
 
     /** The app a pick opens in: its own, or (picks from anything popular) what Launcher finds, asked once per pick. */
     private String pickService(Recs.Pick p) {
@@ -2578,14 +2638,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void syncBrowse() {
         List<Catalogs.Row> rows = catalogs.browseRows();
         if (rows == browseRows) return;
+        List<Catalogs.Row> old = browseRows;
         browseRows = rows;
         browseShift = new Spring[rows.size()];
         for (int i = 0; i < browseShift.length; i++) browseShift[i] = new Spring(0.34f, 1f, 0);
-        int[] cols = new int[rows.size()];
-        for (int i = 0; i < cols.length && i < browseCol.length; i++) cols[i] = Math.min(browseCol[i], Math.max(0, rows.get(i).items.size() - 1));
-        browseCol = cols;
+        int focusedRow = sameRow(old, browseRowIndex, rows);
+        browseCol = sameTitles(old, browseCol, rows);
+        int[] cols = browseCol;
         for (int i = 0; i < cols.length; i++) browseShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        browseRowIndex = Math.min(browseRowIndex, Math.max(0, rows.size() - 1));
+        browseRowIndex = focusedRow;
         browsePos.snap(browseRowIndex);
         if (zone == Z_BROWSE) {
             if (rows.isEmpty()) leaveBrowse();
@@ -2656,24 +2717,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return c < 0 ? null : items.get(c);
     }
 
-    /** The focused title changed: ask for its details (and its neighbours', so the next press is quick) and remake the text. */
+    /**
+     * The focused title changed: shows what is already known about it, and asks for its details (and its neighbours',
+     * so the next press is quick) once the focus rests there (holding an arrow asks for nothing on the way).
+     */
     private void touchBrowse() {
         Catalogs.Item it = browseItem();
         browseShown = it;
-        browseInfo = it == null ? null : details.info(it.kind, it.id);
-        if (it != null) {
-            List<Catalogs.Item> items = browseRows.get(browseRowIndex).items;
-            int c = browseCol[browseRowIndex];
-            for (int d = -1; d <= 1; d += 2) {
-                if (c + d >= 0 && c + d < items.size()) details.info(items.get(c + d).kind, items.get(c + d).id);
-            }
-        }
-        if (browseInfo != null && browseInfo.backdrop.isEmpty() && browseBack != null) {      // no picture for this one: the old one goes
-            browsePrev = browseBack;
-            browseBack = null;
-            browseSwap.snap(0);
-            browseSwap.target = 1;
-        }
+        browseInfo = it == null ? null : details.known(it.kind, it.id);
+        browseRested = null;
+        handler.removeCallbacks(askDetails);
+        if (it != null) handler.postDelayed(askDetails, REST_MS);
+        dropBrowseBackdrop();
         browseTextGen = -1;
         browseDirty = true;
         String key = it == null ? "" : it.kind + it.id;
@@ -2684,6 +2739,38 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         scheduleAutoTrailer();
         wake();
+    }
+
+    /** How long the focus stays on a title before TMDB is asked about it. */
+    private static final long REST_MS = 150;
+
+    private final Runnable askDetails = this::askDetails;
+    private Catalogs.Item browseRested;     // the title the focus has rested on (its picture may be asked for)
+
+    private void askDetails() {
+        Catalogs.Item it = browseShown;
+        if (it == null || zone != Z_BROWSE) return;
+        browseRested = it;
+        browseInfo = details.info(it.kind, it.id);
+        List<Catalogs.Item> items = browseRows.isEmpty() ? null : browseRows.get(browseRowIndex).items;
+        int c = browseCol.length > browseRowIndex ? browseCol[browseRowIndex] : -1;
+        for (int d = -1; items != null && d <= 1; d += 2) {
+            if (c + d >= 0 && c + d < items.size()) details.info(items.get(c + d).kind, items.get(c + d).id);
+        }
+        dropBrowseBackdrop();
+        browseTextGen = -1;
+        browseDirty = true;
+        wake();
+    }
+
+    /** No picture for the focused title: the old one goes. */
+    private void dropBrowseBackdrop() {
+        if (browseInfo != null && browseInfo.backdrop.isEmpty() && browseBack != null) {
+            browsePrev = browseBack;
+            browseBack = null;
+            browseSwap.snap(0);
+            browseSwap.target = 1;
+        }
     }
 
     /** Where poster `i` of row `r` is on the browse screen now. */
@@ -2727,7 +2814,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawBrowseDetails(Canvas c) {
         browseStage(stage);
         float r = 12 * k;
-        if (browseInfo != null) {
+        // The picture only once the focus rests (askDetails): a quick scroll asks for none of the titles it passes.
+        if (browseInfo != null && browseRested == browseShown) {
             Bitmap want = details.backdrop(browseInfo);
             if (want != null && want != browseBack) {
                 browsePrev = browseBack;
