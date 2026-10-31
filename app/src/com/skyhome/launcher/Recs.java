@@ -177,14 +177,6 @@ final class Recs {
     /** The images on disk (`cacheDir/picks`): about 600 KB a title; past this the least recently used go. */
     private static final long DISK_BUDGET = 40L << 20;
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the picks' Backdrop cache.
-    long[] debugImageBytes() {
-        synchronized (images) {
-            long bytes = 0;
-            for (Backdrop b : images.values()) bytes += b.bytes();
-            return new long[] {bytes, images.size()};
-        }
-    }
     private volatile List<Pick> picks = new ArrayList<>();
     private volatile List<Pick> next;   // the next list, ready (details and images on disk) and waiting for publish()
     private volatile long listAt;
@@ -1391,17 +1383,20 @@ final class Recs {
     }
 
     /** The home screen is away or memory is short: only the image on screen stays in memory (the rest is read from disk again). */
-    void trim() {
+    void trim(boolean posters) {
         java.util.Set<String> keep = new java.util.HashSet<>();
-        if (Prefs.spotlightOn()) {
-            List<Pick> list = now(viewKind, poolCap());
-            if (!list.isEmpty()) keep.add(list.get(Math.floorMod(viewStart, list.size())).backdrop);
-        } else {
-            for (Pick p : now(viewKind)) if (p.backdrop != null) keep.add(p.backdrop);
+        boolean spot = Prefs.spotlightOn();
+        List<Pick> list = spot ? now(viewKind, poolCap()) : now(viewKind);
+        // On screen: Spotlight's focused photo, or the three cards (the first is also the background).
+        for (int i = 0; i < (spot ? 1 : 3) && !list.isEmpty(); i++) {
+            String b = list.get(Math.floorMod(viewStart + i, list.size())).backdrop;
+            if (b != null) keep.add(b);
         }
         synchronized (images) {
             images.keySet().retainAll(keep);
         }
+        // Spotlight's posters are on screen too: they go only when memory is short (read back from disk).
+        if (posters) synchronized (this.posters) { this.posters.clear(); }
     }
 
     /**

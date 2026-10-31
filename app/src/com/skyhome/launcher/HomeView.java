@@ -467,34 +467,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     };
 
-    // TEMP (memory investigation, remove after): logs every bitmap cache's byte count every 20s, plus native heap total.
-    private final Runnable debugMemory = new Runnable() {
-        @Override public void run() {
-            if (!running) return;
-            long[] posters = catalogs.debugPosterBytes();
-            long[] tiles = HomeApps.debugTileBytes();
-            long[] logos = HomeApps.debugLogoBytes();
-            long[] symbols = Symbols.debugBytes();
-            long[] badges = ServiceBadge.debugBytes();
-            long[] shad = shadows.debugBytes();
-            long[] picks = recs.debugImageBytes();
-            long[] details2 = details.debugBackdropBytes();
-            long backdropBytes = (bgFrom != null ? bgFrom.bytes() : 0) + (bgTo != null ? bgTo.bytes() : 0);
-            long crispBytes = 0;
-            for (Bitmap b : crispLogos.values()) if (b != null) crispBytes += b.getAllocationByteCount();
-            long known = posters[0] + tiles[0] + logos[0] + symbols[0] + badges[0] + shad[0] + backdropBytes + picks[0] + crispBytes + details2[0];
-            long nativeHeap = android.os.Debug.getNativeHeapAllocatedSize();
-            AppLog.w(String.format(java.util.Locale.ROOT,
-                    "mem: posters %dKB(%d) tiles %dKB(%d) logos %dKB(%d) symbols %dKB(%d) badges %dKB(%d) shadows %dKB(%d) "
-                            + "backdrop %dKB(%d+%d) picks %dKB(%d) crisp %dKB(%d) details %dKB(%d) | known %dKB / native heap %dKB",
-                    posters[0] / 1024, posters[1], tiles[0] / 1024, tiles[1], logos[0] / 1024, logos[1],
-                    symbols[0] / 1024, symbols[1], badges[0] / 1024, badges[1], shad[0] / 1024, shad[1],
-                    backdropBytes / 1024, bgFrom != null ? 1 : 0, bgTo != null ? 1 : 0, picks[0] / 1024, picks[1],
-                    crispBytes / 1024, crispLogos.size(), details2[0] / 1024, details2[1], known / 1024, nativeHeap / 1024));
-            handler.postDelayed(this, 20_000);
-        }
-    };
-
     HomeView(Activity a) {
         super(a);
         activity = a;
@@ -579,7 +551,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.refreshIfStale();
         catalogs.refreshWatchNext(false);
         handler.postDelayed(tick, 15_000);
-        handler.postDelayed(debugMemory, 5_000);   // TEMP (memory investigation, remove after)
         if (look.m.animatedBackground) handler.postDelayed(drift, 100);
         if (Config.PICK_ROTATE_SECONDS > 0) handler.postDelayed(rotate, Config.PICK_ROTATE_SECONDS * 1000L);
         checkNotices();
@@ -609,7 +580,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         Choreographer.getInstance().removeFrameCallback(this);
         handler.removeCallbacks(tick);
-        handler.removeCallbacks(debugMemory);   // TEMP (memory investigation, remove after)
         handler.removeCallbacks(drift);
         handler.removeCallbacks(rotate);
         handler.removeCallbacks(reloadSoon);
@@ -635,6 +605,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         zone = Prefs.spotlightOn() ? Z_CARDS : Z_SHELF;   // Spotlight's shelf isn't on this screen (see constructor)
         shelfIndex = 0;
         sheetOpen = false;
+        if (drawerOpen) catalogsClosed();
         drawerOpen = false;
         if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; catRow.target = 0; }   // close its page too
         closePop(!animated);
@@ -1770,7 +1741,25 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         drawerDirty = true;
     }
 
+    /** How long the catalog posters stay decoded after the drawer closes: a quick close and reopen stays instant. */
+    private static final long POSTERS_KEEP_MS = 10_000;
+    private final Runnable dropPosters = this::dropPosters;
+
+    /** The drawer (and the browse screen in it) has been closed a while: its posters go; they're read back from disk. */
+    private void dropPosters() {
+        if (drawerOpen) return;
+        catalogs.trim();
+        AppLog.w("catalog posters dropped (drawer closed)");
+    }
+
+    /** The drawer closed: its posters are dropped in a few seconds, unless it opens again first. */
+    private void catalogsClosed() {
+        handler.removeCallbacks(dropPosters);
+        handler.postDelayed(dropPosters, POSTERS_KEEP_MS);
+    }
+
     private void openDrawer() {
+        handler.removeCallbacks(dropPosters);
         catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
         syncRows();
         syncBrowse();
@@ -1794,6 +1783,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void closeDrawer() {
         drawerOpen = false;
+        catalogsClosed();
         drawer.target = 0;
         catIn.target = 0;
         catRow.target = 0;
@@ -1812,6 +1802,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * ordinary `Z_SHELF` → `openDrawer()` → `enterCatalog()` path (harmless to call again — `catIn` is already at 1,
      * so that's just a focus change, not a second "opening" animation). */
     private void openSpotlightPage() {
+        handler.removeCallbacks(dropPosters);
         catalogs.refreshIfStale();
         syncRows();
         syncBrowse();
@@ -1830,6 +1821,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * to the poster row, undoing what `openSpotlightPage()` started. */
     private void closeSpotlightPage() {
         drawerOpen = false;
+        catalogsClosed();
         drawer.target = 0;
         catIn.target = 0;
         catRow.target = 0;

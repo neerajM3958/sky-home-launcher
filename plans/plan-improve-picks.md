@@ -214,4 +214,4 @@ On the TV (`adb logcat -s SkyHomeLauncher`, plus a temporary log line per downlo
 - **Poster bitmaps** are HARDWARE and no longer recycled when dropped (the row may be drawing them).
 - **Spotlight's soft blur** now draws (`glassImage()` is built in both styles). This is a visible change.
 - `TRIM_MEMORY_RUNNING_LOW` and above (which includes `UI_HIDDEN`) trims the images to the one on screen.
-- Step 7 (cleanup) not done yet: `debugMemory`/`debugImageBytes` still in place, `CLAUDE.md` not updated.
+- Step 7: the temporary memory logging (`debugMemory`, every `debug…Bytes()`) is removed; `CLAUDE.md` not updated yet.

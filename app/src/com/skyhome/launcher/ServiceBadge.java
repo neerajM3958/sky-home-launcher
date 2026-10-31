@@ -36,15 +36,6 @@ final class ServiceBadge {
         return t;
     });
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the badge cache.
-    static long[] debugBytes() {
-        synchronized (BADGES) {
-            long bytes = 0;
-            for (Bitmap b : BADGES.values()) if (b != null) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, BADGES.size()};
-        }
-    }
-
     /** The badge of `pkg` at `px` pixels, or null while it is being built (`ready` runs on the pool's thread when it is). */
     static Bitmap get(Context c, String pkg, int px, Runnable ready) {
         if (pkg == null || pkg.isEmpty()) return null;

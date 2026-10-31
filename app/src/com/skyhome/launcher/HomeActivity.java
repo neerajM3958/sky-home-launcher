@@ -87,8 +87,19 @@ public class HomeActivity extends Activity {
 
     @Override public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        // Hidden, or memory running low: the picks' images come back from disk quickly, so only the one on screen stays.
-        if (level >= TRIM_MEMORY_RUNNING_LOW) Recs.get(this).trim();
+        // Hidden (another app is on), or memory running low: what isn't on screen goes; it is read back from disk quickly
+        // (tens of ms), and a smaller home screen is less likely to be killed while hidden, which would mean a cold start.
+        // Not recycled (a frame may still hold one): the GPU memory of a dropped image is freed when the garbage collector
+        // finalizes it, and a hidden process that allocates nothing may not collect for a long time, so one is asked for.
+        if (level < TRIM_MEMORY_RUNNING_LOW) return;
+        boolean hard = level >= TRIM_MEMORY_BACKGROUND;     // the system is reclaiming memory: the posters go too
+        Recs.get(this).trim(hard);
+        if (hard) {
+            Catalogs.get(this).trim();
+            Details.get(this).trim();
+        }
+        Runtime.getRuntime().gc();
+        AppLog.w("memory trimmed (level " + level + ")");
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {

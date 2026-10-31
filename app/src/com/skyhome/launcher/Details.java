@@ -92,15 +92,6 @@ final class Details {
     private volatile String wanted = "";
     private final List<Listener> listeners = new ArrayList<>();
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the browse screen's backdrop cache.
-    long[] debugBackdropBytes() {
-        synchronized (backdrops) {
-            long bytes = 0;
-            for (Bitmap b : backdrops.values()) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, backdrops.size()};
-        }
-    }
-
     private Details(Context c) {
         context = c;
         images.execute(this::removeOldImages);
@@ -111,6 +102,11 @@ final class Details {
         File[] old = new File(context.getCacheDir(), "details").listFiles((d, name) -> name.startsWith("b"));
         //noinspection ResultOfMethodCallIgnored
         for (int i = 0; old != null && i < old.length; i++) old[i].delete();
+    }
+
+    /** Memory is short and the home screen is away: the decoded backdrops go (read back from disk when shown). */
+    void trim() {
+        synchronized (backdrops) { backdrops.clear(); }
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }

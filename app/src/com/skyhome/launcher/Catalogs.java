@@ -674,15 +674,6 @@ final class Catalogs {
         main.post(() -> { for (Listener l : new ArrayList<>(listeners)) l.onCatalogs(); });
     }
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the decoded poster cache.
-    long[] debugPosterBytes() {
-        synchronized (posters) {
-            long bytes = 0;
-            for (Bitmap b : posters.values()) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, posters.size()};
-        }
-    }
-
     // MARK: - Posters (saved at the size drawn; the ones on screen stay decoded in GPU memory)
 
     /**
@@ -734,6 +725,11 @@ final class Catalogs {
             }
         });
         return null;
+    }
+
+    /** The drawer has been closed a while, or memory is short: the decoded posters go (read back from disk when shown). */
+    void trim() {
+        synchronized (posters) { posters.clear(); }
     }
 
     private void keep(String key, Bitmap b) {

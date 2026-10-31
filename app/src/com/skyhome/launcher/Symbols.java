@@ -28,15 +28,6 @@ final class Symbols {
     private static final Paint PAINT = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private static final RectF RECT = new RectF();
 
-    // TEMP (memory investigation, remove after): byte count and entry count of the icon cache.
-    static long[] debugBytes() {
-        synchronized (CACHE) {
-            long bytes = 0;
-            for (Bitmap b : CACHE.values()) if (b != null) bytes += b.getAllocationByteCount();
-            return new long[] {bytes, CACHE.size()};
-        }
-    }
-
     static Bitmap get(Context c, String name) {
         synchronized (CACHE) {
             if (CACHE.containsKey(name)) return CACHE.get(name);
