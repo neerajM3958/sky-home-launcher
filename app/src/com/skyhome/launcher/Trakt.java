@@ -49,7 +49,7 @@ final class Trakt {
     private static final long CHECK_EVERY = 30 * 60_000L;      // one small request tells whether anything changed
     private static final long RETRY_AFTER_FAILURE = 10 * 60_000L;
     // VERSION clears everything, the sign-in too; ROWS_VERSION only the saved rows (when a row is added or changes shape).
-    private static final int VERSION = 1, ROWS_VERSION = 6, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
+    private static final int VERSION = 1, ROWS_VERSION = 8, CONTINUE_MAX = 12, SHOWS_MAX = 20, WATCHLIST_MAX = 20, FETCH = 20;
     private static final long YEAR = 365L * 24 * 3600_000L;
 
     private static Trakt instance;
@@ -242,7 +242,8 @@ final class Trakt {
     private void saveTokens(JSONObject o) {
         long now = System.currentTimeMillis() / 1000;
         sp.edit().putString("access", o.optString("access_token")).putString("refresh", o.optString("refresh_token"))
-                .putLong("expires", now + o.optLong("expires_in", 7 * 24 * 3600L)).putBoolean("reconnect", false).apply();
+                .putLong("expires", now + o.optLong("expires_in", 7 * 24 * 3600L)).putBoolean("reconnect", false)
+                .remove("writeDenied").apply();
     }
 
     /** A valid access token, renewed first when it has under an hour left (a refresh token works once, so the new pair is saved at once). */
@@ -267,6 +268,122 @@ final class Trakt {
             throw new IOException("Trakt ended the sign-in");
         }
         throw new IOException("Trakt " + r.code);
+    }
+
+    // MARK: - Taking a tile off a list
+
+    /** The answers to a removal: Trakt did it, Trakt refused to let this sign-in change anything, or it didn't work (offline…). */
+    static final int DONE = 0, DENIED = 1, FAILED = 2;
+
+    /** Connected, and Trakt hasn't refused this sign-in a change (a new sign-in tries again). */
+    boolean canWrite() { return connected() && !sp.getBoolean("writeDenied", false); }
+
+    void removeFromWatchlist(Catalogs.Item it, java.util.function.IntConsumer done) {
+        JSONArray one = new JSONArray().put(obj("ids", obj("trakt", it.traktId)));
+        write(WATCHLIST, it, "POST", "/sync/watchlist/remove", obj("tv".equals(it.kind) ? "shows" : "movies", one), done);
+    }
+
+    void removePlayback(Catalogs.Item it, java.util.function.IntConsumer done) {
+        write(CONTINUE, it, "DELETE", "/sync/playback/" + it.playbackId, null, done);
+    }
+
+    /**
+     * The tile goes at once and Trakt is told after; if Trakt can't do it the tile comes back (unless a fetch has replaced
+     * the rows since, which carries Trakt's own answer). `done` runs on the main thread.
+     */
+    private void write(String rowKey, Catalogs.Item it, String method, String path, JSONObject body, java.util.function.IntConsumer done) {
+        write(rowKey, it, method, path, body, null, false, done);
+    }
+
+    /**
+     * Marks a movie, or the episode a tile stands for, as watched now. The tile leaves its row at once; a paused play and a
+     * watchlist entry for it are taken off too (Trakt may not do that by itself), and the lists are fetched again so the
+     * show's next episode shows up.
+     */
+    void markWatched(String rowKey, Catalogs.Item it, java.util.function.IntConsumer done) {
+        final JSONObject ids = obj("trakt", it.traktId);
+        final boolean show = "tv".equals(it.kind);
+        JSONObject body;
+        if (show) {
+            JSONObject episode = obj("number", it.markEpisode);
+            JSONObject season = obj("number", it.markSeason, "episodes", new JSONArray().put(episode));
+            body = obj("shows", new JSONArray().put(obj("ids", ids, "seasons", new JSONArray().put(season))));
+        } else {
+            body = obj("movies", new JSONArray().put(obj("ids", ids)));
+        }
+        Step after = null;
+        if (it.playbackId > 0) after = () -> send("DELETE", "/sync/playback/" + it.playbackId, null);
+        else if (!show && WATCHLIST.equals(rowKey)) {
+            after = () -> send("POST", "/sync/watchlist/remove", obj("movies", new JSONArray().put(obj("ids", ids))));
+        }
+        write(rowKey, it, "POST", "/sync/history", body, after, true, done);
+    }
+
+    private interface Step {
+        void run() throws IOException;
+    }
+
+    private void write(String rowKey, Catalogs.Item it, String method, String path, JSONObject body, Step followUp,
+            boolean refetch, java.util.function.IntConsumer done) {
+        final List<Row> before = rows;
+        final List<Row> after = without(before, rowKey, it);
+        rows = after;
+        changed();
+        net.execute(() -> {
+            int result;
+            try {
+                int code = send(method, path, body);
+                // 404 on a play: it is already gone
+                result = code / 100 == 2 || (code == 404 && method.equals("DELETE")) ? DONE
+                        : code == 401 || code == 403 ? DENIED : FAILED;
+                if (result == DENIED) AppLog.w("trakt: " + code + " for " + path + ", this sign-in can't change lists");
+            } catch (Exception e) {
+                AppLog.w("trakt: " + e.getMessage());
+                result = FAILED;
+            }
+            final int answer = result;
+            if (answer == DENIED) sp.edit().putBoolean("writeDenied", true).apply();
+            if (answer == DONE) {
+                if (followUp != null) {
+                    try {
+                        followUp.run();
+                    } catch (IOException e) {       // the main change went through: the next fetch settles the rest
+                        AppLog.w("trakt: " + e.getMessage());
+                    }
+                }
+                try {
+                    sp.edit().putString("rows", encode(rows)).apply();
+                } catch (Exception ignored) {
+                }
+                if (refetch) {
+                    checked = 0;
+                    main.post(this::refreshIfStale);
+                }
+            } else if (rows == after) {
+                rows = before;
+            }
+            main.post(() -> {
+                // A refusal is followed by a hide in Catalogs, which rebuilds: no flash of the tile in between.
+                if (answer == FAILED) changed();
+                done.accept(answer);
+            });
+        });
+    }
+
+    private static List<Row> without(List<Row> list, String rowKey, Catalogs.Item it) {
+        List<Row> out = new ArrayList<>();
+        for (Row row : list) {
+            if (!row.key.equals(rowKey)) {
+                out.add(row);
+                continue;
+            }
+            Row kept = new Row();
+            kept.key = row.key;
+            kept.title = row.title;
+            for (Catalogs.Item x : row.items) if (x != it && !(x.traktId == it.traktId && x.kind.equals(it.kind))) kept.items.add(x);
+            if (!kept.items.isEmpty()) out.add(kept);
+        }
+        return out;
     }
 
     // MARK: - The lists
@@ -334,8 +451,13 @@ final class Trakt {
             Catalogs.Item it = item(media, episode ? "tv" : "movie");
             if (it == null) continue;
             JSONObject ep = o.optJSONObject("episode");
-            if (episode && ep != null) it.sub = label(ep);
+            if (episode && ep != null) {
+                it.sub = label(ep);
+                it.markSeason = ep.optInt("season");
+                it.markEpisode = ep.optInt("number");
+            }
             it.progress = (float) (o.optDouble("progress", 0) / 100);
+            it.playbackId = o.optLong("id");
             Candidate c = new Candidate();
             c.time = text(o, "paused_at");
             c.key = (episode ? "s" : "m") + it.imdb + it.id;
@@ -352,6 +474,8 @@ final class Trakt {
             // Trakt also lists watchlisted shows that were never started (no last_watched_at): those belong to the Watchlist row.
             if (it == null || next == null || text(progress, "last_watched_at").isEmpty()) continue;
             it.sub = label(next);
+            it.markSeason = next.optInt("season");
+            it.markEpisode = next.optInt("number");
             Candidate c = new Candidate();
             c.time = text(progress, "last_watched_at");
             c.key = "s" + it.imdb + it.id;
@@ -619,7 +743,8 @@ final class Trakt {
             for (Catalogs.Item it : row.items) {
                 items.put(obj("id", it.id, "kind", it.kind, "title", it.title, "poster", it.poster, "url", it.posterUrl,
                         "imdb", it.imdb == null ? "" : it.imdb, "sub", it.sub == null ? "" : it.sub, "progress", it.progress,
-                        "tid", it.traktId, "ep", it.episodes, "at", it.at));
+                        "tid", it.traktId, "ep", it.episodes, "at", it.at, "pid", it.playbackId,
+                        "ms", it.markSeason, "me", it.markEpisode));
             }
             a.put(obj("key", row.key, "items", items));
         }
@@ -651,6 +776,9 @@ final class Trakt {
                 it.traktId = p.optInt("tid");
                 it.episodes = p.optBoolean("ep");
                 it.at = p.optLong("at");
+                it.playbackId = p.optLong("pid");
+                it.markSeason = p.optInt("ms");
+                it.markEpisode = p.optInt("me");
                 row.items.add(it);
             }
             if (!row.items.isEmpty()) out.add(row);
@@ -684,6 +812,18 @@ final class Trakt {
                 continue;
             }
             throw new IOException("Trakt " + r.code + " for " + path.replaceAll("\\?.*", ""));
+        }
+    }
+
+    /** An authorised change; a 401 renews the access token once and tries again. Gives Trakt's answer code. */
+    private int send(String method, String path, JSONObject body) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            Reply r = call(method, path, body, token());
+            if (r.code == 401 && attempt == 0) {
+                sp.edit().putLong("expires", 0).apply();     // the next token() renews it
+                continue;
+            }
+            return r.code;
         }
     }
 

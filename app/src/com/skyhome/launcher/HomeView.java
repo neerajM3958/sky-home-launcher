@@ -262,6 +262,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private List<HomeApps.Item> popItems = new ArrayList<>();
     private final RectF popPanel = new RectF(), popRow = new RectF();
     private String popTitle = "";
+    private Runnable[] popActions;     // set for a poster's menu: OK runs the focused row's; null for the inputs, where OK opens the one chosen
+    private final RectF tileAnchor = new RectF();
     private int popIndex;
     private boolean popOpen, popDirty;
     private Paint popLabel;
@@ -742,7 +744,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
-        place(popLayer, Math.round((CONTENT_R - POP_W - 40) * kk), Math.round(POP_LAYER_TOP * kk));
+        if (popPanel.isEmpty()) place(popLayer, Math.round((CONTENT_R - POP_W - 40) * kk), Math.round(POP_LAYER_TOP * kk));
+        else placePop();
         place(toastLayer, (width - toastLayer.getMeasuredWidth()) / 2, 0);
     }
 
@@ -1842,6 +1845,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             launch(list.get(0), from);
             return;
         }
+        popActions = null;
         popItems = list;
         popTitle = group.label;
         popIndex = 0;
@@ -1851,18 +1855,65 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             }
         }
-        if (popFocus.length != list.size()) {
-            popFocus = new Spring[list.size()];
+        showPop(null);
+    }
+
+    /** Opens the popover with `popItems` and `popIndex` set; beside `anchor` (a poster), or at the top right when null. */
+    private void showPop(RectF anchor) {
+        if (popFocus.length != popItems.size()) {
+            popFocus = new Spring[popItems.size()];
             for (int i = 0; i < popFocus.length; i++) popFocus[i] = new Spring(0.3f, 0.82f, 0);
         }
         aim(popFocus, popIndex, true);
-        layoutPop();
+        layoutPop(anchor);
         popOpen = true;
         popIn.target = 1;
         popLayer.setVisibility(VISIBLE);
         popDirty = statusDirty = true;
         wake();
         spoken.focusMoved();
+    }
+
+    // MARK: - A poster's menu (hold OK on Continue Watching, Shows you watch, Watchlist)
+
+    private boolean tileMenuReady() {
+        return !sheetOpen && zone == Z_CATALOG && !catRows.isEmpty() && catRowIndex < catRows.size()
+                && catCol[catRowIndex] < catRows.get(catRowIndex).items.size();
+    }
+
+    /** One action for the focused poster: Remove where Trakt takes it off the list, else Hide (only this launcher forgets it). */
+    private void openTileMenu() {
+        handler.removeCallbacks(holdStart);
+        holdArmed = false;
+        if (popOpen || opening != null || !tileMenuReady()) return;
+        okHeld = true;      // the release of this press opens nothing
+        final Catalogs.Row row = catRows.get(catRowIndex);
+        final Catalogs.Item it = row.items.get(catCol[catRowIndex]);
+        final boolean remove = catalogs.actionFor(row.key, it) == Catalogs.REMOVE;
+        final String rowTitle = row.title;
+        final String label = !remove ? Ui.tr("Hide from this row")
+                : Trakt.WATCHLIST.equals(row.key) ? Ui.tr("Remove from Watchlist") : Ui.tr("Remove");
+        final List<Runnable> actions = new ArrayList<>();
+        popItems = new ArrayList<>();
+        popItems.add(HomeApps.action(HomeApps.APP, "tile", label, null));
+        actions.add(() -> catalogs.act(row.key, it, r -> {
+            if (r == Trakt.FAILED) showToast(Ui.tr("Couldn't remove it. Try again."));
+            else if (r == Catalogs.HIDDEN) showToast(Ui.trf("Hidden from {row}: {title}", "row", rowTitle, "title", it.title));
+            else showToast(Ui.trf("Removed from {row}: {title}", "row", rowTitle, "title", it.title));
+        }));
+        if (catalogs.canMark(row.key, it)) {
+            popItems.add(HomeApps.action(HomeApps.APP, "mark", Ui.tr("Mark as watched"), null));
+            actions.add(() -> catalogs.mark(row.key, it, r -> {
+                if (r == Trakt.DONE) showToast(Ui.trf("Marked as watched: {title}", "title", it.title));
+                else showToast(Ui.tr("Couldn't mark it as watched. Try again."));
+            }));
+        }
+        popActions = actions.toArray(new Runnable[0]);
+        popTitle = it.title;
+        popIndex = 0;
+        posterRect(catRowIndex, catCol[catRowIndex], tileAnchor);
+        click.open();
+        showPop(tileAnchor);
     }
 
     private void closePop(boolean snap) {
@@ -1894,6 +1945,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closePop(false);
             return;
         }
+        if (popActions != null) {
+            Runnable action = popActions[popIndex];
+            closePop(false);
+            click.open();
+            action.run();
+            return;
+        }
         HomeApps.Item it = popItems.get(popIndex);
         popRowRect(popIndex, popRow);
         final RectF from = new RectF(popRow);
@@ -1902,9 +1960,28 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         launch(it, from);
     }
 
-    private void layoutPop() {
-        float right = CONTENT_R * k, top = POP_TOP * k;
-        popPanel.set(right - POP_W * k, top, right, top + (POP_TITLE_H + POP_PAD) * k + popItems.size() * POP_ROW_H * k);
+    /** The panel at the top right (the inputs), or beside `anchor`: to its right, to its left when that doesn't fit. */
+    private void layoutPop(RectF anchor) {
+        float pw = POP_W * k, ph = (POP_TITLE_H + POP_PAD) * k + popItems.size() * POP_ROW_H * k;
+        float left, top;
+        if (anchor == null) {
+            left = CONTENT_R * k - pw;
+            top = POP_TOP * k;
+        } else {
+            float gap = 24 * k, edge = 24 * k;
+            left = anchor.right + gap;
+            if (left + pw > w - edge) left = anchor.left - gap - pw;
+            left = Math.max(edge, left);
+            top = Math.max(edge, Math.min(anchor.top, h - ph - edge));
+        }
+        popPanel.set(left, top, left + pw, top + ph);
+        placePop();
+    }
+
+    /** The popover's layer is just big enough for the panel and its shadow: it follows the panel. */
+    private void placePop() {
+        int x = Math.round(popPanel.left - 40 * k), y = Math.round(popPanel.top - 38 * k);
+        popLayer.layout(x, y, x + popLayer.getMeasuredWidth(), y + popLayer.getMeasuredHeight());
     }
 
     /** Row `i` of the popover in screen coordinates. */
@@ -1924,7 +2001,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.scale(s, s, popPanel.right - 60 * k, popPanel.top);
         drawerGlass(c, popPanel, 34 * k, 0.8f, 0x22000000, 14 * k);
         rowTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
-        c.drawText(popTitle, popPanel.left + (POP_PAD + 14) * k, popPanel.top + 44 * k, rowTitle);
+        fitPaint.set(rowTitle);
+        c.drawText(TextUtils.ellipsize(popTitle, fitPaint, popPanel.width() - (2 * POP_PAD + 28) * k, TextUtils.TruncateAt.END).toString(),
+                popPanel.left + (POP_PAD + 14) * k, popPanel.top + 44 * k, rowTitle);
         for (int i = 0; i < popItems.size() && i < popFocus.length; i++) {
             HomeApps.Item it = popItems.get(i);
             float f = Ui.clamp(popFocus[i].value), r = 24 * k;
@@ -1939,11 +2018,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 c.drawRoundRect(popRow, r, r, fill);
             }
             int ink = blend(look.color(it.connected ? Look.ITEM_ON : Look.ITEM_OFF, dark()), INK, f);
-            Symbols.draw(getContext(), c, it.symbol, popRow.left + 44 * k, popRow.centerY(), 32 * k, ink);
+            if (it.symbol != null) Symbols.draw(getContext(), c, it.symbol, popRow.left + 44 * k, popRow.centerY(), 32 * k, ink);
+            float textX = it.symbol != null ? 88 : 28;     // a poster's menu has no icons
             popLabel.setColor(ink);
             fitPaint.set(popLabel);
-            String label = TextUtils.ellipsize(it.label, fitPaint, popRow.width() - 100 * k, TextUtils.TruncateAt.END).toString();
-            c.drawText(label, popRow.left + 88 * k, popRow.centerY() + Ui.halfCap(popLabel), popLabel);
+            String label = TextUtils.ellipsize(it.label, fitPaint, popRow.width() - (textX + 12) * k, TextUtils.TruncateAt.END).toString();
+            c.drawText(label, popRow.left + textX * k, popRow.centerY() + Ui.halfCap(popLabel), popLabel);
         }
         c.restoreToCount(save);
     }
@@ -3086,7 +3166,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : zone == Z_BROWSE || canReorder();
+                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : zone == Z_BROWSE || tileMenuReady() || canReorder();
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
                         hold();
@@ -3445,7 +3525,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             trailerKey();        // held OK: starts the trailer, or pauses and resumes the one playing
             return;
         }
-        if (sheetOpen) toggleShelf(); else startReorder();
+        if (sheetOpen) toggleShelf();
+        else if (zone == Z_CATALOG) openTileMenu();     // a poster's menu: Remove or Hide
+        else startReorder();
     }
 
     /** TalkBack's long click on an app in All Apps (once per press, if the remote's hold also arrives). */

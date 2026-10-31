@@ -11,8 +11,10 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Settings changed on the TV itself (Sky Home Launcher > Settings). config.properties only gives the first
@@ -174,6 +176,40 @@ final class Prefs {
     }
 
     static void setHiddenServices(List<String> keys) { put("hiddenServices", String.join(",", keys)); }
+
+    // MARK: - Hidden poster tiles (Continue Watching, Shows you watch, Watchlist)
+
+    private static final int MAX_HIDDEN_TILES = 200;
+
+    /** What the person hid from the poster rows (see Catalogs.hideKey), with the time of the hide; oldest first. */
+    static Map<String, Long> hiddenTiles() {
+        Map<String, Long> out = new LinkedHashMap<>();
+        if (app == null) return out;
+        for (String line : sp().getString("hiddenTiles", "").split("\n")) {
+            int tab = line.lastIndexOf('\t');
+            if (tab <= 0) continue;
+            try {
+                out.put(line.substring(0, tab), Long.parseLong(line.substring(tab + 1)));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return out;
+    }
+
+    static void hideTile(String key, long at) {
+        Map<String, Long> all = hiddenTiles();
+        all.remove(key);        // a new hide goes last
+        all.put(key, at);
+        StringBuilder sb = new StringBuilder();
+        int skip = Math.max(0, all.size() - MAX_HIDDEN_TILES);
+        for (Map.Entry<String, Long> e : all.entrySet()) {
+            if (skip-- > 0) continue;
+            sb.append(e.getKey()).append('\t').append(e.getValue()).append('\n');
+        }
+        put("hiddenTiles", sb.toString());
+    }
+
+    static void unhideAllTiles() { put("hiddenTiles", ""); }
 
     /** The home screen's soft click when moving and opening. */
     static boolean sounds() { return sp().getBoolean("sounds", true); }
