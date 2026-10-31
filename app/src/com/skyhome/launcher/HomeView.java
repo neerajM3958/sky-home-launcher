@@ -250,13 +250,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint popLabel;
     private final Catalogs catalogs;
     private final Layer catalogLayer;
-    private final Spring catIn = new Spring(0.5f, 0.92f, 0), catRow = new Spring(0.42f, 0.92f, 0), catFocus = new Spring(0.3f, 0.82f, 0);
-    private List<Catalogs.Row> catRows = new ArrayList<>();
-    private Spring[] catShift = new Spring[0];     // per row: the first poster shown, in posters
-    private int[] catCol = new int[0];
-    private int catRowIndex;
-    private boolean catDirty, catWasMoving;
-    private Paint lCatTitle, lCatLabel;
+    // Page 3, Trakt's and the TV's rows (HomeWatchingPage); it comes in as `catIn` goes to 1.
+    private final HomeWatchingPage watchingPage;
+    private final Spring catIn = new Spring(0.5f, 0.92f, 0);
+    private boolean catWasMoving;
+    private Paint lCatLabel;
     // Page 4, TMDB's catalogs (HomeCatalogPage), under Trakt's rows; it comes in as `browseIn` goes to 1.
     private final Layer browseLayer;
     private final Details details;
@@ -358,7 +356,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case PLATTER: drawPlatter(c); break;
                 case TILES: drawTiles(c); break;
                 case DRAWER: drawDrawer(c); break;
-                case CATALOG: drawCatalog(c); break;
+                case CATALOG: if (catIn.value >= 0.002f) watchingPage.draw(c); break;
                 case BROWSE: if (browseIn.value >= 0.002f) catalogPage.draw(c); break;
                 case SHEET: drawSheet(c); break;
                 case POP: drawPopover(c); break;
@@ -440,6 +438,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         browseLayer = new Layer(a, BROWSE);
         catalogs = Catalogs.get(a);
         details = Details.get(a);
+        watchingPage = new HomeWatchingPage(this, catalogs);
         catalogPage = new HomeCatalogPage(this, catalogs, details);
         LOADER.execute(LayoutCheck::readFlags);
         sheetLayer = new Layer(a, SHEET);
@@ -555,19 +554,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetOpen = false;
         if (drawerOpen) catalogsClosed();
         drawerOpen = false;
-        if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; catRow.target = 0; }   // close its page too
+        if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; watchingPage.top(false); }   // close its page too
         closePop(!animated);
         if (animated) {
             sheet.target = 0;
             drawer.target = 0;
             catIn.target = 0;
-            catRow.target = 0;
+            watchingPage.top(false);
             browseIn.target = 0;
         } else {
             sheet.snap(0);
             drawer.snap(0);
             catIn.snap(0);
-            catRow.snap(0);
+            watchingPage.top(true);
             browseIn.snap(0);
         }
         if (tab != 0) selectTab(0);
@@ -685,6 +684,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         layoutShelf();
         layoutDrawer();
         layoutLight();
+        watchingPage.layout(k, w, h);
         catalogPage.layout(k, w, h);
         updatePicks();
         motionDirty = true;
@@ -715,7 +715,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(look.typeface(Ui.medium), 25 * k, L_DIM);
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
-        lCatTitle = Ui.text(look.typeface(Ui.semibold), 32 * k, L_INK);
         lCatLabel = Ui.text(look.typeface(Ui.medium), 25 * k, L_INK);
         lTip = Ui.text(look.typeface(Ui.semibold), 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
@@ -783,7 +782,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt);
         boolean popMoving = step(popFocus, dt) | popIn.step(dt);
-        boolean catMoving = catIn.step(dt) | catRow.step(dt) | catFocus.step(dt) | step(catShift, dt);
+        boolean catMoving = catIn.step(dt) | watchingPage.tick(dt);
         boolean browseMoving = browseIn.step(dt) | catalogPage.tick(dt);
         boolean toastFading = tickToast(up);
         heroMoving |= tickCards(up);
@@ -808,17 +807,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (popMoving || popDirty) popLayer.invalidate();
         if (!popOpen && popIn.value <= 0.001f && popLayer.getVisibility() == VISIBLE) popLayer.setVisibility(INVISIBLE);
         if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) {      // the waiting dots move
-            catDirty = true;
+            watchingPage.invalidate();
             catalogPage.invalidate();
         }
-        if (catMoving || catDirty) catalogLayer.invalidate();
+        if (watchingPage.takeDirty() | catMoving) catalogLayer.invalidate();
         if (catalogPage.takeDirty() | browseMoving) browseLayer.invalidate();
         if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
         if (bgFading || (drawerWasMoving && !drawerMoving) || spotlightShelfMoving) platter.invalidate();
         drawerWasMoving = drawerMoving;
         if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
         catWasMoving = catMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = popDirty = false;
+        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = popDirty = false;
         if (updateClock()) {
             status.invalidate();
             if (!picksOn()) heroLayer.invalidate();
@@ -853,7 +852,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float b = smoothstep(0, 0.5f, Ui.clamp(browseIn.value));      // the browse screen takes the whole screen
         float home = (1 - s) * (1 - b), top = home * (1 - smoothstep(0, 0.32f, dc));
         float shift = SHIFT * k;
-        float catLift = (catIn.value * catLift() + catRow.value * CAT_PITCH) * k;     // the poster rows pull everything further up
+        float catLift = (catIn.value * catLift() + watchingPage.scrolled() * CAT_PITCH) * k;     // the poster rows pull everything further up
         float lift = -d * shift - catLift;
         show(heroLayer, top, lift);
         show(status, top, lift);
@@ -1202,7 +1201,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // Row 0's own top (same formula `drawCatalog` uses for `y0`), minus the same gap every catalog row
             // keeps from the one above it (CAT_ROW_GAP), minus the shelf's own height: the shelf's *bottom* lands
             // just above Continue Watching's *top*, with the same rhythm as Continue Watching has above Shows you watch.
-            float row0Top = (catY0() - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
+            float row0Top = (catY0() - catIn.value * catLift() - watchingPage.scrolled() * CAT_PITCH) * k;
             // The gap shrinks only to fit the resting layout (row 0 at its docked spot, catRow 0); it must not be a
             // clamp on the live position, or the shelf would stop while row 0 keeps scrolling up over it.
             float restRow0Top = (catY0() - catLift()) * k;
@@ -1523,11 +1522,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void openDrawer() {
         handler.removeCallbacks(dropPosters);
         catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
-        syncRows();
+        watchingPage.sync();
         catalogPage.sync();
         // The drawer opens on the poster rows (Trakt's, else TMDB's catalogs). Neither has loaded yet: nothing to open
         // onto, so stay put; the next press (or the fetch finishing) tries again.
-        if (catRows.isEmpty() && catalogPage.isEmpty()) return;
+        if (watchingPage.isEmpty() && catalogPage.isEmpty()) return;
         drawerOpen = true;
         drawer.target = 1;
         drawerDirty = true;
@@ -1539,7 +1538,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogsClosed();
         drawer.target = 0;
         catIn.target = 0;
-        catRow.target = 0;
+        watchingPage.top(false);
         zone = Z_SHELF;
     }
 
@@ -1555,16 +1554,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void openSpotlightPage() {
         handler.removeCallbacks(dropPosters);
         catalogs.refreshIfStale();
-        syncRows();
+        watchingPage.sync();
         catalogPage.sync();
         drawerOpen = true;
         drawer.target = 1;
         zone = Z_SHELF;
         if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, spotlightFocusedRect.centerX());
-        if (!catRows.isEmpty()) {
-            catRowIndex = 0;
+        if (!watchingPage.isEmpty()) {
+            watchingPage.top(false);
             catIn.target = 1;
-            catRow.target = 0;
         }
     }
 
@@ -1575,7 +1573,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogsClosed();
         drawer.target = 0;
         catIn.target = 0;
-        catRow.target = 0;
+        watchingPage.top(false);
         zone = Z_CARDS;
         cardIndex = 0;
     }
@@ -1622,8 +1620,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - A poster's menu (hold OK on Continue Watching, Shows you watch, Watchlist)
 
     private boolean tileMenuReady() {
-        return !sheetOpen && zone == Z_CATALOG && !catRows.isEmpty() && catRowIndex < catRows.size()
-                && catCol[catRowIndex] < catRows.get(catRowIndex).items.size();
+        return !sheetOpen && zone == Z_CATALOG && watchingPage.focusedItem() != null;
     }
 
     /** One action for the focused poster: Remove where Trakt takes it off the list, else Hide (only this launcher forgets it). */
@@ -1632,8 +1629,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         holdArmed = false;
         if (popOpen || opening != null || !tileMenuReady()) return;
         okHeld = true;      // the release of this press opens nothing
-        final Catalogs.Row row = catRows.get(catRowIndex);
-        final Catalogs.Item it = row.items.get(catCol[catRowIndex]);
+        final Catalogs.Row row = watchingPage.focusedRow();
+        final Catalogs.Item it = watchingPage.focusedItem();
         final boolean remove = catalogs.actionFor(row.key, it) == Catalogs.REMOVE;
         final String rowTitle = row.title;
         final String label = !remove ? Ui.tr("Hide from this row")
@@ -1656,7 +1653,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         popActions = actions.toArray(new Runnable[0]);
         popTitle = it.title;
         popIndex = 0;
-        posterRect(catRowIndex, catCol[catRowIndex], tileAnchor);
+        watchingPage.focusedRect(tileAnchor);
         click.open();
         showPop(tileAnchor);
     }
@@ -2042,11 +2039,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+
     // MARK: - Poster rows (under the drawer's weather and quotes; Down from the drawer's buttons)
-
-    private static final int CAT_VISIBLE = 8;
-    private static final float CAT_ROW_FOOT = 400, CAT_BOTTOM = 1040;      // a row ends 400 below its top; the screen 40 short of 1080
-
     /** The quotes card is the only card left in the drawer; without it the rows start where the cards would, and higher up. */
     private boolean cardsOn() {
         return Prefs.quotes() && HomeData.active().length > 0;
@@ -2066,9 +2060,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     @Override public void onCatalogs() {
         wake();
-        syncRows();
+        watchingPage.sync();
         catalogPage.sync();
-        catDirty = true;
+        watchingPage.invalidate();
         catalogPage.invalidate();
     }
 
@@ -2076,112 +2070,37 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogPage.onDetails();
     }
 
-    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus on the same title when it can. */
-    private void syncRows() {
-        List<Catalogs.Row> rows = catalogs.rows();
-        if (rows == catRows) return;
-        List<Catalogs.Row> old = catRows;
-        catRows = rows;
-        catShift = new Spring[rows.size()];
-        for (int i = 0; i < catShift.length; i++) catShift[i] = new Spring(0.34f, 1f, 0);
-        int focusedRow = PosterRow.sameRow(old, catRowIndex, rows);
-        catCol = PosterRow.sameTitles(old, catCol, rows);
-        int[] cols = catCol;
-        for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        catRowIndex = focusedRow;
-        if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
-        else if (zone == Z_CATALOG) catRow.target = catScrollTarget();
+    /** Page 3's top on screen now, before its own scroll: it rises as `catIn` goes to 1 (pixels). */
+    float watchingTop() {
+        return (catY0() - catIn.value * catLift()) * k;
     }
 
-    /**
-     * How far the rows have scrolled (in rows) with the focus on row `catRowIndex`: the focused row rises with each press,
-     * but never past the point where the last row's foot reaches the bottom of the screen, so a few rows don't leave it empty.
-     */
-    private float catScrollTarget() {
-        float firstTop = catY0() - catLift();
-        float lastFoot = firstTop + (catRows.size() - 1) * CAT_PITCH + CAT_ROW_FOOT;
-        float most = Math.max(0, lastFoot - CAT_BOTTOM) / CAT_PITCH;
-        return Math.min(catRowIndex, most);
+    /** Page 3's top once it has come in (1920-wide units). */
+    float watchingRestTop() {
+        return catY0() - catLift();
     }
 
+    /** The focus is on page 3. */
+    boolean onWatchingPage() {
+        return zone == Z_CATALOG;
+    }
+
+    /** Down from the drawer (or the shelf): the poster rows come in. */
     private boolean enterCatalog() {
-        syncRows();
-        if (catRows.isEmpty()) return false;
+        watchingPage.sync();
+        if (watchingPage.isEmpty()) return false;
         zone = Z_CATALOG;
-        catRowIndex = 0;
         catIn.target = 1;
-        catRow.target = 0;
-        popCatalogFocus();
+        watchingPage.enter();
         return true;
     }
 
-    private void leaveCatalog() {
+    /** Up from the first row (or the rows went away): nothing in the drawer to land on, back to the shelf. */
+    void leaveCatalog() {
         catIn.target = 0;
-        catRow.target = 0;
-        catDirty = true;
-        closeDrawer();       // nothing in the drawer to land on: back to the shelf
+        watchingPage.leave();
+        closeDrawer();
         wake();
-    }
-
-    private void popCatalogFocus() {
-        catFocus.snap(0);
-        catFocus.target = 1;
-        catDirty = true;
-    }
-
-    /** Arrows inside the rows: left and right along a row, up and down between rows (up from the first goes back to the drawer). */
-    private boolean moveCatalog(int dx, int dy) {
-        if (catRows.isEmpty()) return false;
-        int r = catRowIndex;
-        if (dx != 0) {
-            int next = Math.max(0, Math.min(catRows.get(r).items.size() - 1, catCol[r] + dx));
-            if (next == catCol[r]) return false;
-            catCol[r] = next;
-            float first = catShift[r].target;
-            if (next < first) first = next;
-            else if (next > first + CAT_VISIBLE - 1) first = next - CAT_VISIBLE + 1;
-            catShift[r].target = first;
-        } else if (dy < 0) {
-            if (r == 0) {
-                leaveCatalog();
-                return true;
-            }
-            catRowIndex--;
-            catRow.target = catScrollTarget();
-        } else {
-            if (r >= catRows.size() - 1) return enterBrowse();      // past the last row: TMDB's catalogs
-            catRowIndex++;
-            catRow.target = catScrollTarget();
-        }
-        popCatalogFocus();
-        return true;
-    }
-
-    /** Where poster `i` of row `r` is on screen now. */
-    private void posterRect(int r, int i, RectF out) {
-        float y0 = (catY0() + r * CAT_PITCH - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
-        float x = MARGIN * k + (i - catShift[r].value) * (CAT_POSTER_W + CAT_GAP) * k;
-        out.set(x, y0 + 50 * k, x + CAT_POSTER_W * k, y0 + (50 + CAT_POSTER_H) * k);
-    }
-
-    private void drawCatalog(Canvas c) {
-        if (catRows.isEmpty() || catIn.value < 0.002f || lCatTitle == null) return;
-        lCatTitle.setColor(look.color(Look.TITLE, dark()));
-        lCatLabel.setColor(look.color(Look.TITLE, dark()));
-        lCardMeta.setColor(look.color(Look.META, dark()));
-        for (int r = 0; r < catRows.size(); r++) {
-            float y0 = (catY0() + r * CAT_PITCH - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
-            if (y0 > h || y0 + CAT_PITCH * k < 0) continue;
-            Catalogs.Row row = catRows.get(r);
-            c.drawText(row.title, MARGIN * k + 4 * k, y0 + 30 * k, lCatTitle);
-            int first = Math.max(0, (int) Math.floor(catShift[r].value)), last = Math.min(row.items.size() - 1, first + CAT_VISIBLE + 1);
-            for (int i = first; i <= last; i++) {
-                posterRect(r, i, cardRect);
-                if (cardRect.right < 0 || cardRect.left > w) continue;
-                Catalogs.Item it = row.items.get(i);
-                drawPoster(c, cardRect, it, zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0, y0, true);
-            }
-        }
     }
 
     /**
@@ -2233,7 +2152,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** A badge arrived: the layers that draw them are drawn again. */
     private void markBadges() {
-        catDirty = heroDirty = true;
+        heroDirty = true;
+        watchingPage.invalidate();
         catalogPage.invalidate();
         wake();
     }
@@ -2300,7 +2220,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void leaveBrowse() {
         catalogPage.leave();
         browseIn.target = 0;
-        if (!catRows.isEmpty()) zone = Z_CATALOG;
+        if (!watchingPage.isEmpty()) zone = Z_CATALOG;
         else closeDrawer();
         wake();
     }
@@ -2584,7 +2504,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 }
                 break;
             case Z_CATALOG:
-                if (!moveCatalog(dx, dy)) return;
+                if (!watchingPage.move(dx, dy)) {
+                    if (dx != 0) return;
+                    if (dy < 0) leaveCatalog();     // up from the first row
+                    else if (!enterBrowse()) return;      // past the last row: TMDB's catalogs
+                }
                 break;
             case Z_BROWSE:
                 if (!catalogPage.move(dx, dy)) {
@@ -2695,17 +2619,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             catalogPage.activate();
             return;
         } else if (zone == Z_CATALOG) {
-            if (catRows.isEmpty()) return;
-            Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
-            click.open();
-            if (listed.episodes) {      // a show you watch: its episodes, not the app
-                activity.startActivity(EpisodesActivity.intent(activity, listed));
-            } else if (listed.launch != null) {        // what an app says you were watching: back into that app
-                openWatchNext(listed);
-            } else {
-                posterRect(catRowIndex, catCol[catRowIndex], cardRect);
-                openTitle(listed, cardRect);
-            }
+            watchingPage.activate();
             return;
         } else {
             if (shelf.isEmpty()) return;
@@ -2735,19 +2649,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         final RectF from = new RectF(poster);
         openingItem = item;
         openingAt = SystemClock.uptimeMillis();
-        catDirty = true;
+        watchingPage.invalidate();
         catalogPage.invalidate();
         opening = Launcher.get(activity).open(item.kind, item.id, item.imdb, target -> {
             opening = null;
             openingItem = null;
-            catDirty = true;
+            watchingPage.invalidate();
             catalogPage.invalidate();
             show(target, from);
         });
     }
 
     /** A Continue Watching card from the TV's apps (Watch Next): its own intent resumes it; the entry was checked when read. */
-    private void openWatchNext(Catalogs.Item item) {
+    void openWatchNext(Catalogs.Item item) {
         try {
             activity.startActivity(new android.content.Intent(item.launch));
         } catch (RuntimeException e) {
@@ -2771,7 +2685,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         opening.cancel();
         opening = null;
         openingItem = null;
-        catDirty = true;
+        watchingPage.invalidate();
     }
 
     private void show(Routing.Target target, RectF from) {
@@ -3646,9 +3560,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             x += v * cardRects[i].centerX();
             y += v * cardRects[i].centerY();
         }
-        if (zone == Z_CATALOG && catRowIndex < catRows.size() && catRowIndex < catCol.length) {
-            float v = Ui.clamp(catFocus.value);
-            posterRect(catRowIndex, catCol[catRowIndex], focusRect);
+        if (zone == Z_CATALOG && watchingPage.focusedRect(focusRect)) {
+            float v = watchingPage.focusAmount();
             weight += v;
             x += v * focusRect.centerX();
             y += v * focusRect.centerY();

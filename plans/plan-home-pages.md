@@ -7,7 +7,7 @@ position moves others (Spotlight's shelf is placed from the catalog's row 0: `la
 slow and risky. This plan splits it into pages on a small layout framework, so each page lays itself out on its own
 and a change in one cannot move another.
 
-Status (2026-11-01): steps 1, 2, 3 and 5 done (3 and 5 together: the framework was built for page 4, its first user). Baseline: Skyworth 4K Google TV Stick, Android 14, Spotlight + Material look, 94.8% janky frames, 90th percentile 121 ms; the moving background redraws ten times a second, so the absolute numbers are high on this stick. Not yet in the framework: the pager and `HomeLayer` (step 7); `drawPoster`, `drawCard` and `roundImage` are still `HomeView` methods the pages call (they move to a shared painter in step 6, when page 3 needs them too).
+Status (2026-11-01): steps 1, 2, 3, 5 and 6 done (3 and 5 together: the framework was built for page 4, its first user). Baseline: Skyworth 4K Google TV Stick, Android 14, Spotlight + Material look, 94.8% janky frames, 90th percentile 121 ms; the moving background redraws ten times a second, so the absolute numbers are high on this stick. Not yet in the framework: the pager and `HomeLayer` (step 7) — until then HomeView still places pages 3 and 4 on screen (`watchingTop`, `catIn`, `browseIn`); `drawPoster`, `drawCard` and `roundImage` are still `HomeView` methods the pages call (to move into a shared painter with step 8, when page 1 is moved and nothing else in HomeView draws posters). Watch Next note: Continue Watching from Trakt playback comes and goes between restarts on this TV with or without these changes (it depends on when Trakt answers), so compare screenshots with that in mind.
 
 ## The pages
 
