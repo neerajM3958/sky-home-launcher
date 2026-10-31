@@ -459,7 +459,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             checkNotices();
             updatePalette();
             checkNight(true);
-            updatePicks();      // three new ones every hour
+            if (!Prefs.spotlightOn() && zone != Z_CARDS) recs.publish();   // a new daily list: not under the focus
+            updatePicks();
             updateSleep();
             handler.postDelayed(this, 15_000);
         }
@@ -477,7 +478,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             long[] shad = shadows.debugBytes();
             long[] picks = recs.debugImageBytes();
             long[] details2 = details.debugBackdropBytes();
-            long backdropBytes = (bgFrom != null ? bgFrom.debugBytes() : 0) + (bgTo != null ? bgTo.debugBytes() : 0);
+            long backdropBytes = (bgFrom != null ? bgFrom.bytes() : 0) + (bgTo != null ? bgTo.bytes() : 0);
             long crispBytes = 0;
             for (Bitmap b : crispLogos.values()) if (b != null) crispBytes += b.getAllocationByteCount();
             long known = posters[0] + tiles[0] + logos[0] + symbols[0] + badges[0] + shad[0] + backdropBytes + picks[0] + crispBytes + details2[0];
@@ -543,7 +544,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cardRects[i] = new RectF();
         }
         setLightButtons(HomeApps.topButtons(a));
-        recs.setLight(true);
         // Spotlight's shelf doesn't live on this screen (it's the drawer/catalog page's first row, not the bottom of
         // the hero screen) — starting focus there, as every other style does, would land on something invisible.
         if (Prefs.spotlightOn()) zone = Z_CARDS;
@@ -617,6 +617,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogs.removeListener(this);
         details.removeListener(this);
         closePop(true);
+        recs.publish();     // a new daily list waiting: shown while the home screen is away
     }
 
     void destroy() {
@@ -4011,11 +4012,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         List<Recs.Pick> list = Prefs.spotlightOn() ? recs.now(TAB_KIND[0], Recs.SPOTLIGHT_POOL) : recs.now(TAB_KIND[tab]);
         if (!samePicks(list, cards)) {
             startCardTransition(0);
+            // The daily list keeps each staying title in its place (Recs.publish): the row stays where it was.
+            if (cards.isEmpty() || list.isEmpty()) {
+                cardStart = 0;
+                spotlightRowShift.snap(0);
+                carouselTarget = 0;
+                carousel.snap(0);
+            }
             cards = list;
-            cardStart = 0;
-            spotlightRowShift.snap(0);
-            carouselTarget = 0;
-            carousel.snap(0);
             cardIndex = Math.min(cardIndex, Math.max(0, Math.min(3, list.size()) - 1));
             if (zone == Z_CARDS && list.isEmpty()) {
                 zone = Z_SHELF;
@@ -4023,13 +4027,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         // All three tabs preloaded: switching tabs is instant. With more picks (pick_count) only this tab's: the
-        // images are kept in memory for the cards that slide in. Spotlight's pool is wider than its own Backdrop
-        // cache (SPOTLIGHT_POOL vs. Recs.loadImage's `pick_count + 3`): only the full-screen photo of nearby columns
-        // is worth prefetching eagerly — the row's posters themselves load through the separate, lighter `Recs.poster`
-        // cache (drawSpotlight), not this one.
+        // images are kept in memory for the cards that slide in. Spotlight keeps only the full-screen photos of the
+        // focus ±2 in memory (Recs.nearby); the row's posters load through the separate, lighter `Recs.poster` cache
+        // (drawSpotlight).
+        recs.setView(TAB_KIND[Prefs.spotlightOn() ? 0 : tab], cardStart);
         if (Prefs.spotlightOn()) {
-            int from = cardStart - 2, to = cardStart + SPOTLIGHT_VISIBLE + 2;
-            for (int i = from; i <= to; i++) {
+            for (int i = cardStart - 2; i <= cardStart + 2; i++) {
                 Recs.Pick p = posterAt(i);
                 if (p != null) recs.backdrop(p);
             }
@@ -4282,6 +4285,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void selectTab(int index) {
         if (index == tab) return;
         tab = index;
+        cardStart = 0;              // another tab's list: its first card
+        carouselTarget = 0;
+        carousel.snap(0);
         updateCards();
         recs.refreshIfStale();      // the new tab's cards may still need their details
         heroDirty = true;
@@ -4633,11 +4639,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Backdrop b = p == null ? null : recs.backdrop(p);
         Bitmap img = b == null ? null : (i == 0 ? b.wide : b.tall);
         float shown = 1;
-        if (img != null) {
-            // The picture fades in over its placeholder (not again while the whole card is already fading in).
+        if (img != null && b.fresh) {
+            // A picture just downloaded fades in over its placeholder (not again while the whole card is already fading
+            // in); one read from disk shows at once.
             long now = SystemClock.uptimeMillis();
-            if (p.shownAt == 0) p.shownAt = cardMixAt != 0 && now - cardMixAt < look.m.cardFadeMs ? now - look.m.imageFadeMs : now;
-            if (!Ui.LEGACY && look.m.imageFadeMs > 0) shown = Ui.clamp((now - p.shownAt) / (float) look.m.imageFadeMs);
+            if (b.shownAt == 0) b.shownAt = cardMixAt != 0 && now - cardMixAt < look.m.cardFadeMs ? now - look.m.imageFadeMs : now;
+            if (!Ui.LEGACY && look.m.imageFadeMs > 0) shown = Ui.clamp((now - b.shownAt) / (float) look.m.imageFadeMs);
             if (shown < 1) {
                 cardsAnimating = true;
                 wake();

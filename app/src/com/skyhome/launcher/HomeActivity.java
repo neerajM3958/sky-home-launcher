@@ -87,7 +87,8 @@ public class HomeActivity extends Activity {
 
     @Override public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_COMPLETE) Recs.get(this).trim();
+        // Hidden, or memory running low: the picks' images come back from disk quickly, so only the one on screen stays.
+        if (level >= TRIM_MEMORY_RUNNING_LOW) Recs.get(this).trim();
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {

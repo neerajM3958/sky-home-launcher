@@ -1,28 +1,30 @@
 package com.skyhome.launcher;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.graphics.Shader;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 
 /**
- * The home screen background made from the recommendation's image, built once in the background:
+ * The home screen background made from the recommendation's image, built once and kept on disk (Recs' picks cache), so
+ * a later start only decodes it:
  *  - the photo cropped to 16:9 at the TV's UI size (1920×1080; 1280×720 on TVs that draw their UI at 720p, like TCL's
- *    1 GB models, where every bitmap here is 2/3 as wide), with the dark scrims already applied (on the left,
- *    where the hero text sits; at the bottom, behind the shelf; a faint one at the top, behind the buttons); the left
- *    scrim gets stronger when the photo is bright there;
- *  - the frosted version (192×108, heavily blurred) of the same image: the background of the frosted glass and of the
- *    bottom drawer;
+ *    1 GB models, where every bitmap here is 2/3 as wide): Spotlight's full-screen background (`image`; each look draws
+ *    its own corner treatment live, see Look.spotlightPhoto) and the screensaver's photo;
+ *  - the frosted version (192×108, heavily blurred): the background of the frosted glass and of the bottom drawer, and
+ *    the home background (lightened by day, darkened at night);
  *  - the Liquid Glass version (480×270, lightly blurred): the photo shows through the shelf and the cards;
- *  - with forLight: the cards (the photo without scrims, cropped wide and tall, already at the focused card size), the
- *    frosted and glass versions blended with white (by day) and with near-black (at night), and the plain sharp photo
- *    itself (`image`, no scrims baked in — Spotlight's full-screen background; each look draws its own corner
- *    treatment live, see Look.spotlightPhoto).
- * Only what is needed gets built (with forLight, no scrims: the cards and the sharp photo are each one GPU texture, so
- * many picks stay ready at once); the other fields stay null.
- * The final image lives only in GPU memory (HARDWARE): drawing it costs one texture, and the process doesn't hold 8 MB.
+ *  - in Cards style, the cards (the photo cropped wide and tall, already at the focused card size).
+ * Only what the style draws is built (Spotlight: no cards; Cards: no full photo). The large images live only in GPU
+ * memory (HARDWARE): drawing one costs one texture, and the process doesn't hold the pixels.
+ *
+ * On disk, next to each other (`base` + suffix): `.jpg` the photo, `.frost.png` and `.glass.png` the blurred versions
+ * before toning, `.wide.jpg` and `.tall.jpg` the cards. Each is written to a `.part` first, then renamed.
  */
 final class Backdrop {
     /** The UI's size against 1920×1080 (at most 1): nothing is built bigger than the screen can show. */
@@ -40,104 +42,176 @@ final class Backdrop {
     private static int ui(int px) {
         return Math.round(px * UI_SCALE);
     }
-    final Bitmap image;
-    final int[] frost;      // heavily blurred (frosted glass, bottom drawer)
-    final int[] glass;      // lightly blurred (Liquid Glass: the photo shows through the glass)
-    final Bitmap wide, tall;            // the photo on the cards
-    final int[] light, lightGlass;      // by day: the frosted and glass versions, lightened
+    final Bitmap image;                 // Spotlight: the sharp photo
+    final int[] frost;                  // heavily blurred (frosted glass, bottom drawer)
+    final Bitmap wide, tall;            // Cards: the photo on the cards
+    final int[] lightGlass;             // by day: the glass version, lightened
     final Bitmap lightImage;            // by day: the background (the lightened frosted version, scaled up on screen)
     final int[] nightFrost, nightGlass; // at night: frosted (the bottom drawer's frosted glass) and glass, darkened
     final Bitmap nightImage;            // at night: the background (the darkened frosted version)
-    private Bitmap glassBitmap;
+    private final Bitmap glassBitmap;   // the lightly blurred version as it is (Spotlight's soft blur, a look's sharp home)
     final Bitmap frostImage;            // the frosted version as it is: the home background of a look that shows the picture
+    /** Built from a download in this run (it fades in when it first shows); false when it came from disk. */
+    final boolean fresh;
+    long shownAt;                       // when it was first drawn on a card (UI thread)
 
-    private Backdrop(Bitmap image, int[] frost, int[] glass, Bitmap wide, Bitmap tall, int[] light, int[] lightGlass,
-                     int[] night, int[] nightGlass) {
+    private Backdrop(Bitmap image, Bitmap wide, Bitmap tall, int[] frost, int[] glass, boolean fresh) {
         this.image = image;
-        this.frost = frost;
-        this.glass = glass;
         this.wide = wide;
         this.tall = tall;
-        this.light = light;
-        this.lightGlass = lightGlass;
-        this.nightFrost = night;
-        this.nightGlass = nightGlass;
-        lightImage = light == null ? null : Bitmap.createBitmap(light, FW, FH, Bitmap.Config.ARGB_8888);
-        nightImage = night == null ? null : Bitmap.createBitmap(night, FW, FH, Bitmap.Config.ARGB_8888);
-        frostImage = frost == null ? null : Bitmap.createBitmap(frost, FW, FH, Bitmap.Config.ARGB_8888);
+        this.frost = frost;
+        this.fresh = fresh;
+        int[] light = whiten(frost.clone(), 0.82f);
+        lightGlass = whiten(glass.clone(), 0.74f);
+        nightFrost = darken(frost.clone(), 0.76f);
+        nightGlass = darken(glass.clone(), 0.56f);
+        lightImage = Bitmap.createBitmap(light, FW, FH, Bitmap.Config.ARGB_8888);
+        nightImage = Bitmap.createBitmap(nightFrost, FW, FH, Bitmap.Config.ARGB_8888);
+        frostImage = Bitmap.createBitmap(frost, FW, FH, Bitmap.Config.ARGB_8888);
+        glassBitmap = gpu(Bitmap.createBitmap(glass, GW, GH, Bitmap.Config.ARGB_8888));
     }
 
-    /** Frees every bitmap's native/GPU backing store right away, instead of waiting for the garbage collector to get to it. */
-    void recycle() {
-        for (Bitmap b : new Bitmap[] {image, wide, tall, lightImage, nightImage, glassBitmap, frostImage})
-            if (b != null) b.recycle();
+    /** The lightly blurred version as a bitmap. */
+    Bitmap glassImage() {
+        return glassBitmap;
     }
 
-    // TEMP (memory investigation, remove after): this instance's total bytes (bitmaps + the raw int[] pixel arrays).
-    long debugBytes() {
+    /** What it holds (bitmaps, GPU ones included, and the pixel arrays): the picks cache is limited by this. */
+    long bytes() {
         long bytes = 0;
         for (Bitmap b : new Bitmap[] {image, wide, tall, lightImage, nightImage, glassBitmap, frostImage})
             if (b != null) bytes += b.getAllocationByteCount();
-        for (int[] a : new int[][] {frost, glass, light, lightGlass, nightFrost, nightGlass})
+        for (int[] a : new int[][] {frost, lightGlass, nightFrost, nightGlass})
             if (a != null) bytes += (long) a.length * 4;
         return bytes;
     }
 
-    /** The lightly blurred version as a bitmap (made when a look first asks for it, UI thread). */
-    Bitmap glassImage() {
-        if (glassBitmap == null && glass != null) glassBitmap = Bitmap.createBitmap(glass, GW, GH, Bitmap.Config.ARGB_8888);
-        return glassBitmap;
+    // MARK: - On disk
+
+    static File photoFile(File base) { return new File(base.getPath() + ".jpg"); }
+    private static File frostFile(File base) { return new File(base.getPath() + ".frost.png"); }
+    private static File glassFile(File base) { return new File(base.getPath() + ".glass.png"); }
+    private static File wideFile(File base) { return new File(base.getPath() + ".wide.jpg"); }
+    private static File tallFile(File base) { return new File(base.getPath() + ".tall.jpg"); }
+
+    static void delete(File base) {
+        for (File f : new File[] {photoFile(base), frostFile(base), glassFile(base), wideFile(base), tallFile(base)}) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        }
     }
 
-    static Backdrop make(Bitmap src, boolean forLight) {
-        Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(out);
-        Paint photo = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
-        float scale = Math.max((float) W / src.getWidth(), (float) H / src.getHeight());
-        float sw = src.getWidth() * scale, sh = src.getHeight() * scale;
-        c.drawBitmap(src, null, new RectF((W - sw) / 2, (H - sh) / 2, (W + sw) / 2, (H + sh) / 2), photo);
-        src.recycle();
-        if (forLight) {
-            // Light design: everything comes from the photo without scrims.
-            Bitmap wide = card(out, WIDE_W, WIDE_H), tall = card(out, TALL_W, TALL_H);
-            int[] frost = reduce(out, FW, FH, 3, 3);
-            int[] light = whiten(frost.clone(), 0.82f);
-            int[] glass = reduce(out, GW, GH, 2, 2);
-            int[] lightGlass = whiten(glass.clone(), 0.74f);
-            int[] night = darken(frost.clone(), 0.76f);
-            int[] nightGlass = darken(glass, 0.56f);
-            // The sharp photo itself, no scrims baked in (Spotlight's full-screen background): each look draws its
-            // own corner treatment live (Look.spotlightPhoto), so this stays the plain picture. GPU-backed: one more
-            // texture per cached pick, not more process heap.
-            Bitmap image = gpu(out);
-            return new Backdrop(image, frost, null, wide, tall, light, lightGlass, night, nightGlass);
+    /** Everything this style draws is on disk: {@link #load} needs no building. */
+    static boolean ready(File base, boolean spotlight) {
+        return photoFile(base).exists() && frostFile(base).exists() && glassFile(base).exists()
+                && (spotlight || wideFile(base).exists() && tallFile(base).exists());
+    }
+
+    /** Reads it from disk with no scaling or blurring (background thread), or null when something is missing or unreadable. */
+    static Backdrop load(File base, boolean spotlight) {
+        if (!ready(base, spotlight)) return null;
+        int[] frost = pixels(frostFile(base), FW, FH), glass = pixels(glassFile(base), GW, GH);
+        if (frost == null || glass == null) return null;
+        Bitmap image = null, wide = null, tall = null;
+        if (spotlight) {
+            image = hardware(photoFile(base), W, H);
+            if (image == null) return null;
+        } else {
+            wide = hardware(wideFile(base), WIDE_W, WIDE_H);
+            tall = hardware(tallFile(base), TALL_W, TALL_H);
+            if (wide == null || tall == null) return null;
         }
+        return new Backdrop(image, wide, tall, frost, glass, false);
+    }
 
-        float boost = Math.max(0, Math.min(0.3f, (luminance(out, 0, 0.22f, 0.5f, 0.62f) - 0.22f) * 1.1f));
-        Paint scrim = new Paint(Paint.DITHER_FLAG);
-        scrim.setShader(new LinearGradient(0, 0, W * 0.68f, 0,
-                new int[] {black(0.66f + boost), black(0.52f + boost * 0.8f), black(0.26f + boost * 0.4f), black(0.07f), 0},
-                new float[] {0, 0.25f, 0.55f, 0.8f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, W, H, scrim);
-        // At the bottom, a faint scrim: the photo must show through the glass shelf (the glass provides the contrast).
-        scrim.setShader(new LinearGradient(0, H, 0, H * 0.4f,
-                new int[] {black(0.38f), black(0.3f), black(0.18f), black(0.05f), 0},
-                new float[] {0, 0.25f, 0.55f, 0.8f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, H * 0.4f, W, H, scrim);
-        // Behind the prices (above the shelf, on the right), a localized scrim for the small text.
-        scrim.setShader(new android.graphics.RadialGradient(W * 0.8f, H * 0.65f, W * 0.24f,
-                new int[] {black(0.42f), black(0.18f), 0}, new float[] {0, 0.55f, 1}, Shader.TileMode.CLAMP));
-        c.save();
-        c.scale(1, 0.32f, W * 0.8f, H * 0.65f);
-        c.drawCircle(W * 0.8f, H * 0.65f, W * 0.24f, scrim);
-        c.restore();
-        scrim.setShader(new LinearGradient(0, 0, 0, H * 0.24f, new int[] {black(0.34f), black(0.1f), 0},
-                new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, W, H * 0.24f, scrim);
+    /** Decodes straight into GPU memory, or null when the file isn't the expected size (built for another UI size). */
+    private static Bitmap hardware(File f, int w, int h) {
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inPreferredConfig = Bitmap.Config.HARDWARE;
+        Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+        if (b != null && (b.getWidth() != w || b.getHeight() != h)) b = null;
+        return b;
+    }
 
-        int[] frost = reduce(out, FW, FH, 3, 3);
-        int[] glass = reduce(out, GW, GH, 2, 2);
-        return new Backdrop(gpu(out), frost, glass, null, null, null, null, null, null);
+    private static int[] pixels(File f, int w, int h) {
+        Bitmap b = BitmapFactory.decodeFile(f.getPath());
+        if (b == null || b.getWidth() != w || b.getHeight() != h) return null;
+        int[] px = new int[w * h];
+        b.getPixels(px, 0, w, 0, 0, w, h);
+        b.recycle();
+        return px;
+    }
+
+    private static void save(Bitmap b, File f, boolean png) throws IOException {
+        File part = new File(f.getPath() + ".part");
+        try (FileOutputStream out = new FileOutputStream(part)) {
+            if (!b.compress(png ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG, 88, out)) throw new IOException("couldn't encode the image");
+        }
+        if (!part.renameTo(f)) {
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            throw new IOException("couldn't save the image");
+        }
+    }
+
+    private static void save(int[] px, int w, int h, File f) throws IOException {
+        Bitmap b = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888);
+        try {
+            save(b, f, true);
+        } finally {
+            b.recycle();
+        }
+    }
+
+    // MARK: - Building
+
+    /**
+     * Builds it from the photo (any size: TMDB's original, or the saved 16:9 copy), writes to disk what this style
+     * needs and isn't there yet, and returns it ready to draw, or (`keep` false) only saves it and returns null.
+     * Recycles `src`.
+     */
+    static Backdrop make(Bitmap src, boolean spotlight, File base, boolean keep) throws IOException {
+        Bitmap out;
+        if (src.getWidth() == W && src.getHeight() == H) {
+            out = src;
+        } else {
+            out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(out);
+            Paint photo = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+            float scale = Math.max((float) W / src.getWidth(), (float) H / src.getHeight());
+            float sw = src.getWidth() * scale, sh = src.getHeight() * scale;
+            c.drawBitmap(src, null, new RectF((W - sw) / 2, (H - sh) / 2, (W + sw) / 2, (H + sh) / 2), photo);
+            src.recycle();
+        }
+        try {
+            if (!photoFile(base).exists()) save(out, photoFile(base), false);
+            int[] frost = reduce(out, FW, FH, 3, 3), glass = reduce(out, GW, GH, 2, 2);
+            if (!frostFile(base).exists()) save(frost, FW, FH, frostFile(base));
+            if (!glassFile(base).exists()) save(glass, GW, GH, glassFile(base));
+            Bitmap wide = null, tall = null;
+            if (!spotlight) {
+                wide = card(out, WIDE_W, WIDE_H);
+                tall = card(out, TALL_W, TALL_H);
+                if (!wideFile(base).exists()) save(wide, wideFile(base), false);
+                if (!tallFile(base).exists()) save(tall, tallFile(base), false);
+            }
+            if (!keep) {
+                if (wide != null) wide.recycle();
+                if (tall != null) tall.recycle();
+                return null;
+            }
+            Bitmap image = null;
+            if (spotlight) {
+                image = gpu(out);
+                out = null;
+            } else {
+                wide = gpu(wide);
+                tall = gpu(tall);
+            }
+            return new Backdrop(image, wide, tall, frost, glass, true);
+        } finally {
+            if (out != null) out.recycle();
+        }
     }
 
     /** How many times smaller the screensaver photo's frosted version is (the glass math uses the same number). */
@@ -197,7 +271,7 @@ final class Backdrop {
         }
         Bitmap out = Bitmap.createScaledBitmap(b, w, h, true);
         if (b != full && b != out) b.recycle();
-        return gpu(out);
+        return out;
     }
 
     /** Copies it to GPU memory (cheap to draw; the process doesn't keep the pixels). */
@@ -290,9 +364,5 @@ final class Backdrop {
             }
         }
         return sum / count;
-    }
-
-    private static int black(float a) {
-        return Math.round(Math.max(0, Math.min(1, a)) * 255) << 24;
     }
 }
