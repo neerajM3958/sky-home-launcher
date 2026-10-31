@@ -1,5 +1,8 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
+import com.skyhome.launcher.api.OpenMeteoApi;
+import com.skyhome.launcher.api.BinanceApi;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
@@ -10,13 +13,8 @@ import android.os.Looper;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.NumberFormat;
@@ -45,17 +43,12 @@ final class HomeData {
     private static String quote() {
         return CURRENCY.equals("USD") || inDollars ? "USDT" : CURRENCY;
     }
-    private static final String WEATHER_QUERY = "&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset"
-            + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=2";
 
     private static String weatherPlace() {
         if (!Prefs.locationKnown()) return "?";      // not New York's: no forecast belongs to a place not found yet
         return Prefs.latitude() + "," + Prefs.longitude();
     }
 
-    private static String weatherUrl() {
-        return "https://api.open-meteo.com/v1/forecast?latitude=" + Prefs.latitude() + "&longitude=" + Prefs.longitude() + WEATHER_QUERY;
-    }
     private static final long PRICES_EVERY = 5 * 60_000L, WEATHER_EVERY = 30 * 60_000L;
     interface Listener { void onData(); }
 
@@ -96,30 +89,11 @@ final class HomeData {
         return i == 3 ? Ui.tr("Dollar") : COIN_NAMES[i];
     }
 
-    /** Binance.com refuses the US (HTTP 451); Binance.US answers the same call in dollars. */
-    private static final String[] PRICE_HOSTS = {"https://api.binance.com", "https://api.binance.us"};
-
-    private static String pricesPath() {
-        StringBuilder symbols = new StringBuilder();
-        int[] coins = active();
-        for (int i = 0; i < coins.length; i++) symbols.append(i == 0 ? "" : ",").append("%22").append(COINS[coins[i]]).append(quote()).append("%22");
-        return "/api/v3/ticker/24hr?type=MINI&symbols=%5B" + symbols + "%5D";
-    }
-
     private static String getPrices() throws IOException {
-        IOException failed = null;
-        for (String host : PRICE_HOSTS) {
-            try {
-                return get(host + pricesPath());
-            } catch (IOException e) {
-                // Binance.US has only dollar pairs: its error counts only where Binance.com refuses the US (HTTP 451).
-                // After a timeout or a 5xx there, its HTTP 400 would put the prices in dollars for good.
-                if (failed == null || "HTTP 451".equals(failed.getMessage())) failed = e;
-                // A pair Binance doesn't list (HTTP 400) isn't a refusal: the caller falls back to dollars instead.
-                if ("HTTP 400".equals(e.getMessage())) break;
-            }
-        }
-        throw failed;
+        int[] coins = active();
+        String[] pairs = new String[coins.length];
+        for (int i = 0; i < coins.length; i++) pairs[i] = COINS[coins[i]] + quote();
+        return BinanceApi.ticker(pairs);
     }
 
     static final class Weather {
@@ -208,7 +182,7 @@ final class HomeData {
                     try {
                         body = getPrices();
                     } catch (IOException e) {
-                        if (inDollars || CURRENCY.equals("USD") || !"HTTP 400".equals(e.getMessage())) throw e;
+                        if (inDollars || CURRENCY.equals("USD") || Http.code(e) != 400) throw e;
                         inDollars = true;
                         cache.edit().putString("dollarsFor", CURRENCY).apply();
                         AppLog.w("prices: Binance has no " + CURRENCY + " pairs, using dollars");
@@ -242,7 +216,7 @@ final class HomeData {
                         // The theme uses 6:00 and 18:00 meanwhile; the network coming back tries again (below).
                         if (!Prefs.locationKnown()) throw new IOException("the TV's place isn't known yet");
                     }
-                    String body = get(weatherUrl());
+                    String body = OpenMeteoApi.forecast(Prefs.latitude(), Prefs.longitude());
                     weather = parseWeather(body);
                     weatherAt = System.currentTimeMillis();
                     cache.edit().putString("weather", body).putLong("weatherAt", weatherAt).putString("weatherPlace", weatherPlace()).apply();
@@ -337,8 +311,7 @@ final class HomeData {
 
     static List<String[]> findCity(String name) throws Exception {
         String lang = Ui.language.replaceAll("-.*", "");   // Open-Meteo takes the language without the country
-        JSONObject o = new JSONObject(get("https://geocoding-api.open-meteo.com/v1/search?count=10&format=json&language=" + lang
-                + "&name=" + URLEncoder.encode(name.trim(), "UTF-8")));
+        JSONObject o = new JSONObject(OpenMeteoApi.search(name, lang));
         JSONArray results = o.optJSONArray("results");
         List<String[]> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();   // places with the same name, state and country read the same
@@ -355,25 +328,6 @@ final class HomeData {
                     String.format(Locale.US, "%.4f", r.getDouble("latitude")), String.format(Locale.US, "%.4f", r.getDouble("longitude"))});
         }
         return out;
-    }
-
-    private static String get(String url) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(6000);
-        c.setReadTimeout(6000);
-        c.setRequestProperty("User-Agent", "SkyHomeLauncher");
-        try {
-            if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
-            try (InputStream in = c.getInputStream()) {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                int n;
-                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-                return out.toString(StandardCharsets.UTF_8.name());
-            }
-        } finally {
-            c.disconnect();
-        }
     }
 
     /**

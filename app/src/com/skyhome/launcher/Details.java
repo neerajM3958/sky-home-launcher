@@ -1,5 +1,7 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
+import com.skyhome.launcher.api.TmdbApi;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -13,9 +15,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -156,7 +155,7 @@ final class Details {
     }
 
     private Info fetch(String kind, int id) throws Exception {
-        JSONObject o = Recs.get(context).get("/" + kind + "/" + id + "?language=" + Recs.lang()
+        JSONObject o = TmdbApi.get(Prefs.tmdbKey(), "/" + kind + "/" + id + "?language=" + Recs.lang()
                 + "&append_to_response=videos,watch/providers,external_ids&include_video_language=" + Ui.language.replaceAll("-.*", "") + ",en,null");
         Launcher.get(context).remember(kind, id, o);      // where it streams, for the badge and OK: no request of its own
         Info info = new Info();
@@ -255,17 +254,8 @@ final class Details {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File raw = new File(f.getPath() + ".src.part");
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setRequestProperty("User-Agent", "SkyHomeLauncher");
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(20000);
+        Http.to(url).timeouts(8000, 20000).label("backdrop").download(raw);
         try {
-            if (c.getResponseCode() != 200) throw new IOException("backdrop: HTTP " + c.getResponseCode());
-            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(raw)) {
-                byte[] buffer = new byte[16384];
-                int n;
-                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-            }
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(raw.getPath(), bounds);
@@ -292,7 +282,6 @@ final class Details {
             Catalogs.prune(f.getParentFile(), IMAGES_BUDGET);
             return b;
         } finally {
-            c.disconnect();
             //noinspection ResultOfMethodCallIgnored
             raw.delete();
         }

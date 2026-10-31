@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -18,7 +19,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -815,20 +815,7 @@ final class Catalogs {
     }
 
     private static void download(String url, File to) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setRequestProperty("User-Agent", "SkyHomeLauncher");
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(20000);
-        try {
-            if (c.getResponseCode() != 200) throw new IOException("poster: HTTP " + c.getResponseCode());
-            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(to)) {
-                byte[] buffer = new byte[16384];
-                int n;
-                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-            }
-        } finally {
-            c.disconnect();
-        }
+        Http.to(url).timeouts(8000, 20000).label("poster").download(to);
     }
 
     /** The poster was just drawn: the disk cache drops the least recently used first. */

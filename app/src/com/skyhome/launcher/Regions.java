@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.TmdbApi;
 import android.content.Context;
 
 import org.json.JSONArray;
@@ -87,7 +88,7 @@ final class Regions {
         if (!Recs.hasKey(app)) return;
         NET.execute(() -> {
             try {
-                JSONArray results = Recs.get(app).get("/watch/providers/regions?language=en-US").getJSONArray("results");
+                JSONArray results = TmdbApi.get(Prefs.tmdbKey(), "/watch/providers/regions?language=en-US").getJSONArray("results");
                 JSONArray codes = new JSONArray();
                 for (int i = 0; i < results.length(); i++) {
                     String code = results.getJSONObject(i).optString("iso_3166_1");

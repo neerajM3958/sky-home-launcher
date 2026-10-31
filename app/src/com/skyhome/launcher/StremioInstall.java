@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -12,13 +13,9 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 /**
@@ -109,46 +106,21 @@ final class StremioInstall {
     }
 
     private static String get(String address) throws IOException {
-        HttpURLConnection h = (HttpURLConnection) new URL(address).openConnection();
-        h.setRequestProperty("User-Agent", "SkyHomeLauncher");
-        h.setConnectTimeout(10_000);
-        h.setReadTimeout(20_000);
-        try (InputStream in = h.getInputStream()) {
-            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            byte[] buffer = new byte[8192];
-            int n;
-            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-            return out.toString("UTF-8");
-        } finally {
-            h.disconnect();
-        }
+        return Http.to(address).timeouts(10_000, 20_000).get();
     }
 
     private static File download(Context c) throws IOException {
         String[] found = link();
         File file = new File(c.getCacheDir(), "stremio.apk");
-        HttpURLConnection h = (HttpURLConnection) new URL(found[0]).openConnection();
-        h.setRequestProperty("User-Agent", "SkyHomeLauncher");
-        h.setConnectTimeout(10_000);
-        h.setReadTimeout(30_000);
         File part = new File(c.getCacheDir(), "stremio.apk.part");
-        try (InputStream in = h.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-            long total = h.getContentLengthLong(), got = 0;
-            int shown = -1;
-            byte[] buffer = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buffer)) > 0) {
-                out.write(buffer, 0, n);
-                got += n;
-                int percent = total > 0 ? (int) (got * 100 / total) : 0;
-                if (percent / 2 != shown) {
-                    shown = percent / 2;
-                    say(Ui.trf("Downloading {n}%", "n", percent));
-                }
+        int[] shown = {-1};
+        Http.to(found[0]).timeouts(10_000, 30_000).download(part, (got, total) -> {
+            int percent = total > 0 ? (int) (got * 100 / total) : 0;
+            if (percent / 2 != shown[0]) {
+                shown[0] = percent / 2;
+                say(Ui.trf("Downloading {n}%", "n", percent));
             }
-        } finally {
-            h.disconnect();
-        }
+        });
         PackageInfo info = c.getPackageManager().getPackageArchiveInfo(part.getPath(), 0);
         if (info == null || !Routing.STREMIO.equals(info.packageName)) {
             //noinspection ResultOfMethodCallIgnored

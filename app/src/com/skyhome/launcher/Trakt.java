@@ -1,5 +1,7 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
+import com.skyhome.launcher.api.TraktApi;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
@@ -11,15 +13,10 @@ import com.skyhome.launcher.Catalogs.Row;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -47,7 +44,6 @@ final class Trakt {
 
     static final String CONTINUE = "trakt_continue", SHOWS = "trakt_shows", WATCHLIST = "trakt_watchlist";
 
-    private static final String API = "https://api.trakt.tv";
     private static final long CHECK_EVERY = 30 * 60_000L;      // one small request tells whether anything changed
     private static final long RETRY_AFTER_FAILURE = 10 * 60_000L;
     // VERSION clears everything, the sign-in too; ROWS_VERSION only the saved rows (when a row is added or changes shape).
@@ -173,7 +169,7 @@ final class Trakt {
 
     private void login(int ticket) {
         try {
-            Reply r = call("POST", "/oauth/device/code", obj("client_id", Prefs.traktClientId()), null);
+            Http.Reply r = TraktApi.call(Prefs.traktClientId(), "POST", "/oauth/device/code", obj("client_id", Prefs.traktClientId()), null);
             if (r.code != 200) {
                 endLogin(ticket, r.code == 401 || r.code == 403 || r.code == 404 ? ERR_REFUSED : ERR_NETWORK);
                 return;
@@ -191,7 +187,7 @@ final class Trakt {
                 Thread.sleep(interval * 1000L);
                 if (ticket != loginTicket) return;
                 try {
-                    Reply t = call("POST", "/oauth/device/token",
+                    Http.Reply t = TraktApi.call(Prefs.traktClientId(), "POST", "/oauth/device/token",
                             obj("code", device, "client_id", Prefs.traktClientId()), null);
                     failures = 0;
                     if (t.code == 200) {
@@ -253,7 +249,7 @@ final class Trakt {
         if (!connected()) throw new IOException("not connected");
         long now = System.currentTimeMillis() / 1000;
         if (now < sp.getLong("expires", 0) - 3600) return sp.getString("access", "");
-        Reply r = call("POST", "/oauth/token", obj("refresh_token", sp.getString("refresh", ""),
+        Http.Reply r = TraktApi.call(Prefs.traktClientId(), "POST", "/oauth/token", obj("refresh_token", sp.getString("refresh", ""),
                 "client_id", Prefs.traktClientId(), "grant_type", "refresh_token"), null);
         if (r.code == 200) {
             try {
@@ -800,11 +796,6 @@ final class Trakt {
 
     // MARK: - HTTP
 
-    private static final class Reply {
-        int code;
-        String body = "";
-    }
-
     private static JSONObject obj(Object... pairs) {
         JSONObject o = new JSONObject();
         try {
@@ -817,7 +808,7 @@ final class Trakt {
     /** An authorised GET; a 401 renews the access token once and tries again. */
     private String get(String path) throws IOException {
         for (int attempt = 0; ; attempt++) {
-            Reply r = call("GET", path, null, token());
+            Http.Reply r = TraktApi.call(Prefs.traktClientId(), "GET", path, null, token());
             if (r.code == 200) return r.body;
             if (r.code == 401 && attempt == 0) {
                 sp.edit().putLong("expires", 0).apply();     // the next token() renews it
@@ -830,47 +821,12 @@ final class Trakt {
     /** An authorised change; a 401 renews the access token once and tries again. Gives Trakt's answer code. */
     private int send(String method, String path, JSONObject body) throws IOException {
         for (int attempt = 0; ; attempt++) {
-            Reply r = call(method, path, body, token());
+            Http.Reply r = TraktApi.call(Prefs.traktClientId(), method, path, body, token());
             if (r.code == 401 && attempt == 0) {
                 sp.edit().putLong("expires", 0).apply();     // the next token() renews it
                 continue;
             }
             return r.code;
-        }
-    }
-
-    private static Reply call(String method, String path, JSONObject body, String token) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(API + path).openConnection();
-        try {
-            c.setRequestMethod(method);
-            c.setConnectTimeout(8000);
-            c.setReadTimeout(20000);
-            c.setRequestProperty("Content-Type", "application/json");
-            c.setRequestProperty("trakt-api-version", "2");
-            c.setRequestProperty("trakt-api-key", Prefs.traktClientId());
-            c.setRequestProperty("User-Agent", "SkyHomeLauncher");
-            if (token != null) c.setRequestProperty("Authorization", "Bearer " + token);
-            if (body != null) {
-                c.setDoOutput(true);
-                try (OutputStream out = c.getOutputStream()) {
-                    out.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                }
-            }
-            Reply r = new Reply();
-            r.code = c.getResponseCode();
-            InputStream in = r.code >= 400 ? c.getErrorStream() : c.getInputStream();
-            if (in != null) {
-                try (InputStream stream = in) {
-                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                    byte[] chunk = new byte[8192];
-                    int n;
-                    while ((n = stream.read(chunk)) > 0) buffer.write(chunk, 0, n);
-                    r.body = buffer.toString("UTF-8");
-                }
-            }
-            return r;
-        } finally {
-            c.disconnect();
         }
     }
 }

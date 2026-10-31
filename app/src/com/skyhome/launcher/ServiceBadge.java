@@ -1,5 +1,6 @@
 package com.skyhome.launcher;
 
+import com.skyhome.launcher.api.Http;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -10,10 +11,6 @@ import android.graphics.Path;
 import android.graphics.drawable.Drawable;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -85,17 +82,8 @@ final class ServiceBadge {
             if (!f.exists()) {
                 //noinspection ResultOfMethodCallIgnored
                 f.getParentFile().mkdirs();
-                HttpURLConnection h = (HttpURLConnection) new URL("https://image.tmdb.org/t/p/w92" + path).openConnection();
-                h.setConnectTimeout(8000);
-                h.setReadTimeout(8000);
                 File part = new File(f.getPath() + ".part");
-                try (InputStream in = h.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                } finally {
-                    h.disconnect();
-                }
+                Http.to("https://image.tmdb.org/t/p/w92" + path).timeouts(8000, 8000).download(part);
                 if (!part.renameTo(f)) return null;
             }
             Bitmap b = BitmapFactory.decodeFile(f.getPath());
