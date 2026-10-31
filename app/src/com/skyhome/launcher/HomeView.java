@@ -4108,11 +4108,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         // All three tabs preloaded: switching tabs is instant. With more picks (pick_count) only this tab's: the
         // images are kept in memory for the cards that slide in. Spotlight keeps only the full-screen photos of the
-        // focus ±2 in memory (Recs.nearby); the row's posters load through the separate, lighter `Recs.poster` cache
+        // focus ±1 in memory (Recs.nearby); the row's posters load through the separate, lighter `Recs.poster` cache
         // (drawSpotlight).
         recs.setView(TAB_KIND[Prefs.spotlightOn() ? 0 : tab], cardStart);
         if (Prefs.spotlightOn()) {
-            for (int i = cardStart - 2; i <= cardStart + 2; i++) {
+            for (int i = cardStart - 1; i <= cardStart + 1; i++) {
                 Recs.Pick p = posterAt(i);
                 if (p != null) recs.backdrop(p);
             }
@@ -4576,7 +4576,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // pick's own photo is still loading the previous one stays up rather than a blank background.
         if (focused != null && cardStart != spotlightWarmFor) {
             spotlightWarmFor = cardStart;
-            for (int d = -2; d <= 2; d++) if (d != 0) recs.backdrop(posterAt(cardStart + d));
+            for (int d = -1; d <= 1; d++) if (d != 0) recs.backdrop(posterAt(cardStart + d));
         }
         if (b != null) spotlightLastBackdrop = b;
         else if (spotlightLastBackdrop != null) b = spotlightLastBackdrop;

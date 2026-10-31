@@ -30,6 +30,12 @@ final class Backdrop {
     /** The UI's size against 1920×1080 (at most 1): nothing is built bigger than the screen can show. */
     private static final float UI_SCALE = uiScale();
     static final int W = ui(1920), H = ui(1080), FW = 192, FH = 108, GW = 480, GH = 270;
+    /**
+     * Spotlight's full-screen photo, at most 1280×720 and scaled up on screen (filtered): it sits behind darkened
+     * corners and a soft blur, and at 1080p this is less than half the memory of the full photo (3.7 MB, not 8.3). The
+     * full one stays on disk for the screensaver and the cards.
+     */
+    static final int SPOT_W = Math.min(W, 1280), SPOT_H = Math.min(H, 720);
     /** The cards at their focused size (1.05×): the wide one and the two tall ones. */
     static final int WIDE_W = ui(1092), WIDE_H = ui(464), TALL_W = ui(336), TALL_H = ui(464);
 
@@ -42,7 +48,7 @@ final class Backdrop {
     private static int ui(int px) {
         return Math.round(px * UI_SCALE);
     }
-    final Bitmap image;                 // Spotlight: the sharp photo
+    final Bitmap image;                 // Spotlight: the sharp photo (SPOT_W × SPOT_H)
     final int[] frost;                  // heavily blurred (frosted glass, bottom drawer)
     final Bitmap wide, tall;            // Cards: the photo on the cards
     final int[] lightGlass;             // by day: the glass version, lightened
@@ -89,13 +95,15 @@ final class Backdrop {
     // MARK: - On disk
 
     static File photoFile(File base) { return new File(base.getPath() + ".jpg"); }
+    /** Spotlight's smaller photo; on a 720p UI the photo itself is already that size. */
+    private static File spotFile(File base) { return SPOT_W == W ? photoFile(base) : new File(base.getPath() + ".spot.jpg"); }
     private static File frostFile(File base) { return new File(base.getPath() + ".frost.png"); }
     private static File glassFile(File base) { return new File(base.getPath() + ".glass.png"); }
     private static File wideFile(File base) { return new File(base.getPath() + ".wide.jpg"); }
     private static File tallFile(File base) { return new File(base.getPath() + ".tall.jpg"); }
 
     static void delete(File base) {
-        for (File f : new File[] {photoFile(base), frostFile(base), glassFile(base), wideFile(base), tallFile(base)}) {
+        for (File f : new File[] {photoFile(base), spotFile(base), frostFile(base), glassFile(base), wideFile(base), tallFile(base)}) {
             //noinspection ResultOfMethodCallIgnored
             f.delete();
         }
@@ -104,7 +112,7 @@ final class Backdrop {
     /** Everything this style draws is on disk: {@link #load} needs no building. */
     static boolean ready(File base, boolean spotlight) {
         return photoFile(base).exists() && frostFile(base).exists() && glassFile(base).exists()
-                && (spotlight || wideFile(base).exists() && tallFile(base).exists());
+                && (spotlight ? spotFile(base).exists() : wideFile(base).exists() && tallFile(base).exists());
     }
 
     /** Reads it from disk with no scaling or blurring (background thread), or null when something is missing or unreadable. */
@@ -114,7 +122,7 @@ final class Backdrop {
         if (frost == null || glass == null) return null;
         Bitmap image = null, wide = null, tall = null;
         if (spotlight) {
-            image = hardware(photoFile(base), W, H);
+            image = hardware(spotFile(base), SPOT_W, SPOT_H);
             if (image == null) return null;
         } else {
             wide = hardware(wideFile(base), WIDE_W, WIDE_H);
@@ -188,8 +196,11 @@ final class Backdrop {
             int[] frost = reduce(out, FW, FH, 3, 3), glass = reduce(out, GW, GH, 2, 2);
             if (!frostFile(base).exists()) save(frost, FW, FH, frostFile(base));
             if (!glassFile(base).exists()) save(glass, GW, GH, glassFile(base));
-            Bitmap wide = null, tall = null;
-            if (!spotlight) {
+            Bitmap wide = null, tall = null, spot = null;
+            if (spotlight) {
+                spot = SPOT_W == W ? out : Bitmap.createScaledBitmap(out, SPOT_W, SPOT_H, true);
+                if (spot != out && !spotFile(base).exists()) save(spot, spotFile(base), false);
+            } else {
                 wide = card(out, WIDE_W, WIDE_H);
                 tall = card(out, TALL_W, TALL_H);
                 if (!wideFile(base).exists()) save(wide, wideFile(base), false);
@@ -198,12 +209,13 @@ final class Backdrop {
             if (!keep) {
                 if (wide != null) wide.recycle();
                 if (tall != null) tall.recycle();
+                if (spot != null && spot != out) spot.recycle();
                 return null;
             }
             Bitmap image = null;
             if (spotlight) {
-                image = gpu(out);
-                out = null;
+                image = gpu(spot);
+                if (spot == out) out = null;
             } else {
                 wide = gpu(wide);
                 tall = gpu(tall);

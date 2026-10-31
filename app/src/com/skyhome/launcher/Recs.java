@@ -68,7 +68,7 @@ final class Recs {
     /** Spotlight's poster row pool (HomeView.updateCards) — bigger than pick_count's default, so the poster cache below
      * holds the whole circular pool: with a smaller one, the row's own working set (every pick the circular scroll
      * revisits) would keep evicting itself, visible as the posters blinking. The full-screen photos are only kept for
-     * the focus ±2 (they're read back from disk quickly). */
+     * the focus ±1 (they're read back from disk quickly). */
     static final int SPOTLIGHT_POOL = 20;
 
     private static int poolCap() {
@@ -361,17 +361,17 @@ final class Recs {
         notifyListeners();
     }
 
-    /** Memory for ready images: Spotlight about 5 (the focus ±2, ~10 MB each at 1080p), Cards the three tabs' 9 cards (~4.7 MB each). */
+    /** Memory for ready images: Spotlight 3 (the focus ±1, ~5.5 MB each at 1080p with the 1280×720 photo), Cards the three tabs' 9 cards (~4.7 MB each). */
     private static long budget(boolean spot) {
-        return (spot ? 52L : 48L) << 20;
+        return (spot ? 18L : 48L) << 20;
     }
 
-    /** The picks whose image is worth having in memory now: the focus ±2 in Spotlight, otherwise the cards that may show next. */
+    /** The picks whose image is worth having in memory now: the focus ±1 in Spotlight, otherwise the cards that may show next. */
     private List<Pick> nearby() {
         if (!Prefs.spotlightOn()) return wanted();
         List<Pick> out = new ArrayList<>();
         List<Pick> list = now(viewKind, poolCap());
-        for (int i = -2; i <= 2 && !list.isEmpty(); i++) out.add(list.get(Math.floorMod(viewStart + i, list.size())));
+        for (int i = -1; i <= 1 && !list.isEmpty(); i++) out.add(list.get(Math.floorMod(viewStart + i, list.size())));
         return out;
     }
 

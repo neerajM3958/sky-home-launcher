@@ -207,7 +207,9 @@ On the TV (`adb logcat -s SkyHomeLauncher`, plus a temporary log line per downlo
   `Launcher.prefetch` for each title that stays (one call each, once a day: where it streams can change). New titles
   cost one call in all (`fetchBackdrop`/`fetchDetails` hand their answer to `Launcher.remember`). The savings are the
   list calls (once a day instead of 4+) and the second call per new title.
-- **Memory budgets:** Spotlight 52 MB (focus ±2), Cards 48 MB (the three tabs' 9 cards at ~4.7 MB each).
+- **Memory budgets:** Spotlight 18 MB (focus ±1, a 1280×720 photo: `Backdrop.SPOT_W`/`SPOT_H`, saved as `<id>.spot.jpg`
+  beside the 1920×1080 one the screensaver and the cards use), Cards 48 MB (the three tabs' 9 cards at ~4.7 MB each).
+  Measured in Spotlight: `:home` 114–123 MB, 65 MB graphics (was 197 MB, 107 MB with ±2 and the full photo).
 - **Next list:** saved as `next` in the `recs` prefs, published from `HomeView.pause()` and, in Cards style, from the
   15 s tick while the focus isn't on the cards. A first list, or one for changed settings or language, shows at once.
   Titles whose details or image failed are left out of the next list.
