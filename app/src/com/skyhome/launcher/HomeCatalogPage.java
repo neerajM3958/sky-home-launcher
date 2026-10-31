@@ -141,13 +141,13 @@ final class HomeCatalogPage extends HomePage {
         row = focusedRow;
         pos.snap(row);
         if (home.onCatalogPage()) {
-            if (list.isEmpty()) home.leaveBrowse();
+            if (list.isEmpty()) home.pagesChanged();
             else touch();
         }
         invalidate();
     }
 
-    @Override void enter() {
+    @Override void enter(boolean fromAbove) {
         pos.snap(row);
         focus.snap(0);
         focus.target = 1;

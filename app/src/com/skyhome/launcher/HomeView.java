@@ -84,18 +84,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // banners, so those are never stretched: up to 224 × 126, 178 × 100 with eight apps.
     private static final float SHELF_PAD = 40, TILE_GAP = 48;
     private static final float TILE_RADIUS = 22;
-    // Bottom drawer (measured with it open; everything moves up by SHIFT).
-    private static final float SHIFT = 560, CARDS_TOP = 708, CARDS_H = 300;
     // Spotlight (the full-screen picks carousel): a full-bleed photo from the top of the screen, the title and a
-    // poster row near the bottom. Positions tuned on-TV, not fixed by a grid.
-    // Round 2: posters are TMDB poster art (2:3, the title baked in), not landscape backdrop crops, so they're taller
-    // and the whole block moved up to leave them real room.
-    // Round 3: the shelf no longer lives on this screen at all (Down pages to the drawer/catalog screen, the shelf as
-    // its first row — see moveLight's Z_CARDS case and updateMotion); the row scrolls (spotlightRowShift) instead of
-    // re-sorting the focused pick to the front, and draws one column past SPOTLIGHT_VISIBLE so the next one peeks in.
-    private static final float SPOTLIGHT_TITLE_Y = 526, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_Y = 652,
-            SPOTLIGHT_ROW_TOP = 676, SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20,
-            SPOTLIGHT_SHELF_GAP = 60;
+    // poster row above the shelf. Positions tuned on-TV, not fixed by a grid. Posters are TMDB poster art (2:3, the
+    // title baked in); the row scrolls (spotlightRowShift) instead of re-sorting the focused pick to the front, and
+    // draws one column past SPOTLIGHT_VISIBLE so the next one peeks in. The shelf is at the foot of the page, as in
+    // Cards, so the title and the row sit 150 higher than when the shelf lived on the page below.
+    private static final float SPOTLIGHT_TITLE_Y = 376, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_Y = 502,
+            SPOTLIGHT_ROW_TOP = 526, SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20;
     private static final int SPOTLIGHT_VISIBLE = 11;
     // "All Apps" sheet.
     private static final int COLUMNS = 5, VISIBLE_ROWS = 3;
@@ -120,13 +115,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static int tabsGeneration = -1;
     private static final String[] TAB_KIND = {null, "movie", "tv"};
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6, Z_BROWSE = 10;
-    // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
-    // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
-    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 440,
-            CAT_POSTER_W = PosterRow.POSTER_W, CAT_POSTER_H = PosterRow.POSTER_H, CAT_GAP = PosterRow.GAP;
-    // The blank space between one row's posters and the next row's title (CAT_PITCH minus a poster's own 50-above/
-    // 30-below offsets): how far "Shows you watch" sits below "Continue Watching"'s posters.
-    private static final float CAT_ROW_GAP = CAT_PITCH - 50 - CAT_POSTER_H + 30;
+    private static final float CAT_POSTER_W = PosterRow.POSTER_W, CAT_POSTER_H = PosterRow.POSTER_H;
 
     final Activity activity;
     private final Scene scene = new Scene();
@@ -232,10 +221,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Backdrop bgFrom, bgTo;     // null = gradient (no photo)
     private final int[] frostMix = new int[Backdrop.FW * Backdrop.FH];
 
-    // Bottom drawer
-    private final RectF quotesCard = new RectF();
-    private final Spring drawer = new Spring(0.46f, 0.92f, 0);
-    private boolean drawerOpen;
+    // The pages, one under another (HomePager): 1 the top (this class, for now), 2 the widgets, 3 Trakt's and the TV's
+    // rows, 4 TMDB's catalogs.
+    private HomePager pager;
+    private HomePager.Slot topSlot, widgetsSlot, watchingSlot, catalogSlot;
+    private final HomeWidgetsPage widgetsPage;
+    private boolean pagerWasMoving;
 
     // The input popover: under the HDMI input and AV input top buttons, one row for each input of that kind.
     private final Spring popIn = new Spring(0.34f, 0.88f, 0);
@@ -250,16 +241,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint popLabel;
     private final Catalogs catalogs;
     private final Layer catalogLayer;
-    // Page 3, Trakt's and the TV's rows (HomeWatchingPage); it comes in as `catIn` goes to 1.
+    // Page 3, Trakt's and the TV's rows (HomeWatchingPage).
     private final HomeWatchingPage watchingPage;
-    private final Spring catIn = new Spring(0.5f, 0.92f, 0);
-    private boolean catWasMoving;
     private Paint lCatLabel;
-    // Page 4, TMDB's catalogs (HomeCatalogPage), under Trakt's rows; it comes in as `browseIn` goes to 1.
+    // Page 4, TMDB's catalogs (HomeCatalogPage).
     private final Layer browseLayer;
     private final Details details;
     private final HomeCatalogPage catalogPage;
-    private final Spring browseIn = new Spring(0.5f, 0.92f, 0);
     private final RectF cardRect = new RectF(), barRect = new RectF();
 
     // "All Apps" sheet
@@ -280,7 +268,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // Frames
     private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
-    private boolean drawerWasMoving, idle;
+    private boolean idle;
     private long lastNanos, resumedAt, lastStep;
     private static final long BURST_MS = 1500;
     private int w, h;
@@ -344,9 +332,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override protected void onDraw(Canvas c) {
             if (labelPaint == null) return;
             c.translate(-getLeft(), -getTop());
-            // The layer may be shifted (bottom drawer): the glass reads the background from where it really is. The
-            // drawer and the top buttons are always drawn as if resting in place (they are only visible there and are
-            // not redrawn while they move).
+            // The layer may be shifted (another page showing): the glass reads the background from where it really is.
+            // The widgets and the top buttons are always drawn as if resting in place (they are only seen there and are
+            // not redrawn while they slide).
             scene.setOffset(0, kind == DRAWER || kind == STATUS ? 0 : getTranslationY());
             shadows.dither = dark() > 0.5f;
             switch (kind) {
@@ -355,9 +343,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case STATUS: drawLightButtons(c); break;
                 case PLATTER: drawPlatter(c); break;
                 case TILES: drawTiles(c); break;
-                case DRAWER: drawDrawer(c); break;
-                case CATALOG: if (catIn.value >= 0.002f) watchingPage.draw(c); break;
-                case BROWSE: if (browseIn.value >= 0.002f) catalogPage.draw(c); break;
+                case DRAWER: widgetsPage.draw(c); break;
+                case CATALOG: watchingPage.draw(c); break;
+                case BROWSE: catalogPage.draw(c); break;
                 case SHEET: drawSheet(c); break;
                 case POP: drawPopover(c); break;
                 default: drawToast(c); break;
@@ -382,7 +370,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Runnable rotate = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            if (zone != Z_CARDS && !sheetOpen && !drawerOpen && cards.size() > 3) {
+            if (zone != Z_CARDS && !sheetOpen && pager.current() == topSlot && cards.size() > 3) {
                 if (Prefs.spotlightOn()) autoAdvanceSpotlight();
                 else rotateCards(1);
             }
@@ -405,8 +393,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             wake();
             data.refreshIfStale();
             recs.refreshIfStale();
-            catalogs.refreshWatchNext(false);       // the row may be the only one: nothing else would open the drawer for it
-            if (drawerOpen) catalogs.refreshIfStale();
+            catalogs.refreshWatchNext(false);       // the row may be the only one: nothing else would bring page 3 for it
+            if (pager.current() != topSlot) catalogs.refreshIfStale();
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -438,8 +426,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         browseLayer = new Layer(a, BROWSE);
         catalogs = Catalogs.get(a);
         details = Details.get(a);
+        widgetsPage = new HomeWidgetsPage(this);
         watchingPage = new HomeWatchingPage(this, catalogs);
         catalogPage = new HomeCatalogPage(this, catalogs, details);
+        topSlot = new HomePager.Slot("top", false, () -> true, heroLayer, status, platter, tiles);
+        widgetsSlot = new HomePager.Slot("widgets", true, () -> !widgetsPage.isEmpty(), drawerLayer);
+        watchingSlot = new HomePager.Slot("watching", true, () -> !watchingPage.isEmpty(), catalogLayer);
+        catalogSlot = new HomePager.Slot("catalogs", true, () -> !catalogPage.isEmpty(), browseLayer);
+        pager = new HomePager(topSlot, widgetsSlot, watchingSlot, catalogSlot);
         LOADER.execute(LayoutCheck::readFlags);
         sheetLayer = new Layer(a, SHEET);
         popLayer = new Layer(a, POP);
@@ -448,10 +442,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms). heroLayer/status/platter/tiles/popLayer are page-1 content (the resting screen), so they
-        // stay hardware-accelerated always; drawerLayer/catalogLayer/browseLayer/sheetLayer are other pages' content
-        // and start off (they're also INVISIBLE below) — updateMotion() turns each one's GPU layer on only while its
-        // own page is actually showing (#memory-management, item 3: ~25 MB of persistent GPU memory otherwise sat
-        // behind pages that may never be opened in a session).
+        // stay hardware-accelerated always; the other pages' layers and sheetLayer start off (they're also INVISIBLE
+        // below), and the pager turns each one's GPU layer on only while its page shows (#memory-management, item 3:
+        // ~25 MB of persistent GPU memory otherwise sat behind pages that may never be opened in a session).
         for (View v : new View[] {heroLayer, status, platter, tiles, popLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
         for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
@@ -471,9 +464,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cardRects[i] = new RectF();
         }
         setLightButtons(HomeApps.topButtons(a));
-        // Spotlight's shelf doesn't live on this screen (it's the drawer/catalog page's first row, not the bottom of
-        // the hero screen) — starting focus there, as every other style does, would land on something invisible.
-        if (Prefs.spotlightOn()) zone = Z_CARDS;
         checkNight(false);
         sheetLayer.setVisibility(INVISIBLE);
         scene.setMotion(0.6f, 0f);
@@ -545,30 +535,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         click.release();
     }
 
-    /** Starting state (Home pressed while the home screen is showing): first app focused, drawer and sheet closed. */
+    /** Starting state (Home pressed while the home screen is showing): the first page, first app focused, sheet closed. */
     void reset(boolean animated) {
         wake();
         cancelReorder(!animated);
-        zone = Prefs.spotlightOn() ? Z_CARDS : Z_SHELF;   // Spotlight's shelf isn't on this screen (see constructor)
+        goTo(topSlot, !animated);
+        zone = Z_SHELF;
         shelfIndex = 0;
         sheetOpen = false;
-        if (drawerOpen) catalogsClosed();
-        drawerOpen = false;
-        if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; watchingPage.top(false); }   // close its page too
         closePop(!animated);
-        if (animated) {
-            sheet.target = 0;
-            drawer.target = 0;
-            catIn.target = 0;
-            watchingPage.top(false);
-            browseIn.target = 0;
-        } else {
-            sheet.snap(0);
-            drawer.snap(0);
-            catIn.snap(0);
-            watchingPage.top(true);
-            browseIn.snap(0);
-        }
+        if (animated) sheet.target = 0;
+        else sheet.snap(0);
+        watchingPage.top(!animated);
         if (tab != 0) selectTab(0);
         retarget(!animated);
         motionDirty = true;
@@ -605,6 +583,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         updatePalette();
         checkNight(true);
         heroDirty = statusDirty = drawerDirty = true;
+        widgetsPage.invalidate();
+        pagesChanged();      // the quotes may have come or gone: page 2 with them
         platter.invalidate();
     }
 
@@ -623,17 +603,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
-        // Spotlight's poster row and heading sit below Cards mode's fixed 790px hero height, so it needs the full screen.
+        // Spotlight's photo fills the whole screen behind the shelf, so its layer does too.
         measure(heroLayer, width, Prefs.spotlightOn() ? height : Math.round(790 * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
-        // cheaper for the GPU to composite on every frame of the drawer animation. Spotlight moves the shelf across
-        // most of the screen's height (a sliver near the bottom, "row -1" up near the catalog rows once that page
-        // opens, scrolling away further still as you browse deeper) — a small, Cards-sized box would clip it the same
-        // way the hero layer used to clip the poster row (see the 790px note above), so it gets the full screen too.
-        measure(platter, width, Prefs.spotlightOn() ? height : Math.round(320 * kk));
-        measure(tiles, width, Prefs.spotlightOn() ? height : Math.round(270 * kk));
-        measure(drawerLayer, width, Math.round(600 * kk));
+        // cheaper for the GPU to composite on every frame of a page change.
+        measure(platter, width, Math.round(320 * kk));
+        measure(tiles, width, Math.round(270 * kk));
+        measure(drawerLayer, width, height);
         measure(catalogLayer, width, height);
         measure(browseLayer, width, height);
         measure(sheetLayer, width, height);
@@ -652,9 +629,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sky.layout(0, 0, width, height);
         place(heroLayer, 0, 0);
         place(status, width - status.getMeasuredWidth(), 0);
-        place(platter, 0, Prefs.spotlightOn() ? 0 : Math.round(750 * kk));
-        place(tiles, 0, Prefs.spotlightOn() ? 0 : Math.round(790 * kk));
-        place(drawerLayer, 0, Math.round(470 * kk));
+        place(platter, 0, Math.round(750 * kk));
+        place(tiles, 0, Math.round(790 * kk));
+        drawerLayer.layout(0, 0, width, height);
         catalogLayer.layout(0, 0, width, height);
         browseLayer.layout(0, 0, width, height);
         sheetLayer.layout(0, 0, width, height);
@@ -682,7 +659,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         clockMinute = -1;
         updateClock();
         layoutShelf();
-        layoutDrawer();
+        widgetsPage.layout(k, w, h);
         layoutLight();
         watchingPage.layout(k, w, h);
         catalogPage.layout(k, w, h);
@@ -779,30 +756,27 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (topMoving) status.invalidate();
         boolean heroMoving = topMoving | cardsMoving | spotlightRowMoving;
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
-        boolean drawerMoving = drawer.step(dt);
+        boolean pagerMoving = pager.pos.step(dt);
         boolean sheetMoving = sheet.step(dt);
         boolean popMoving = step(popFocus, dt) | popIn.step(dt);
-        boolean catMoving = catIn.step(dt) | watchingPage.tick(dt);
-        boolean browseMoving = browseIn.step(dt) | catalogPage.tick(dt);
+        boolean widgetsMoving = widgetsPage.tick(dt);
+        boolean catMoving = watchingPage.tick(dt);
+        boolean browseMoving = catalogPage.tick(dt);
         boolean toastFading = tickToast(up);
         heroMoving |= tickCards(up);
         heroMoving |= carousel.step(dt);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
-        if (drawerMoving || sheetMoving || catMoving || browseMoving || motionDirty) updateMotion();
-        // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
-        // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
-        // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
-        // glass shows the background where it ended up.
-        // Spotlight's shelf is pinned to row 0 of the catalog (see layoutShelf): its position is recomputed from
-        // catIn/catRow/drawer every frame they animate, so (unlike Cards, where the shelf only moves via its own
-        // translationY) it needs its layers invalidated while those are moving too, not just once they settle.
-        boolean spotlightShelfMoving = Prefs.spotlightOn() && (catMoving || drawerMoving);
-        if (tilesMoving || tilesDirty || spotlightShelfMoving) tiles.invalidate();
+        if (pagerMoving || sheetMoving || motionDirty) updateMotion();
+        // Changing page only moves the cached layers: redrawing the glass on every frame made the TV drop frames
+        // (measured: ~50 ms of GPU per frame). The app tiles have no glass; the widgets and the top buttons are drawn
+        // resting in place; the glass shelf is redrawn once the pages stop, so the glass shows the background where it
+        // ended up.
+        if (tilesMoving || tilesDirty) tiles.invalidate();
         if (statusDirty || bgFading) status.invalidate();
         if (heroMoving || heroDirty) heroLayer.invalidate();
-        if (drawerDirty || bgFading) drawerLayer.invalidate();
+        if (widgetsPage.takeDirty() | widgetsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
         if (popMoving || popDirty) popLayer.invalidate();
         if (!popOpen && popIn.value <= 0.001f && popLayer.getVisibility() == VISIBLE) popLayer.setVisibility(INVISIBLE);
@@ -812,21 +786,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (watchingPage.takeDirty() | catMoving) catalogLayer.invalidate();
         if (catalogPage.takeDirty() | browseMoving) browseLayer.invalidate();
-        if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
-        if (bgFading || (drawerWasMoving && !drawerMoving) || spotlightShelfMoving) platter.invalidate();
-        drawerWasMoving = drawerMoving;
-        if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
-        catWasMoving = catMoving;
+        if (pagerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
+        if (bgFading || (pagerWasMoving && !pagerMoving)) platter.invalidate();
+        pagerWasMoving = pagerMoving;
         tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = popDirty = false;
         if (updateClock()) {
             status.invalidate();
             if (!picksOn()) heroLayer.invalidate();
         }
 
-        // Busy: something is moving, or the sheet or the drawer is open.
-        boolean busy = tilesMoving || heroMoving || gridMoving || drawerMoving
-                || sheetMoving || popMoving || popOpen || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
+        // Busy: something is moving, or the sheet or a page under the first is open.
+        boolean busy = tilesMoving || heroMoving || gridMoving || pagerMoving
+                || sheetMoving || popMoving || popOpen || widgetsMoving || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
+                || pager.current() != topSlot || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
@@ -846,34 +818,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return moving;
     }
 
-    /** Drawer and sheet: the layers' positions and opacity (without redrawing their content). */
+    /** Pages and sheet: the layers' positions and opacity (without redrawing their content). */
     private void updateMotion() {
-        float d = drawer.value, dc = Ui.clamp(d), s = Ui.clamp(sheet.value);
-        float b = smoothstep(0, 0.5f, Ui.clamp(browseIn.value));      // the browse screen takes the whole screen
-        float home = (1 - s) * (1 - b), top = home * (1 - smoothstep(0, 0.32f, dc));
-        float shift = SHIFT * k;
-        float catLift = (catIn.value * catLift() + watchingPage.scrolled() * CAT_PITCH) * k;     // the poster rows pull everything further up
-        float lift = -d * shift - catLift;
-        show(heroLayer, top, lift);
-        show(status, top, lift);
-        float da = home * smoothstep(0.1f, 0.6f, dc);
-        // The shelf is visible (at full alpha) on both pages — a sliver on the hero page, "row -1" of the catalog's
-        // own coordinate system once the drawer opens. `layoutShelf()`'s own position formula now bakes in the
-        // catIn/catRow transform directly (so it's pinned to Continue Watching, not independently animated), so the
-        // shelf layer needs no extra translateY of its own in Spotlight — only Cards mode still uses `lift`.
-        float shelfLift = Prefs.spotlightOn() ? 0 : lift;
-        if (Prefs.spotlightOn()) layoutShelf();
-        show(platter, home, shelfLift);
-        show(tiles, home, shelfLift);
-        drawerLayer.setTranslationY((1 - d) * shift - catLift);
-        drawerLayer.setAlpha(da);
-        showLayer(drawerLayer, da > 0.002f);
-        float ca = home * smoothstep(0, 0.35f, Ui.clamp(catIn.value));
-        catalogLayer.setAlpha(ca);
-        showLayer(catalogLayer, ca > 0.002f);
-        browseLayer.setAlpha(b);
-        browseLayer.setTranslationY((1 - Ui.clamp(browseIn.value)) * 60 * k);
-        showLayer(browseLayer, b > 0.002f);
+        float s = Ui.clamp(sheet.value);
+        pager.place(h, 1 - s);
         showLayer(sheetLayer, s > 0.001f || sheetOpen);
         sheetLayer.setAlpha(s);
         float scale = 1.04f - 0.04f * s;
@@ -881,18 +829,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setScaleY(scale);
     }
 
-    private static void show(View v, float alpha, float translationY) {
-        v.setAlpha(alpha);
-        v.setTranslationY(translationY);
-        v.setVisibility(alpha > 0.002f ? VISIBLE : INVISIBLE);
-    }
-
     /**
      * Visibility and the GPU layer together, for a page whose content doesn't need its hardware layer to exist at
      * all while the page is fully closed (#memory-management, item 3): the layer comes back the moment it's needed
      * again, same as Android's own documented pattern for a hardware layer as a temporary aid, not a permanent canvas.
      */
-    private static void showLayer(View v, boolean visible) {
+    static void showLayer(View v, boolean visible) {
         v.setVisibility(visible ? VISIBLE : INVISIBLE);
         if (!Ui.LEGACY) {
             int want = visible ? LAYER_TYPE_HARDWARE : LAYER_TYPE_NONE;
@@ -1042,11 +984,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** How dark it is: 0 = day, 1 = night (in between during the transition). Spotlight's chrome (weather, buttons,
      * shelf) always sits over a photo with a dark corner treatment, by day or by night (Look.spotlightPhoto), so it
      * leans toward the night palette even in the day theme instead of using low-contrast ink on a bright scrim. That
-     * is only the hero page: the drawer and catalog pages sit on the look's own background, so by the time they are
-     * open this is the real day/night value again (a white Material page stays white by day). */
+     * is only the first page: the others sit on the look's own background, so once another page shows this is the
+     * real day/night value again (a white Material page stays white by day). */
     float dark() {
         if (!Prefs.spotlightOn() || !picksOn()) return night;
-        return night + (Math.max(night, 0.7f) - night) * (1 - Ui.clamp(drawer.value));
+        return night + (Math.max(night, 0.7f) - night) * (1 - pager.away());
     }
 
     /** The day or the night value of a glass surface (until those move into GlassLook). */
@@ -1184,36 +1126,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float fit = (full - Math.max(0, n - 1) * gap) / Math.max(1, n);
         float tw = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
         float th = tw * 9f / 16;
-        // Looks without a visible glass pill (tiles fill the width, no side padding) keep a slim bar above Continue Watching;
-        // the others keep Cards' own shelf padding, so the shelf is the same size in both styles.
-        if (Prefs.spotlightOn() && look.m.shelfFill) pad = 10 * k;
         float width = n * tw + Math.max(0, n - 1) * gap, left = look.m.shelfFill ? MARGIN * k : (w - width) / 2f;
         float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
-        // Spotlight shows a sliver of the shelf on the hero page (about half the platter block, as a hint there's
-        // more below), and once the page opens, the shelf is "row -1" of the catalog's own coordinate system —
-        // positioned just above row 0, with the exact same `catIn`/`catRow` transform `drawCatalog` applies to every
-        // real row — so it's guaranteed to sit immediately above Continue Watching, never overlapping it, and
-        // scrolls away with the same motion as everything else once you move deeper into the catalog. The two
-        // states are blended by `drawer.value` (already animating every frame it moves).
-        if (Prefs.spotlightOn()) {
-            float platterH = th + 2 * pad;
-            float hiddenTop = h - platterH * 0.5f;
-            // Row 0's own top (same formula `drawCatalog` uses for `y0`), minus the same gap every catalog row
-            // keeps from the one above it (CAT_ROW_GAP), minus the shelf's own height: the shelf's *bottom* lands
-            // just above Continue Watching's *top*, with the same rhythm as Continue Watching has above Shows you watch.
-            float row0Top = (catY0() - catIn.value * catLift() - watchingPage.scrolled() * CAT_PITCH) * k;
-            // The gap shrinks only to fit the resting layout (row 0 at its docked spot, catRow 0); it must not be a
-            // clamp on the live position, or the shelf would stop while row 0 keeps scrolling up over it.
-            float restRow0Top = (catY0() - catLift()) * k;
-            float rowGap = Math.min(CAT_ROW_GAP * k, Math.max(0, restRow0Top - platterH - 24 * k));
-            // Always row 0's live position minus an offset, so the two move in lockstep (blending by another spring
-            // let Continue Watching slide over the shelf mid-transition). The offset eases from the hidden sliver's to
-            // the docked one while the catalog is still fading in (see `ca` in updateMotion).
-            float hiddenOff = (catY0() * k) - hiddenTop;
-            float dockedOff = rowGap + platterH;
-            float e = smoothstep(0, 0.35f, Ui.clamp(catIn.value));
-            top = row0Top - (hiddenOff + (dockedOff - hiddenOff) * e);
-        }
         platterRect.set(left - side, top, left + width + side, top + th + 2 * pad);
         float x = left, y = top + pad;
         for (int i = 0; i < n; i++) {
@@ -1493,89 +1407,98 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return out;
     }
 
-    // MARK: - Bottom drawer
+    // MARK: - Pages (HomePager): Down past a page's last row goes to the next page that has something to show
 
-    private void layoutDrawer() {
-        float left = MARGIN * k, right = CONTENT_R * k;
-        float cardsTop = CARDS_TOP * k;
-        quotesCard.set(left, cardsTop, right, cardsTop + CARDS_H * k);     // the weather is at the top of the home screen now
-        drawerDirty = true;
-    }
-
-    /** How long the catalog posters stay decoded after the drawer closes: a quick close and reopen stays instant. */
+    /** How long the catalog posters stay decoded after going back to the first page: a quick return stays instant. */
     private static final long POSTERS_KEEP_MS = 10_000;
     private final Runnable dropPosters = this::dropPosters;
 
-    /** The drawer (and the browse screen in it) has been closed a while: its posters go; they're read back from disk. */
+    /** Back on the first page a while: the rows' posters go; they're read back from disk. */
     private void dropPosters() {
-        if (drawerOpen) return;
+        if (pager.current() != topSlot) return;
         catalogs.trim();
-        AppLog.w("catalog posters dropped (drawer closed)");
+        AppLog.w("catalog posters dropped (back on the first page)");
     }
 
-    /** The drawer closed: its posters are dropped in a few seconds, unless it opens again first. */
+    /** Back on the first page: the posters are dropped in a few seconds, unless a page with them shows again first. */
     private void catalogsClosed() {
         handler.removeCallbacks(dropPosters);
         handler.postDelayed(dropPosters, POSTERS_KEEP_MS);
     }
 
-    private void openDrawer() {
-        handler.removeCallbacks(dropPosters);
-        catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
+    /** ↓ (`dir` 1) or ↑ (-1) past the focused page's edge: the next page with something to show; false if none. */
+    private boolean pageBy(int dir) {
         watchingPage.sync();
         catalogPage.sync();
-        // The drawer opens on the poster rows (Trakt's, else TMDB's catalogs). Neither has loaded yet: nothing to open
-        // onto, so stay put; the next press (or the fetch finishing) tries again.
-        if (watchingPage.isEmpty() && catalogPage.isEmpty()) return;
-        drawerOpen = true;
-        drawer.target = 1;
-        drawerDirty = true;
-        if (!enterCatalog()) enterBrowse();
+        pager.refresh();
+        HomePager.Slot to = pager.next(dir);
+        if (to == null) return false;
+        goTo(to, false);
+        return true;
     }
 
-    private void closeDrawer() {
-        drawerOpen = false;
-        catalogsClosed();
-        drawer.target = 0;
-        catIn.target = 0;
-        watchingPage.top(false);
-        zone = Z_SHELF;
-    }
-
-    // MARK: - Spotlight's own paging (the shelf doesn't live on its hero screen: Down pages straight to the
-    // drawer/catalog screen in one press, landing on the shelf as that page's first row; Cards mode needs two presses
-    // — Down to the shelf, Down again to open the drawer — and keeps its own shelf position/openDrawer() untouched).
-
-    /** Down from the poster row: one page, not two — the shelf rises as this page's first row *and* the catalog rows
-     * (Continue Watching etc.) come in right below it in the same motion, not a second Down-press away. Focus lands
-     * on the shelf (`zone = Z_SHELF`); a further Down moves focus into the already-visible catalog rows via the
-     * ordinary `Z_SHELF` → `openDrawer()` → `enterCatalog()` path (harmless to call again — `catIn` is already at 1,
-     * so that's just a focus change, not a second "opening" animation). */
-    private void openSpotlightPage() {
-        handler.removeCallbacks(dropPosters);
-        catalogs.refreshIfStale();
-        watchingPage.sync();
-        catalogPage.sync();
-        drawerOpen = true;
-        drawer.target = 1;
-        zone = Z_SHELF;
-        if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, spotlightFocusedRect.centerX());
-        if (!watchingPage.isEmpty()) {
-            watchingPage.top(false);
-            catIn.target = 1;
+    /** `to` becomes the page shown, with the focus on it: on its first row coming from above, its last from below. */
+    private void goTo(HomePager.Slot to, boolean snap) {
+        HomePager.Slot from = pager.current();
+        boolean fromAbove = pager.order(from) < pager.order(to);
+        if (from != to) {
+            if (from == watchingSlot) watchingPage.leave();
+            else if (from == catalogSlot) catalogPage.leave();
         }
+        pager.refresh();
+        if (to == topSlot) {
+            zone = Z_SHELF;
+            catalogsClosed();
+        } else {
+            if (from == topSlot) {
+                handler.removeCallbacks(dropPosters);
+                catalogs.refreshIfStale();      // the poster rows (a request each, once in a few hours)
+            }
+            if (to == widgetsSlot) {
+                zone = Z_DRAWER;
+            } else if (to == watchingSlot) {
+                zone = Z_CATALOG;
+                if (from != to) watchingPage.enter(fromAbove);
+            } else {
+                zone = Z_BROWSE;
+                if (from != to) catalogPage.enter(fromAbove);
+            }
+        }
+        pager.show(to, snap);
+        motionDirty = true;
+        wake();
     }
 
-    /** Up from the shelf (or Back, from anywhere on the drawer/catalog page): closes that page and returns straight
-     * to the poster row, undoing what `openSpotlightPage()` started. */
-    private void closeSpotlightPage() {
-        drawerOpen = false;
-        catalogsClosed();
-        drawer.target = 0;
-        catIn.target = 0;
-        watchingPage.top(false);
-        zone = Z_CARDS;
-        cardIndex = 0;
+    /** A page's data changed: an empty page is left out, and the focus on it goes to the page above. */
+    void pagesChanged() {
+        if (pager == null) return;
+        pager.refresh();
+        HomePager.Slot at = pager.current();
+        if (!pager.shows(at)) {
+            goTo(pager.above(at), false);
+            retarget(false);
+        }
+        motionDirty = true;
+        wake();
+    }
+
+    /** The quotes card is on (Settings) and has coins to show: page 2 has something. */
+    boolean quotesOn() {
+        return Prefs.quotes() && HomeData.active().length > 0;
+    }
+
+    /** Page 2's quotes card at `r`, in this look's colors. */
+    void drawQuotes(Canvas c, RectF r) {
+        rowTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
+        cardTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
+        cardText.setColor(drawerInk(0.95f));
+        cardDim.setColor(look.color(Look.DRAWER_DIM, dark()));
+        cardDimRight.setColor(look.color(Look.FAINT, dark()));
+        bigTemp.setColor(drawerInk(1));
+        hourPaint.setColor(look.color(Look.DRAWER_DIM, dark()));
+        hourTemp.setColor(drawerInk(0.95f));
+        pricePaint.setColor(drawerInk(0.95f));
+        drawQuotesCard(c, r);
     }
 
     // MARK: - The input popover (HDMI input, AV input): a choice among the inputs of one kind
@@ -1782,19 +1705,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void drawerCard(Canvas c, RectF r) {
         drawerGlass(c, r, 30 * k, 0.72f, 0x1A000000, 10 * k);
-    }
-
-    private void drawDrawer(Canvas c) {
-        rowTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
-        cardTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
-        cardText.setColor(drawerInk(0.95f));
-        cardDim.setColor(look.color(Look.DRAWER_DIM, dark()));
-        cardDimRight.setColor(look.color(Look.FAINT, dark()));
-        bigTemp.setColor(drawerInk(1));
-        hourPaint.setColor(look.color(Look.DRAWER_DIM, dark()));
-        hourTemp.setColor(drawerInk(0.95f));
-        pricePaint.setColor(drawerInk(0.95f));
-        if (Prefs.quotes() && HomeData.active().length > 0) drawQuotesCard(c, quotesCard);
     }
 
     private void refreshDrawerText() {
@@ -2039,24 +1949,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-
-    // MARK: - Poster rows (under the drawer's weather and quotes; Down from the drawer's buttons)
-    /** The quotes card is the only card left in the drawer; without it the rows start where the cards would, and higher up. */
-    private boolean cardsOn() {
-        return Prefs.quotes() && HomeData.active().length > 0;
-    }
-
-    private float catY0() {
-        return cardsOn() ? CAT_Y0 : CARDS_TOP;
-    }
-
-    private float catLift() {
-        float lift = cardsOn() ? CAT_LIFT : CARDS_TOP - 140;
-        // Spotlight's shelf is docked just above row 0 (see layoutShelf): row 0 needs to rest a bit lower than Cards'
-        // does, so there's room for the shelf's full glass pill (not just its tiles) between it and the screen's top edge.
-        // A shelf with Cards' full padding is taller by 2 * (SHELF_PAD - 10): row 0 sits that much lower again.
-        return Prefs.spotlightOn() ? lift - SPOTLIGHT_SHELF_GAP - (look.m.shelfFill ? 0 : 2 * (SHELF_PAD - 10)) : lift;
-    }
+    // MARK: - Pages 3 and 4: the poster rows, and what they ask of the home screen
 
     @Override public void onCatalogs() {
         wake();
@@ -2064,43 +1957,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogPage.sync();
         watchingPage.invalidate();
         catalogPage.invalidate();
+        pagesChanged();
     }
 
     @Override public void onDetails() {
         catalogPage.onDetails();
     }
 
-    /** Page 3's top on screen now, before its own scroll: it rises as `catIn` goes to 1 (pixels). */
-    float watchingTop() {
-        return (catY0() - catIn.value * catLift()) * k;
-    }
-
-    /** Page 3's top once it has come in (1920-wide units). */
-    float watchingRestTop() {
-        return catY0() - catLift();
-    }
-
     /** The focus is on page 3. */
     boolean onWatchingPage() {
         return zone == Z_CATALOG;
-    }
-
-    /** Down from the drawer (or the shelf): the poster rows come in. */
-    private boolean enterCatalog() {
-        watchingPage.sync();
-        if (watchingPage.isEmpty()) return false;
-        zone = Z_CATALOG;
-        catIn.target = 1;
-        watchingPage.enter();
-        return true;
-    }
-
-    /** Up from the first row (or the rows went away): nothing in the drawer to land on, back to the shelf. */
-    void leaveCatalog() {
-        catIn.target = 0;
-        watchingPage.leave();
-        closeDrawer();
-        wake();
     }
 
     /**
@@ -2200,30 +2066,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
     }
 
-    // MARK: - Page 4, TMDB's catalogs (HomeCatalogPage): coming in and going out, and what the page asks of the home screen
+    // MARK: - What pages 3 and 4 ask of the home screen
 
     /** A badge picture is ready: the layers that show badges are drawn again (once; the picture then stays). */
     private final Runnable markBadgesRun = this::markBadges;
     final Runnable badgesReady = () -> post(markBadgesRun);
-
-    /** Down from the last of Trakt's rows (or from the shelf when there are none): the catalogs. */
-    private boolean enterBrowse() {
-        catalogPage.sync();
-        if (catalogPage.isEmpty()) return false;
-        zone = Z_BROWSE;
-        browseIn.target = 1;
-        catalogPage.enter();
-        return true;
-    }
-
-    /** Up from the first catalog (or the catalogs went away): back to Trakt's rows, else the shelf. */
-    void leaveBrowse() {
-        catalogPage.leave();
-        browseIn.target = 0;
-        if (!watchingPage.isEmpty()) zone = Z_CATALOG;
-        else closeDrawer();
-        wake();
-    }
 
     /** The focus is on page 4. */
     boolean onCatalogPage() {
@@ -2457,21 +2304,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closeSheet();
         } else if (catalogPage.trailerOn()) {      // Back stops the trailer first
             catalogPage.stopTrailer();
-        } else if (Prefs.spotlightOn() && drawer.value > 0.001f
-                && (zone == Z_CATALOG || zone == Z_DRAWER || zone == WIDGETS || zone == Z_SHELF)) {
-            // Spotlight's drawer/catalog page is one unit (opened and closed together, unlike Cards' shelf, which
-            // stays visible either way) — Back from anywhere on it closes the whole page in one press, straight back
-            // to the poster row, instead of stepping zone-by-zone the way Cards mode's always-visible shelf allows.
-            closeSpotlightPage();
-            retarget(false);
-        } else if (zone == Z_BROWSE) {
-            leaveBrowse();
-            retarget(false);
-        } else if (zone == Z_CATALOG) {
-            leaveCatalog();
-            retarget(false);
-        } else if (zone == Z_DRAWER || zone == WIDGETS) {
-            closeDrawer();
+        } else if (pager.current() != topSlot) {      // from any other page: the first page's shelf
+            goTo(topSlot, false);
             retarget(false);
         } else if (zone != Z_SHELF) {
             zone = Z_SHELF;
@@ -2499,31 +2333,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     int next = Math.max(0, Math.min(shelf.size() - 1, shelfIndex + dx));
                     if (next == shelfIndex) return;
                     shelfIndex = next;
-                } else {
-                    openDrawer();       // Up from the shelf is moveLight's
+                } else if (!pageBy(1)) {       // Up from the shelf is moveLight's
+                    return;
                 }
                 break;
             case Z_CATALOG:
-                if (!watchingPage.move(dx, dy)) {
-                    if (dx != 0) return;
-                    if (dy < 0) leaveCatalog();     // up from the first row
-                    else if (!enterBrowse()) return;      // past the last row: TMDB's catalogs
-                }
+                if (!watchingPage.move(dx, dy) && (dx != 0 || !pageBy(dy))) return;
                 break;
             case Z_BROWSE:
-                if (!catalogPage.move(dx, dy)) {
-                    if (dy >= 0) return;
-                    leaveBrowse();      // up from the first catalog
-                }
+                if (!catalogPage.move(dx, dy) && (dx != 0 || !pageBy(dy))) return;
                 break;
             case WIDGETS: {
                 List<Integer> on = widgets();
                 int at = on.indexOf(widgetIndex);
-                if (dy < 0 || at < 0) {
-                    zone = Z_DRAWER;
-                } else if (dx != 0 && at + dx >= 0 && at + dx < on.size()) {
+                if (dx != 0 && at >= 0 && at + dx >= 0 && at + dx < on.size()) {
                     widgetIndex = on.get(at + dx);
-                } else {
+                } else if (dx != 0 || !pageBy(dy)) {
                     return;
                 }
                 break;
@@ -2531,17 +2356,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             default:
                 if (dx != 0) {
                     return;
-                } else if (dy < 0) {
-                    closeDrawer();
-                } else if (enterCatalog()) {
-                    // Down from the drawer: the poster rows come in below the quotes
-                } else if (enterBrowse()) {
-                    // No Trakt rows to land on: straight into TMDB's catalogs
-                } else if (talkBack() && !widgets().isEmpty()) {
+                } else if (dy > 0 && talkBack() && !widgets().isEmpty()) {
                     // Only with TalkBack: the widgets are there to be read, and this is how it gets to them.
                     zone = WIDGETS;
                     widgetIndex = widgets().get(0);
-                } else {
+                } else if (!pageBy(dy)) {
                     return;
                 }
                 break;
@@ -2974,7 +2793,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = picksOn() ? 0 : 3; i < 3 + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
         for (int i = 0; i < Math.min(3, cards.size()); i++) out.add(a11yId(Z_CARDS, i));
         for (int i = 0; i < shelf.size(); i++) out.add(a11yId(Z_SHELF, i));
-        if (drawerOpen && Prefs.quotes() && HomeData.active().length > 0) out.add(a11yId(WIDGETS, 1));
+        if (pager.current() == widgetsSlot && quotesOn()) out.add(a11yId(WIDGETS, 1));
     }
 
     private String a11yText(int id) {
@@ -3037,8 +2856,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 dy = tiles.getTranslationY();
                 break;
             case WIDGETS:
-                if (!drawerOpen) return false;
-                a11yRect.set(quotesCard);
+                if (pager.current() != widgetsSlot) return false;
+                a11yRect.set(widgetsPage.quotesRect());
                 dy = 0;
                 break;
             default:
@@ -3064,11 +2883,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-    /** The drawer's widgets that are on (0 weather, 1 quotes), with the drawer open. */
+    /** Page 2's widgets that are on (0 weather, 1 quotes), while it shows. */
     private List<Integer> widgets() {
         List<Integer> out = new ArrayList<>();
-        if (!drawerOpen) return out;
-        if (Prefs.quotes() && HomeData.active().length > 0) out.add(1);
+        if (pager.current() != widgetsSlot) return out;
+        if (quotesOn()) out.add(1);
         return out;
     }
 
@@ -3107,18 +2926,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_TOP:
                 if (i >= 3 + lightButtons.size() || (i < 3 && !picksOn())) return;
-                if (drawerOpen) closeDrawer();
+                if (pager.current() != topSlot) goTo(topSlot, false);
                 topIndex = i;
                 if (i < 3) selectTab(i);
                 break;
             case Z_CARDS:
                 if (i >= Math.min(3, cards.size())) return;
-                if (drawerOpen) closeDrawer();
+                if (pager.current() != topSlot) goTo(topSlot, false);
                 cardIndex = i;
                 break;
             case Z_SHELF:
                 if (i >= shelf.size()) return;
-                if (drawerOpen) closeDrawer();
+                if (pager.current() != topSlot) goTo(topSlot, false);
                 shelfIndex = i;
                 break;
             default:
@@ -3484,8 +3303,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
-        // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
-        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
+        // Another page showing: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
+        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * pager.away(), blend(0xFFFFFFFF, 0xFF000000, night));
         if (bgTo == null || (fading && bgFrom == null)) {
             if (lightGradient == null) lightGradient = Ui.gradient(h, 0xFFF5F5F7, 0xFFE2E2E7);
             if (nightGradient == null) nightGradient = Ui.gradient(h, 0xFF1C1C1E, 0xFF0B0B0D);
@@ -3512,10 +3331,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /**
      * The home screen's own background, over the look's: the first pick's picture, softly blurred and toned by the
-     * look's scrim. It fades away as the catalogs come in, so they (and every other screen) keep the look's background.
+     * look's scrim. It fades away as another page comes in, so the others (and every other screen) keep the look's background.
      */
     private void drawHomeBackdrop(Canvas c) {
-        float amount = 1 - Ui.clamp(catIn.value * 1.4f);
+        float amount = 1 - Ui.clamp(pager.pos.value * 1.4f);
         if (amount < 0.01f || (bgTo == null && bgFrom == null)) return;
         long up = SystemClock.uptimeMillis();
         boolean fading = bgFadeAt != 0;
@@ -3913,14 +3732,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean moveLight(int dx, int dy) {
         switch (zone) {
             case Z_SHELF:
-                // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.
-                if (dy >= 0) return false;      // down/sideways: move()'s own Z_SHELF case (left-right, openDrawer()) handles it
+                // Up from an empty shelf too: the tabs or the buttons above.
+                if (dy >= 0) return false;      // down/sideways: move()'s own Z_SHELF case (left-right, the next page) handles it
                 if (cards.isEmpty()) {
                     if ((!picksOn() || Prefs.spotlightOn()) && lightButtons.isEmpty()) return true;   // no tabs and no buttons above
                     zone = Z_TOP;
                     topIndex = picksOn() && !Prefs.spotlightOn() ? tab : 3;
-                } else if (Prefs.spotlightOn()) {
-                    closeSpotlightPage();
                 } else {
                     zone = Z_CARDS;
                     cardIndex = 0;
@@ -3937,11 +3754,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     // from the poster row goes straight to the corner buttons (if any; else moveLight(Z_TOP) with no
                     // buttons and dy<0 already returns true below, keeping focus put).
                     topIndex = Prefs.spotlightOn() ? 3 : tab;
-                } else if (Prefs.spotlightOn()) {
-                    openSpotlightPage();
                 } else {
                     zone = Z_SHELF;
-                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
+                    RectF from = Prefs.spotlightOn() ? spotlightFocusedRect : cardRects[cardIndex];
+                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, from.centerX());
                 }
                 break;
             case Z_TOP:

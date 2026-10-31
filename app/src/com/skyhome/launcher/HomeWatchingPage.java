@@ -15,6 +15,8 @@ import java.util.List;
 final class HomeWatchingPage extends HomePage {
     /** One row's title to the next one's, and how far below its top a row's last caption ends. */
     static final float PITCH = 440, ROW_FOOT = 400;
+    /** The first row's top on the page, the same as page 4's video window. */
+    private static final float TOP = 60;
     /** Where the last row's foot may rise to: the screen's bottom, 40 short. */
     private static final float BOTTOM = 1040;
 
@@ -37,7 +39,7 @@ final class HomeWatchingPage extends HomePage {
     }
 
     @Override float height() {
-        return Math.max(1, Math.min(3, (float) Math.ceil((HomeGrid.SAFE_TOP + list.size() * PITCH) / HomeGrid.H)));
+        return Math.max(1, Math.min(3, (float) Math.ceil((TOP + list.size() * PITCH) / HomeGrid.H)));
     }
 
     // MARK: - Layout
@@ -46,11 +48,11 @@ final class HomeWatchingPage extends HomePage {
         rowTitle = Ui.text(home.look.typeface(Ui.semibold), 32 * k, 0xFF1D1D1F);
     }
 
-    /** A column of rows, PITCH apart, between the side margins and below the safe area's top. */
+    /** A column of rows, PITCH apart, between the side margins and from TOP down. */
     @Override protected Node build() {
         rowNodes.clear();
         Node[] items = new Node[list.size() + 1];
-        items[0] = Node.space(0, HomeGrid.SAFE_TOP * k);
+        items[0] = Node.space(0, TOP * k);
         for (int i = 0; i < list.size(); i++) {
             final int r = i;
             items[i + 1] = Node.of(list.get(i).row.title, (c, f) -> drawRow(c, r, f)).size(Node.FILL, PITCH * k);
@@ -74,7 +76,7 @@ final class HomeWatchingPage extends HomePage {
         row = focusedRow;
         relayout();
         if (home.onWatchingPage()) {
-            if (list.isEmpty()) home.leaveCatalog();
+            if (list.isEmpty()) home.pagesChanged();
             else scroll.target = scrollTarget();
         }
         invalidate();
@@ -87,8 +89,14 @@ final class HomeWatchingPage extends HomePage {
         else scroll.target = 0;
     }
 
-    @Override void enter() {
-        top(false);
+    /** From above: the first row, unscrolled. From below (Up from page 4): the last row. */
+    @Override void enter(boolean fromAbove) {
+        if (fromAbove) {
+            top(false);
+        } else {
+            row = Math.max(0, list.size() - 1);
+            scroll.target = scrollTarget();
+        }
         popFocus();
     }
 
@@ -113,15 +121,10 @@ final class HomeWatchingPage extends HomePage {
      * past the point where the last row's foot reaches the bottom of the screen, so a few rows don't leave it empty.
      */
     private float scrollTarget() {
-        float firstTop = home.watchingRestTop();
+        float firstTop = TOP;
         float lastFoot = firstTop + (list.size() - 1) * PITCH + ROW_FOOT;
         float most = Math.max(0, lastFoot - BOTTOM) / PITCH;
         return Math.min(row, most);
-    }
-
-    /** How far the rows have scrolled now, in rows (the screens above move with them). */
-    float scrolled() {
-        return scroll.value;
     }
 
     @Override boolean tick(float dt) {
@@ -168,12 +171,9 @@ final class HomeWatchingPage extends HomePage {
 
     // MARK: - Drawing
 
-    /**
-     * The page's top on screen now: where the home screen puts its first row, less the safe margin above that row and
-     * how far the rows have scrolled.
-     */
+    /** How far the rows have scrolled up the page's layer now (the pager moves the layer itself). */
     private float origin() {
-        return home.watchingTop() - (HomeGrid.SAFE_TOP + scroll.value * PITCH) * k;
+        return -scroll.value * PITCH * k;
     }
 
     @Override void draw(Canvas c) {

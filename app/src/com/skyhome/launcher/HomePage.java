@@ -112,8 +112,8 @@ abstract class HomePage {
         invalidate();
     }
 
-    /** The focus comes onto the page. */
-    void enter() {}
+    /** The focus comes onto the page: from the page above (`fromAbove`) or the one below. */
+    void enter(boolean fromAbove) {}
 
     /** The focus leaves the page. */
     void leave() {}
