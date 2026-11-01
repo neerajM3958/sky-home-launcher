@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Installs Stremio from its own site when the person asks (Settings > Stremio); Android asks them to confirm. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- The notice that a newer release is out (Settings > Check for Updates); the home screen also shows it. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The sleep timer's minutes left over any app (SleepOverlay), when picked, and the debug memory card

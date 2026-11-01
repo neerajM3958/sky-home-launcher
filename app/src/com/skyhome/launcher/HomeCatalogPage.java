@@ -189,10 +189,33 @@ final class HomeCatalogPage extends HomePage {
         return true;
     }
 
-    /** Held OK: starts the trailer, or pauses and resumes the one playing. */
-    @Override boolean hold() {
-        trailerKey();
-        return true;
+    Catalogs.Item focusedItem() {
+        return item();
+    }
+
+    boolean trailerPlaying() {
+        return trailerOn;
+    }
+
+    boolean trailerPaused() {
+        return trailerOn && trailer.paused();
+    }
+
+    /** The focused title has a trailer to open in YouTube (playing in the window or not). */
+    boolean canOpenYoutube() {
+        return trailerOn || info != null && !info.trailers.isEmpty();
+    }
+
+    /** Stops the trailer in the window, if one plays, and opens it (or the title's first) in YouTube. */
+    void openTrailerInYoutube() {
+        String id = trailerOn && trailerAt < trailerIds.length ? trailerIds[trailerAt]
+                : info == null || info.trailers.isEmpty() ? "" : info.trailers.split(",")[0];
+        if (id.isEmpty()) {
+            home.showToast(Ui.tr("This title has no trailer."));
+            return;
+        }
+        stopTrailer();
+        openYoutube(id);
     }
 
     @Override void pause() {
@@ -514,11 +537,14 @@ final class HomeCatalogPage extends HomePage {
      * that opens the link, not Android's placeholder). Always with a plain watch link (some clients don't read the
      * "vnd.youtube:" form), and always for one chosen app, so no chooser comes up.
      */
+    private static final java.util.List<String> SMART_TUBE = java.util.Arrays.asList("com.teamsmart.videomanager.tv",
+            "org.smarttube.stable", "org.smarttube.beta", "com.liskovsoft.smarttubetv.beta");
+
     private void openYoutube(String id) {
         android.content.pm.PackageManager pm = home.getContext().getPackageManager();
         android.content.Intent watch = new android.content.Intent(android.content.Intent.ACTION_VIEW,
                 android.net.Uri.parse("https://www.youtube.com/watch?v=" + id));
-        String official = null, client = null, browser = null;
+        String official = null, smartTube = null, client = null, browser = null;
         try {
             android.content.Intent clients = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id));
             for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(clients, 0)) {
@@ -532,7 +558,8 @@ final class HomeCatalogPage extends HomePage {
         } catch (RuntimeException e) {
             AppLog.w("trailer apps: " + e.getMessage());
         }
-        String pick = official != null ? official : client != null ? client : browser;
+        String pick = official != null ? official : smartTube != null ? smartTube : client != null ? client : browser;
+        AppLog.w("trailer: opening with " + pick);
         if (pick != null) watch.setPackage(pick);
         try {
             home.activity.startActivity(watch);

@@ -201,9 +201,10 @@ final class PicksSpotlight extends PicksSection {
             float lineH = 72 * k;
             for (int i = 0; i < wrapLineCount; i++)
                 c.drawText(wrapLines[i], margin, rowTop - TITLE_ABOVE * k - (wrapLineCount - 1 - i) * lineH, title);
-            if (pick.meta != null && !pick.meta.isEmpty()) {
+            String line = pick.full != null && !pick.full.isEmpty() ? pick.full : pick.meta;
+            if (line != null && !line.isEmpty()) {
                 fitPaint.set(meta);
-                String text = TextUtils.ellipsize(pick.meta, fitPaint, titleW, TextUtils.TruncateAt.END).toString();
+                String text = TextUtils.ellipsize(line, fitPaint, titleW, TextUtils.TruncateAt.END).toString();
                 c.drawText(text, margin, rowTop + (META_GAP - TITLE_ABOVE) * k, meta);
             }
         }

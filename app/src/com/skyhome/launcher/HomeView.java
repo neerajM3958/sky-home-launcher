@@ -998,6 +998,38 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         showPop(it.title, items, 0, actions.toArray(new Runnable[0]), tileAnchor);
     }
 
+    /** A catalog title's menu (always shown, even with one row): its trailer, and the watchlist where Trakt allows it. */
+    private void openCatalogMenu() {
+        handler.removeCallbacks(holdStart);
+        holdArmed = false;
+        final Catalogs.Item it = catalogPage.focusedItem();
+        if (popover.isOpen() || opening != null || it == null) return;
+        okHeld = true;      // the release of this press opens nothing
+        final List<Runnable> actions = new ArrayList<>();
+        List<HomeApps.Item> items = new ArrayList<>();
+        final boolean playing = catalogPage.trailerPlaying();
+        String trailerLabel = !playing ? Ui.tr("Play trailer") : catalogPage.trailerPaused() ? Ui.tr("Resume trailer") : Ui.tr("Pause trailer");
+        items.add(HomeApps.action(HomeApps.APP, "trailer", trailerLabel, null));
+        actions.add(catalogPage::trailerKey);
+        if (catalogPage.canOpenYoutube()) {
+            items.add(HomeApps.action(HomeApps.APP, "youtube", Ui.tr("Open in YouTube"), null));
+            actions.add(catalogPage::openTrailerInYoutube);
+        }
+        if (catalogs.canWatchlist(it)) {
+            final boolean listed = catalogs.onWatchlist(it);
+            items.add(HomeApps.action(HomeApps.APP, "watchlist", listed ? Ui.tr("Remove from Watchlist") : Ui.tr("Add to Watchlist"), null));
+            actions.add(() -> catalogs.toggleWatchlist(it, r -> {
+                if (r == Trakt.DONE && listed) showToast(Ui.trf("Removed from Watchlist: {title}", "title", it.title));
+                else if (r == Trakt.DONE) showToast(Ui.trf("Added to Watchlist: {title}", "title", it.title));
+                else if (listed) showToast(Ui.tr("Couldn't remove it. Try again."));
+                else showToast(Ui.tr("Couldn't add it. Try again."));
+            }));
+        }
+        catalogPage.focusedRect(tileAnchor);
+        click.open();
+        showPop(it.title, items, 0, actions.toArray(new Runnable[0]), tileAnchor);
+    }
+
     /** Color for the drawer's text and symbols: dark by day, white at night. */
     private int drawerInk(float alpha) {
         return Ui.alpha(look.color(Look.INK_PURE, dark()), alpha);
@@ -1591,16 +1623,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void hold() {
         if (popover.isOpen()) return;
         if (sheet.isOpen()) {
-            toggleShelf();
+            openAppMenu();
         } else if (onWatchingPage()) {
             openTileMenu();     // a poster's menu: Remove or Hide
         } else {
             handler.removeCallbacks(holdStart);
             holdArmed = false;
-            // On page 4 the trailer of the focused title; on page 1 the focused app is lifted to be moved.
+            // On page 4 the focused title's menu; on page 1 the focused app is lifted to be moved.
             if (onCatalogPage()) {
-                okHeld = true;
-                catalogPage.hold();
+                openCatalogMenu();
             } else if (onTopPage() && top.hold()) {
                 okHeld = true;
             }
@@ -1611,13 +1642,75 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void a11yHold() {
         if (SystemClock.uptimeMillis() - toggledAt < 1000) return;
         if (okDown) okHeld = true;     // the remote's release must not open the app
-        toggleShelf();
+        openAppMenu();
     }
 
     private boolean canToggleShelf(int i) {
         if (!sheet.isOpen() || i >= sheet.apps().size()) return false;
         HomeApps.Item it = sheet.apps().get(i);
         return it.kind == HomeApps.APP && it.pkg != null;
+    }
+
+    /** An app of All Apps the person may uninstall: one they added (never a system app, updated or not), and not this launcher. */
+    private boolean canUninstall(PackageManager pm, String pkg) {
+        if (pkg.equals(getContext().getPackageName())) return false;
+        try {
+            return (pm.getApplicationInfo(pkg, 0).flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** The focused app's menu (always shown, even with one row): on or off the home screen's shelf, and Uninstall for apps the person added. */
+    private void openAppMenu() {
+        handler.removeCallbacks(holdStart);
+        holdArmed = false;
+        if (popover.isOpen() || !canToggleShelf(sheet.index())) return;
+        okHeld = true;      // the release of this press opens nothing
+        final HomeApps.Item it = sheet.apps().get(sheet.index());
+        final Context c = getContext().getApplicationContext();
+        LOADER.execute(() -> {
+            PackageManager pm = c.getPackageManager();
+            int shown = 0;
+            boolean on = false;
+            for (String p : HomeApps.shelfPackages(c)) {
+                if (shown >= HomeApps.MAX_SHELF) break;
+                if (HomeApps.launchIntent(pm, p) == null) continue;
+                shown++;
+                on |= p.equals(it.pkg);
+            }
+            final boolean onShelf = on, removable = canUninstall(pm, it.pkg), disableable = HomeMode.canDisable(c, it.pkg);
+            handler.post(() -> {
+                if (popover.isOpen() || !sheet.isOpen()) return;
+                List<Runnable> actions = new ArrayList<>();
+                List<HomeApps.Item> items = new ArrayList<>();
+                items.add(HomeApps.action(HomeApps.APP, "shelf", onShelf ? Ui.tr("Remove from home screen") : Ui.tr("Add to home screen"), null));
+                actions.add(this::toggleShelf);
+                if (disableable) {
+                    items.add(HomeApps.action(HomeApps.APP, "disable", Ui.tr("Disable"), null));
+                    actions.add(() -> {
+                        HomeMode.disableApp(c, it.pkg);
+                        showToast(Ui.trf("Turning off {app}. Original brings it back.", "app", it.label));
+                    });
+                }
+                if (removable) {
+                    items.add(HomeApps.action(HomeApps.APP, "uninstall", Ui.tr("Uninstall"), null));
+                    actions.add(() -> uninstall(it));
+                }
+                click.open();
+                showPop(it.label, items, 0, actions.toArray(new Runnable[0]), sheet.focusedTile());
+            });
+        });
+    }
+
+    /** Android's own uninstall screen asks the person to confirm; the sheet reloads when the app is gone (the package receiver). */
+    private void uninstall(HomeApps.Item it) {
+        try {
+            activity.startActivity(new android.content.Intent(android.content.Intent.ACTION_DELETE, android.net.Uri.parse("package:" + it.pkg)));
+        } catch (RuntimeException e) {
+            AppLog.w("uninstall " + it.pkg + ": " + e.getMessage());
+            showToast(Ui.trf("Couldn't uninstall {app}.", "app", it.label));
+        }
     }
 
     /** Puts the focused app at the end of the shelf, or takes it off if it's there; a toast says which. */
