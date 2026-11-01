@@ -113,14 +113,16 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   by a try/catch), `BitmapShader.setFilterMode` (guarded), `Recording.Node` and `Ui.Weighted` (the Android 9 font weight) should come up.
 - The home screen is drawn by hand on one Canvas (`HomeView`); the glass and the sky are AGSL shaders (`Shaders`,
   Android 13+, with a fallback for 8 to 12). Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
-- It is four pages one under another (`HomePager`, one spring; a page change only moves layers): 1 weather, top buttons,
-  picks and shelf (still in `HomeView`), 2 `HomeWidgetsPage` (quotes), 3 `HomeWatchingPage` (Trakt and Watch Next rows),
+- It is four pages one under another (`HomePager`, one spring; a page change only moves layers): 1 `HomeTopPage` (weather,
+  top buttons, the picks in one `PicksSection` per style: `PicksOff`, `PicksCards`, `PicksSpotlight`, and `HomeShelf`,
+  which also moves apps), 2 `HomeWidgetsPage` (quotes), 3 `HomeWatchingPage` (Trakt and Watch Next rows),
   4 `HomeCatalogPage` (TMDB's catalogs, trailer). A page with nothing to show is left out (`HomePage.isEmpty`); ↓ past a
   page's last row goes to the next one, Back to page 1's shelf. Over them: `HomeSheet` (All Apps), `HomePopover`,
-  `HomeToasts`; `HomePainter` draws pictures, cards, posters and shadows for all of them.
+  `HomeToasts`; `HomePainter` draws pictures, cards, posters and shadows for all of them. `HomeView` is the host: the
+  background and night look, the layers, the pager, key routing (each key to the page with the focus) and TalkBack.
 - Layout is nodes, never positions computed by hand: a page's `build()` returns a tree of `Node`s and `Stack`s (rows and
   columns: fixed sizes kept, flex ones share the rest, `Node.when` hides one a style lacks) in its own space, in
-  `HomeGrid`'s 1920×1080 units times k; page 1's column is `HomeView.placeTop`. Moving one node moves its neighbours, so
+  `HomeGrid`'s 1920×1080 units times k; page 1's column is `HomeTopPage.build`, with its picks style's `nodes`. Moving one node moves its neighbours, so
   they can't overlap. After each layout `LayoutCheck` logs (`adb logcat -s SkyHomeLauncher`, "layout …") any two
   siblings that overlap or a node outside the safe area that isn't `bleed`: none should show. To see the boxes on the
   TV: `adb shell setprop debug.skyhome.bounds 1`, reinstall (a restart of `:home`), and `… 0` to turn it off.

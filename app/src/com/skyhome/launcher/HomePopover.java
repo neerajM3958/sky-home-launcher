@@ -204,7 +204,6 @@ final class HomePopover {
         if (a <= 0.01f || items.isEmpty() || label == null) return;
         Look look = home.look;
         float dark = home.dark();
-        home.applyTone();
         float s = 0.95f + 0.05f * a;
         int save = c.saveLayerAlpha(panel.left - 60 * k, panel.top - 40 * k, panel.right + 60 * k, panel.bottom + 80 * k,
                 Math.round(255 * a));
