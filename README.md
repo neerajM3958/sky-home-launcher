@@ -12,7 +12,7 @@ Android-only. Open source. Built with Claude Code. One button to undo.
 
 [Install](#install) · [Features](#what-you-get) · [Flows](#flows) · [Integrations](#integrations) · [Make it yours](#make-it-yours)
 
-<img src="screenshots/glass-dark-home.jpg" width="880" alt="The Sky Home Launcher home screen: a glass shelf of apps, trending picks, and the weather at a glance">
+<img src="screenshots/material-dark-home.jpg" width="880" alt="The Sky Home Launcher home screen: a glass shelf of apps, trending picks, and the weather at a glance">
 
 </div>
 
@@ -43,7 +43,7 @@ inline, no app switch.
 
 | Trending, with a trailer ready | Popular movies |
 |---|---|
-| ![](screenshots/glass-dark-page-row-04.jpg) | ![](screenshots/glass-dark-page-row-05.jpg) |
+| ![](screenshots/material-dark-page-row-04.jpg) | ![](screenshots/material-dark-page-row-05.jpg) |
 
 **Continue Watching and episodes.** Scroll up from the shelf for what you stopped part-way, the shows you watch, and
 your watchlist — Trakt's lists blended with Android TV's own Watch Next from your other apps. Open a show for its full
@@ -51,11 +51,11 @@ episode list, with sort, season, date and watched filters; OK opens an episode i
 
 | Continue Watching, Shows you watch, Watchlist | Episodes, with filters |
 |---|---|
-| ![](screenshots/glass-dark-page-row-02.jpg) | ![](screenshots/glass-dark-episodes.jpg) |
+| ![](screenshots/material-dark-page-row-02.jpg) | ![](screenshots/glass-dark-episodes.jpg) |
 
 **The screensaver.** Full-screen photos of your picks, with a big glass clock, the forecast and sunrise/sunset.
 
-![](screenshots/glass-dark-screensaver.jpg)
+![](screenshots/material-dark-screensaver.jpg)
 
 **Switching on and back.** On the TV: *Sky Home Launcher* → *Home Screen* → *Sky Home Launcher* changes the home
 screen and screensaver, and turns off a short list of promo apps (never uninstalled). *Original* brings it all back,
@@ -65,7 +65,7 @@ exactly as it was.
 
 | Settings | Home Settings | Shelf |
 |---|---|---|
-| ![](screenshots/glass-dark-settings-main.jpg) | ![](screenshots/glass-dark-settings-02.jpg) | ![](screenshots/glass-dark-settings-03.jpg) |
+| ![](screenshots/material-dark-settings-main.jpg) | ![](screenshots/glass-dark-settings-02.jpg) | ![](screenshots/glass-dark-settings-03.jpg) |
 
 | TMDB | Stremio | Integrations |
 |---|---|---|
