@@ -64,6 +64,19 @@ keyless one: picks off, city from the TV's time zone), signed with the project's
 (`.github/workflows/release.yml`, `workflow_dispatch`). The release tag becomes the version shown in Settings
 (`SKYHOME_VERSION` in `build.sh`); a plain local build instead shows its own `local-<timestamp>`.
 
+## Screenshots
+
+`tools/shots.sh <folder> [look] [theme] [area...]` drives the TV with remote keys (adb, Sky Home Launcher switched on, the
+remote left alone) and captures every area: Settings' main list and each sub-screen, the screensaver, the home screen, its
+picks and top buttons, All Apps, each row of the pages below the shelf, the episodes of a show. Areas:
+`core` (the small set), `all`, `settings`, `home`, `catalog`, `episodes`, `saver`, `apps` and `trailer` (only by name: where the inline trailer fails, YouTube opens, maybe on someone's profile); its header lists the
+env variables that adapt it to a TV (row numbers, how many presses to All Apps). `tools/update-screenshots.sh` retakes the
+README's `screenshots/<look>-<theme>-<area>.jpg` (every area in glass-dark, the core set in the other three; about 20
+minutes); `tools/shotdiff.py` compares two runs. Never `am force-stop` the app to reset it (that unbinds the remote
+buttons' service): the scripts open Settings as a new task and leave the home screen with Home and Back. The scripts can't
+tell rows apart by name, so on a TV whose Watching page differs (no Trakt, no Watch Next) set `EPISODES_ROW` and
+`TRAILER_ROW` (the row, counted from the shelf), or look at the shots before committing them.
+
 ## Adapting it to another TV
 
 Read first, change after. Read-only commands that tell you what the TV has:
