@@ -99,8 +99,8 @@ EOF
 
 # --- Build
 # The version shown in Settings: a release build gets its tag (release.yml sets SKYHOME_VERSION); a local build
-# gets its own timestamp, so it's never mistaken for a released one.
-VERSION="${SKYHOME_VERSION:-local-$(date +%Y%m%d%H%M%S)}"
+# gets its own UTC timestamp, so it is never mistaken for a released one (and Check for Updates can date it).
+VERSION="${SKYHOME_VERSION:-local-$(date -u +%Y%m%d%H%M%S)}"
 "$BT/aapt2" compile --dir app/res -o out/res.zip
 # Fonts uncompressed: Android reads them straight from the APK.
 "$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip \

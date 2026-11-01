@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Installs Stremio from its own site when the person asks (Settings > Stremio); Android asks them to confirm. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- The notice that a newer release is out (Settings > Check for Updates); the home screen also shows it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The sleep timer's minutes left over any app (SleepOverlay), when picked, and the debug memory card
          (MemoryCard, config.properties: show_memory_card); allowed through ADB, as Android TV has no screen for it. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -197,6 +199,16 @@
             android:name=".StremioInstall$Result"
             android:process=":home"
             android:exported="false" />
+
+        <!-- Settings > Check for Updates: what Android's installer says, and the daily look for a newer release. -->
+        <receiver
+            android:name=".UpdateCheck$Result"
+            android:process=":home"
+            android:exported="false" />
+        <service
+            android:name=".UpdateCheck$Job"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <receiver
             android:name=".HomeReceiver"
