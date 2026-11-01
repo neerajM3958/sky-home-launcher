@@ -7,7 +7,6 @@ import android.content.SharedPreferences;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
@@ -36,47 +35,42 @@ import android.view.accessibility.AccessibilityNodeProvider;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 /**
- * The home screen, styled after the Apple TV app with the macOS 27 glass. The picks carousel (Settings > TMDB >
- * "Picks carousel") has three styles, `Prefs.picksStyle()`:
- *  - **Off**: no tabs, no cards, just the weather, the icon buttons and the shelf.
- *  - **Cards** (the look this class was first built around): tabs (Explore, Movies, Shows) under the weather, three
- *    cards with the titles recommended for right now in the selected tab (Recs, from TMDB), the background the first
- *    card's photo heavily blurred and almost white (Backdrop); without one, a light gradient.
- *  - **Spotlight** (stock Google TV's "Top picks for you" style): no tabs, a full-screen sharp photo of the focused
- *    pick from the top of the screen down (`Look.spotlightPhoto`, each look's own corner/scrim treatment), its title
- *    and meta over the dark side, and a poster row that drives it (`drawSpotlight`) — the same `cards` list Cards mode
- *    uses, always from Explore's pool, but scrolled (not re-sorted to the front) via `spotlightRowShift`, the same
- *    pattern the catalog rows' `catShift` already uses. The shelf doesn't live on this screen at all: Down from the
- *    row pages straight to the drawer/catalog screen (below), landing on the shelf as its first row.
- * In every style: at the top right, icon-only glass buttons (Home Settings, Settings, Live TV, AV and HDMI input),
- * with the focused one's name below it, and the small crypto quotes (logo + price) at the right end of that row; at
- * the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one grows).
- * ↓ on the shelf: everything moves up and the bottom drawer appears
- * (inputs, shortcuts, weather for the next hours and quotes with the 24 h change); the background lightens (darkens
- * at night). ↑ or Back closes it. From sunset to sunrise, a night look: dark background, smoked glass and white text.
- * In Spotlight, Down from the poster row goes straight into this drawer/catalog screen in one press (skipping the
- * shelf-at-the-bottom step Cards mode has), with the shelf as the first thing on it instead of living on the hero
- * screen; Up from the shelf (or Back) closes it and returns to the poster row, same as Cards' shelf↔row behavior.
- * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
- * redraws what changed.
+ * The home screen, styled after the Apple TV app with the macOS 27 glass: four pages one under another (HomePager),
+ * ↓ past a page's last row to the next one that has something to show, ↑ back, Back to the first page's shelf.
+ *  1. This class (for now): the weather and the icon-only buttons at the top (Home Settings, Settings, Live TV, AV and
+ *     HDMI input; the focused one's name below it, the small crypto quotes at the row's right end), the picks and the
+ *     shelf, laid out as one column of nodes (`placeTop`). The picks carousel (Settings > TMDB > "Picks carousel") has
+ *     three styles, `Prefs.picksStyle()`:
+ *      - **Off**: no tabs, no cards, just the weather, the buttons and the shelf.
+ *      - **Cards**: tabs (Explore, Movies, Shows) under the weather, three cards with the titles recommended for right
+ *        now in the selected tab (Recs, from TMDB), the background the first card's photo heavily blurred (Backdrop).
+ *      - **Spotlight** (stock Google TV's "Top picks for you"): no tabs, a full-screen sharp photo of the focused pick
+ *        (`Look.spotlightPhoto`), its title and meta, and a poster row that drives it (`drawSpotlight`), resting on the
+ *        shelf; the same `cards` list Cards uses, always from Explore's pool, scrolled (`spotlightRowShift`).
+ *     The shelf: the apps in a glass bar, icons in each brand's color like the tvOS Dock, the focused one grows.
+ *  2. HomeWidgetsPage: the crypto quotes with their 24 h change (hidden when off).
+ *  3. HomeWatchingPage: Continue Watching, Shows you watch, Watchlist (hidden without Trakt or Watch Next items).
+ *  4. HomeCatalogPage: TMDB's catalogs, the focused title's details and trailer above one row.
+ * Over them: All Apps (HomeSheet), the popover (HomePopover: the inputs, a poster's menu) and the toasts (HomeToasts).
+ * Away from the first page the background lightens (darkens at night). From sunset to sunrise, a night look: dark
+ * background, smoked glass and white text. Measurements are in a 1920×1080 space (k = width / 1920; HomeGrid). The
+ * screen is split into layers so the TV's weak GPU only redraws what changed, and a page change only moves them.
  */
 final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Catalogs.Listener, Details.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
-    private static final float MARGIN = 80, CONTENT_R = 1840;
-    // Hero, anchored at the bottom (a two-line title grows upward).
+    private static final float MARGIN = HomeGrid.MARGIN, CONTENT_R = HomeGrid.CONTENT_R;
+    // Spotlight's title: at most this wide (a two-line title grows upward).
     private static final float HERO_TITLE_W = 900;
     // Shelf: tiles with corners concentric with the glass (glass radius = tile radius + padding).
     // Shelf like the tvOS 27 Dock: icons in each brand's color, 48 apart, and the glass bar hugging them with 40 of
@@ -84,36 +78,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // banners, so those are never stretched: up to 224 × 126, 178 × 100 with eight apps.
     private static final float SHELF_PAD = 40, TILE_GAP = 48;
     private static final float TILE_RADIUS = 22;
-    // Tile focus (Apple TV style): it grows from the center and its shadow drops (it "rises" toward the viewer).
-    // Corner capsule.
-    // Corner capsule: the height and top offset of the tvOS tab bar (68 and 46).
-    private static final float CAPSULE_TOP = 46, CAPSULE_H = 68, BUTTON = 56;
-    // Bottom drawer (measured with it open; everything moves up by SHIFT).
-    private static final float SHIFT = 560, ROW_TITLE = 518, ROW_TOP = 540, ROW_H = 126, CARDS_TOP = 708, CARDS_H = 300;
     // Spotlight (the full-screen picks carousel): a full-bleed photo from the top of the screen, the title and a
-    // poster row near the bottom. Positions tuned on-TV, not fixed by a grid.
-    // Round 2: posters are TMDB poster art (2:3, the title baked in), not landscape backdrop crops, so they're taller
-    // and the whole block moved up to leave them real room.
-    // Round 3: the shelf no longer lives on this screen at all (Down pages to the drawer/catalog screen, the shelf as
-    // its first row — see moveLight's Z_CARDS case and updateMotion); the row scrolls (spotlightRowShift) instead of
-    // re-sorting the focused pick to the front, and draws one column past SPOTLIGHT_VISIBLE so the next one peeks in.
-    private static final float SPOTLIGHT_TITLE_Y = 526, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_Y = 652,
-            SPOTLIGHT_ROW_TOP = 676, SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20,
-            SPOTLIGHT_SHELF_GAP = 60;
+    // poster row above the shelf. Positions tuned on-TV, not fixed by a grid. Posters are TMDB poster art (2:3, the
+    // title baked in); the row scrolls (spotlightRowShift) instead of re-sorting the focused pick to the front, and
+    // draws one column past SPOTLIGHT_VISIBLE so the next one peeks in. The shelf is at the foot of the page, as in
+    // Cards: the block rests on it (placeTop), and the title and heading hang from the row's top.
+    private static final float SPOTLIGHT_TITLE_ABOVE = 150, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_ABOVE = 24,
+            SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20;
     private static final int SPOTLIGHT_VISIBLE = 11;
-    // "All Apps" sheet.
-    private static final int COLUMNS = 5, VISIBLE_ROWS = 3;
-    private static final float GRID_W = 300, GRID_H = 169, GRID_GAP = 40, GRID_ROW = 239, GRID_TOP = 196, GRID_RADIUS = 22;
     private static final int SMOKE = 0xFF111113, INK = 0xFF1C1C1E, WHITE = 0xFFF5F5F7;
     private static final int UP_COLOR = 0xFF30D158, DOWN_COLOR = 0xFFFF453A;
-    private static final long TOAST_MS = 6000, FADE_MS = 800;
+    private static final long FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
     // The input popover (1920-wide units): the panel's width, its rows, and the layer that holds it with room for the shadow.
-    private static final float POP_W = 520, POP_ROW_H = 72, POP_TITLE_H = 64, POP_PAD = 14, POP_TOP = 168,
-            POP_LAYER_W = 600, POP_LAYER_H = 800, POP_LAYER_TOP = 130;
     private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8, BROWSE = 9, POP = 11;
-    private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
+    private static final int Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
@@ -124,20 +104,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static int tabsGeneration = -1;
     private static final String[] TAB_KIND = {null, "movie", "tv"};
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CATALOG = 6, Z_BROWSE = 10;
-    // Poster rows under the drawer's cards (measured in the drawer's resting space): row r starts at CAT_Y0 + r * CAT_PITCH; pressing
-    // Down from the drawer lifts everything by CAT_LIFT (the first row then sits at 400), each row after it by CAT_PITCH.
-    private static final float CAT_Y0 = 1040, CAT_LIFT = 640, CAT_PITCH = 440, CAT_POSTER_W = 180, CAT_POSTER_H = 270, CAT_GAP = 36;
-    // The blank space between one row's posters and the next row's title (CAT_PITCH minus a poster's own 50-above/
-    // 30-below offsets): how far "Shows you watch" sits below "Continue Watching"'s posters.
-    private static final float CAT_ROW_GAP = CAT_PITCH - 50 - CAT_POSTER_H + 30;
+    private static final float CAT_POSTER_W = PosterRow.POSTER_W, CAT_POSTER_H = PosterRow.POSTER_H;
 
-    private final Activity activity;
+    final Activity activity;
     private final Scene scene = new Scene();
-    private final Look look = Themes.create(Prefs.look(), scene);
+    final Look look = Themes.create(Prefs.look(), scene);
     private final HomeData data;
     private final Recs recs;
-    private final Click click;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    final Click click;
+    final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences ui;
     private final Spoken spoken = new Spoken(this, new Spoken.Source() {
         @Override public void items(List<Integer> out) { a11yItems(out); }
@@ -173,7 +148,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring carousel = new Spring(0.44f, 0.8f, 0);
     private int carouselTarget;
     private final RectF slotA = new RectF(), slotB = new RectF(), travel = new RectF();
-    private final Rect imageSrc = new Rect();
     private long cardMixAt;         // when the cards last changed their picks (0: never)
     private int cardMixDir;         // 1: the next picks (slide left), -1: the previous ones, 0: just fade
     private boolean cardsAnimating; // a picture is fading in (set while drawing)
@@ -230,94 +204,42 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private List<HomeApps.Item> reorderOrigin;
     private final Runnable holdStart = () -> { if (this.okDown && this.holdArmed) hold(); };
 
-    // Corner capsule
-    private List<HomeApps.Item> statusItems = new ArrayList<>();
-    private Spring[] statusFocus = new Spring[0];
-    private RectF[] statusRects = new RectF[0];
-    private final RectF capsuleRect = new RectF();
-    private float capsuleInfoW;
-    private int statusIndex;
-
-    // Hero and background
-    private List<Recs.Pick> picks = new ArrayList<>();
-    private int pickIndex, heroSlide = 1;
-    private Hero hero, heroFrom;
-    private long heroFadeAt, bgFadeAt;
-    private final Spring heroFocus = new Spring(0.28f, 0.85f, 0);
-    private final RectF heroButton = new RectF();
+    // Background
+    private long bgFadeAt;
     private Backdrop bgFrom, bgTo;     // null = gradient (no photo)
     private final int[] frostMix = new int[Backdrop.FW * Backdrop.FH];
 
-    // Bottom drawer
-    private List<HomeApps.Item> drawerItems = new ArrayList<>();
-    private Spring[] drawerFocus = new Spring[0];
-    private RectF[] drawerRects = new RectF[0];
-    private final RectF quotesCard = new RectF();
-    private final Spring drawer = new Spring(0.46f, 0.92f, 0);
-    private boolean drawerOpen;
+    // The pages, one under another (HomePager): 1 the top (this class, for now), 2 the widgets, 3 Trakt's and the TV's
+    // rows, 4 TMDB's catalogs.
+    private HomePager pager;
+    private HomePager.Slot topSlot, widgetsSlot, watchingSlot, catalogSlot;
+    private final HomeWidgetsPage widgetsPage;
+    private boolean pagerWasMoving;
 
     // The input popover: under the HDMI input and AV input top buttons, one row for each input of that kind.
-    private final Spring popIn = new Spring(0.34f, 0.88f, 0);
-    private Spring[] popFocus = new Spring[0];
-    private List<HomeApps.Item> popItems = new ArrayList<>();
-    private final RectF popPanel = new RectF(), popRow = new RectF();
-    private String popTitle = "";
-    private Runnable[] popActions;     // set for a poster's menu: OK runs the focused row's; null for the inputs, where OK opens the one chosen
-    private final RectF tileAnchor = new RectF();
-    private int popIndex;
-    private boolean popOpen, popDirty;
-    private Paint popLabel;
+    // The popover (HomePopover): under the input buttons, or beside a poster.
+    private final HomePopover popover;
+    private final RectF tileAnchor = new RectF(), popRow = new RectF();
     private final Catalogs catalogs;
     private final Layer catalogLayer;
-    private final Spring catIn = new Spring(0.5f, 0.92f, 0), catRow = new Spring(0.42f, 0.92f, 0), catFocus = new Spring(0.3f, 0.82f, 0);
-    private List<Catalogs.Row> catRows = new ArrayList<>();
-    private Spring[] catShift = new Spring[0];     // per row: the first poster shown, in posters
-    private int[] catCol = new int[0];
-    private int catRowIndex;
-    private boolean catDirty, catWasMoving;
-    private Paint lCatTitle, lCatLabel;
-    // The browse screen (TMDB's catalogs, under Trakt's rows): the focused title's details above, one catalog row below.
-    // Up and down change the catalog, left and right the title.
+    // Page 3, Trakt's and the TV's rows (HomeWatchingPage).
+    private final HomeWatchingPage watchingPage;
+    // Page 4, TMDB's catalogs (HomeCatalogPage).
     private final Layer browseLayer;
     private final Details details;
-    private final Spring browseIn = new Spring(0.5f, 0.92f, 0), browsePos = new Spring(0.42f, 0.92f, 0),
-            browseFocus = new Spring(0.3f, 0.82f, 0), browseSwap = new Spring(0.5f, 0.95f, 1);
-    private List<Catalogs.Row> browseRows = new ArrayList<>();
-    private Spring[] browseShift = new Spring[0];
-    private int[] browseCol = new int[0];
-    private int browseRowIndex;
-    private boolean browseDirty, browseWasMoving;
-    private Catalogs.Item browseShown;
-    private Details.Info browseInfo;
-    private Bitmap browseBack, browsePrev;     // the backdrop shown and the one it replaces (cross-fade)
-    private StaticLayout browseTitleText, browseOverviewText;
-    private String browseFacts = "";
-    private int browseTextGen = -1;
-    private TextPaint lBrowseTitle, lBrowseText;
-    private Paint lBrowseFacts;
-    private final RectF stage = new RectF(), browseCell = new RectF();
-    private final RectF cardRect = new RectF(), barRect = new RectF();
-    private int drawerIndex;
-
-    // "All Apps" sheet
-    private List<HomeApps.Item> others = new ArrayList<>();
-    private Spring[] gridFocus = new Spring[0];
-    private String[] gridLabels;
-    private final Spring sheet = new Spring(0.38f, 0.9f, 0);
-    private final Spring scroll = new Spring(0.34f, 1f, 0);
-    private final RectF focusedCell = new RectF();
-    private boolean sheetOpen, shelfEdited;
-    private int gridIndex;
+    private final HomeCatalogPage catalogPage;
+    private final RectF cardRect = new RectF();
+    // "All Apps" (HomeSheet); holding OK there puts an app on the shelf or takes it off.
+    private final HomeSheet sheet;
+    private boolean shelfEdited;
     private long toggledAt;
 
-    // Toasts
-    private final ArrayDeque<String> toasts = new ArrayDeque<>();
-    private StaticLayout toast;
-    private long toastAt;
+    // Toasts (HomeToasts)
+    private final HomeToasts toasts;
 
     // Frames
-    private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
-    private boolean drawerWasMoving, idle;
+    private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, motionDirty = true;
+    private boolean idle;
     private long lastNanos, resumedAt, lastStep;
     private static final long BURST_MS = 1500;
     private int w, h;
@@ -331,10 +253,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private long clockMinute = -1;
     private boolean okDown, backDown;
 
-    private Paint labelPaint, metaPaint, clockPaint, buttonPaint, capsuleText, tipPaint, quotePaint, staleQuote;
-    private Paint rowTitle, drawerLabel, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
-    private Paint pricePaint, changePaint, sheetTitle;
-    private TextPaint titlePaint, gridLabel, toastPaint;
+    private Paint labelPaint, metaPaint, clockPaint, buttonPaint, tipPaint, quotePaint, staleQuote;
+    private Paint rowTitle, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
+    private Paint pricePaint, changePaint;
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint imagePaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -342,22 +263,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Paint shadowDeep = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint halo = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Shadows shadows = new Shadows();
-    private final Map<Bitmap, BitmapShader> imageShaders = new WeakHashMap<>();
-    private final Matrix imageMatrix = new Matrix();
-    private final Paint imageFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    /** What every page draws the same way: pictures, cards, posters, shadows. */
+    final HomePainter painter;
     private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint sheen = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint veil = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint tileFill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path clip = new Path();
     private final RectF tmp = new RectF(), cell = new RectF(), screen = new RectF();
     private final TextPaint fitPaint = new TextPaint();
-    private final RectF gridCell = new RectF();
     private LinearGradient[] tileShaders = new LinearGradient[0];
-    private LinearGradient tileGlow, cardSheen;
-    private float tileShaderH, cardSheenH;
+    private LinearGradient tileGlow;
+    private float tileShaderH;
     private LinearGradient[] lightSheens = new LinearGradient[0], lightRims = new LinearGradient[0];
     private float[] lightShaderW = new float[0];
     private android.graphics.ColorFilter veilFilter;
@@ -368,18 +286,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String textLanguage;
     private String staleText;
     private final String[] priceText = new String[HomeData.COINS.length], changeText = new String[HomeData.COINS.length];
-
-    /** What the hero shows: a recommendation or, without any, the date, the time and the weather. */
-    private static final class Hero {
-        String label = "", title = "", meta = "";
-        boolean clock, button;
-        int dots, dot;
-        StaticLayout titleLayout;
-
-        boolean sameText(Hero o) {
-            return o != null && clock == o.clock && label.equals(o.label) && title.equals(o.title) && meta.equals(o.meta);
-        }
-    }
 
     /** One layer of the screen. It draws in full-screen coordinates: the glass needs each pixel's real position. */
     private final class Layer extends View {
@@ -393,23 +299,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override protected void onDraw(Canvas c) {
             if (labelPaint == null) return;
             c.translate(-getLeft(), -getTop());
-            // The layer may be shifted (bottom drawer): the glass reads the background from where it really is. The
-            // drawer and the top buttons are always drawn as if resting in place (they are only visible there and are
-            // not redrawn while they move).
+            // The layer may be shifted (another page showing): the glass reads the background from where it really is.
+            // The widgets and the top buttons are always drawn as if resting in place (they are only seen there and are
+            // not redrawn while they slide).
             scene.setOffset(0, kind == DRAWER || kind == STATUS ? 0 : getTranslationY());
             shadows.dither = dark() > 0.5f;
             switch (kind) {
                 case SKY: drawSky(c); break;
-                case HERO: drawLightTop(c); break;
+                case HERO:
+                    drawLightTop(c);
+                    LayoutCheck.drawBounds(c, topRoot, k);
+                    break;
                 case STATUS: drawLightButtons(c); break;
                 case PLATTER: drawPlatter(c); break;
                 case TILES: drawTiles(c); break;
-                case DRAWER: drawDrawer(c); break;
-                case CATALOG: drawCatalog(c); break;
-                case BROWSE: drawBrowse(c); break;
-                case SHEET: drawSheet(c); break;
-                case POP: drawPopover(c); break;
-                default: drawToast(c); break;
+                case DRAWER: widgetsPage.draw(c); break;
+                case CATALOG: watchingPage.draw(c); break;
+                case BROWSE: catalogPage.draw(c); break;
+                case SHEET: sheet.draw(c); break;
+                case POP: popover.draw(c); break;
+                default: toasts.draw(c); break;
             }
             scene.setOffset(0, 0);
         }
@@ -431,7 +340,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Runnable rotate = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            if (zone != Z_CARDS && !sheetOpen && !drawerOpen && cards.size() > 3) {
+            if (zone != Z_CARDS && !sheet.isOpen() && pager.current() == topSlot && cards.size() > 3) {
                 if (Prefs.spotlightOn()) autoAdvanceSpotlight();
                 else rotateCards(1);
             }
@@ -454,8 +363,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             wake();
             data.refreshIfStale();
             recs.refreshIfStale();
-            catalogs.refreshWatchNext(false);       // the row may be the only one: nothing else would open the drawer for it
-            if (drawerOpen) catalogs.refreshIfStale();
+            catalogs.refreshWatchNext(false);       // the row may be the only one: nothing else would bring page 3 for it
+            if (pager.current() != topSlot) catalogs.refreshIfStale();
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -486,18 +395,30 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogLayer = new Layer(a, CATALOG);
         browseLayer = new Layer(a, BROWSE);
         catalogs = Catalogs.get(a);
+        painter = new HomePainter(this, catalogs, shadows);
         details = Details.get(a);
+        widgetsPage = new HomeWidgetsPage(this);
+        watchingPage = new HomeWatchingPage(this, catalogs);
+        catalogPage = new HomeCatalogPage(this, catalogs, details);
+        topSlot = new HomePager.Slot("top", false, () -> true, heroLayer, status, platter, tiles);
+        widgetsSlot = new HomePager.Slot("widgets", true, () -> !widgetsPage.isEmpty(), drawerLayer);
+        watchingSlot = new HomePager.Slot("watching", true, () -> !watchingPage.isEmpty(), catalogLayer);
+        catalogSlot = new HomePager.Slot("catalogs", true, () -> !catalogPage.isEmpty(), browseLayer);
+        pager = new HomePager(topSlot, widgetsSlot, watchingSlot, catalogSlot);
+        LOADER.execute(LayoutCheck::readFlags);
         sheetLayer = new Layer(a, SHEET);
         popLayer = new Layer(a, POP);
+        popover = new HomePopover(this, popLayer);
+        sheet = new HomeSheet(this);
         toastLayer = new Layer(a, TOAST);
+        toasts = new HomeToasts(this, scene, toastLayer);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms). heroLayer/status/platter/tiles/popLayer are page-1 content (the resting screen), so they
-        // stay hardware-accelerated always; drawerLayer/catalogLayer/browseLayer/sheetLayer are other pages' content
-        // and start off (they're also INVISIBLE below) — updateMotion() turns each one's GPU layer on only while its
-        // own page is actually showing (#memory-management, item 3: ~25 MB of persistent GPU memory otherwise sat
-        // behind pages that may never be opened in a session).
+        // stay hardware-accelerated always; the other pages' layers and sheetLayer start off (they're also INVISIBLE
+        // below), and the pager turns each one's GPU layer on only while its page shows (#memory-management, item 3:
+        // ~25 MB of persistent GPU memory otherwise sat behind pages that may never be opened in a session).
         for (View v : new View[] {heroLayer, status, platter, tiles, popLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
         for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
@@ -517,17 +438,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cardRects[i] = new RectF();
         }
         setLightButtons(HomeApps.topButtons(a));
-        // Spotlight's shelf doesn't live on this screen (it's the drawer/catalog page's first row, not the bottom of
-        // the hero screen) — starting focus there, as every other style does, would land on something invisible.
-        if (Prefs.spotlightOn()) zone = Z_CARDS;
         checkNight(false);
         sheetLayer.setVisibility(INVISIBLE);
         scene.setMotion(0.6f, 0f);
         updatePalette();
         // First time: right away (a cold start opens with the apps already there); missing logos come from reload().
         setShelf(HomeApps.shelf(a, false));
-        setStatusItems(statusList(a));
-        setDrawerItems(new ArrayList<>());      // the drawer holds the quotes card and the poster rows; the inputs are top buttons now
     }
 
     // MARK: - Lifecycle (called by HomeActivity)
@@ -557,8 +473,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!again) reload();
         updatePalette();
         updatePicks();
-        if (sheetOpen) closeSheet();
-        sheet.snap(sheet.target);
+        if (sheet.isOpen()) closeSheet();
+        sheet.in.snap(sheet.in.target);
         motionDirty = true;
         invalidateAll();
         idle = false;
@@ -572,12 +488,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cancelReorder(true);
         handler.removeCallbacks(holdStart);
         okHeld = holdArmed = false;
-        cancelAutoTrailer();
-        stopTrailer();
-        if (trailer != null) {      // the WebView's memory goes back while the home screen is away
-            trailer.release();
-            trailer = null;
-        }
+        catalogPage.pause();
         Choreographer.getInstance().removeFrameCallback(this);
         handler.removeCallbacks(tick);
         handler.removeCallbacks(drift);
@@ -598,34 +509,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         click.release();
     }
 
-    /** Starting state (Home pressed while the home screen is showing): first app focused, drawer and sheet closed. */
+    /** Starting state (Home pressed while the home screen is showing): the first page, first app focused, sheet closed. */
     void reset(boolean animated) {
         wake();
         cancelReorder(!animated);
-        zone = Prefs.spotlightOn() ? Z_CARDS : Z_SHELF;   // Spotlight's shelf isn't on this screen (see constructor)
+        goTo(topSlot, !animated);
+        zone = Z_SHELF;
         shelfIndex = 0;
-        sheetOpen = false;
-        if (drawerOpen) catalogsClosed();
-        drawerOpen = false;
-        if (Prefs.spotlightOn()) { drawer.target = 0; catIn.target = 0; catRow.target = 0; }   // close its page too
+        if (sheet.isOpen()) sheet.close();
         closePop(!animated);
-        if (animated) {
-            sheet.target = 0;
-            drawer.target = 0;
-            catIn.target = 0;
-            catRow.target = 0;
-            browseIn.target = 0;
-        } else {
-            sheet.snap(0);
-            drawer.snap(0);
-            catIn.snap(0);
-            catRow.snap(0);
-            browseIn.snap(0);
-        }
-        if (pickIndex != 0 && !picks.isEmpty()) {
-            pickIndex = 0;
-            updatePicks();
-        }
+        if (animated) sheet.in.target = 0;
+        else sheet.in.snap(0);
+        watchingPage.top(!animated);
         if (tab != 0) selectTab(0);
         retarget(!animated);
         motionDirty = true;
@@ -661,8 +556,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         wake();
         updatePalette();
         checkNight(true);
-        layoutStatus();
         heroDirty = statusDirty = drawerDirty = true;
+        widgetsPage.invalidate();
+        pagesChanged();      // the quotes may have come or gone: page 2 with them
         platter.invalidate();
     }
 
@@ -681,21 +577,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
-        // Spotlight's poster row and heading sit below Cards mode's fixed 790px hero height, so it needs the full screen.
+        // Spotlight's photo fills the whole screen behind the shelf, so its layer does too.
         measure(heroLayer, width, Prefs.spotlightOn() ? height : Math.round(790 * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
-        // cheaper for the GPU to composite on every frame of the drawer animation. Spotlight moves the shelf across
-        // most of the screen's height (a sliver near the bottom, "row -1" up near the catalog rows once that page
-        // opens, scrolling away further still as you browse deeper) — a small, Cards-sized box would clip it the same
-        // way the hero layer used to clip the poster row (see the 790px note above), so it gets the full screen too.
-        measure(platter, width, Prefs.spotlightOn() ? height : Math.round(320 * kk));
-        measure(tiles, width, Prefs.spotlightOn() ? height : Math.round(270 * kk));
-        measure(drawerLayer, width, Math.round(600 * kk));
+        // cheaper for the GPU to composite on every frame of a page change.
+        measure(platter, width, Math.round(320 * kk));
+        measure(tiles, width, Math.round(270 * kk));
+        measure(drawerLayer, width, height);
         measure(catalogLayer, width, height);
         measure(browseLayer, width, height);
         measure(sheetLayer, width, height);
-        measure(popLayer, Math.round(POP_LAYER_W * kk), Math.round(POP_LAYER_H * kk));
+        measure(popLayer, popover.layerWidth(kk), popover.layerHeight(kk));
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
     }
@@ -710,16 +603,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sky.layout(0, 0, width, height);
         place(heroLayer, 0, 0);
         place(status, width - status.getMeasuredWidth(), 0);
-        place(platter, 0, Prefs.spotlightOn() ? 0 : Math.round(750 * kk));
-        place(tiles, 0, Prefs.spotlightOn() ? 0 : Math.round(790 * kk));
-        place(drawerLayer, 0, Math.round(470 * kk));
+        place(platter, 0, Math.round(750 * kk));
+        place(tiles, 0, Math.round(790 * kk));
+        drawerLayer.layout(0, 0, width, height);
         catalogLayer.layout(0, 0, width, height);
         browseLayer.layout(0, 0, width, height);
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
-        if (popPanel.isEmpty()) place(popLayer, Math.round((CONTENT_R - POP_W - 40) * kk), Math.round(POP_LAYER_TOP * kk));
-        else placePop();
+        popover.place(kk);
         place(toastLayer, (width - toastLayer.getMeasuredWidth()) / 2, 0);
     }
 
@@ -736,15 +628,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         look.attach(getContext());
         look.setSize(w, h, k);
         makePaints();
-        gridLabels = null;
         clockMinute = -1;
         updateClock();
         layoutShelf();
-        layoutStatus();
-        layoutDrawer();
+        widgetsPage.layout(k, w, h);
         layoutLight();
-        hero = null;
-        heroFrom = null;
+        watchingPage.layout(k, w, h);
+        catalogPage.layout(k, w, h);
         updatePicks();
         motionDirty = true;
         wake();
@@ -753,8 +643,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void makePaints() {
         labelPaint = Ui.text(Ui.medium, 25 * k, 0xC7FFFFFF);
         labelPaint.setLetterSpacing(0.1f);
-        titlePaint = new TextPaint(Ui.text(Ui.displayMedium, 76 * k, 0xFFFFFFFF));
-        titlePaint.setLetterSpacing(0.005f);
         metaPaint = Ui.text(Ui.medium, 29 * k, 0xD1FFFFFF);
         metaPaint.setLetterSpacing(0.014f);
         clockPaint = Ui.numbers(Ui.thin, 176 * k, 0xFFFFFFFF);
@@ -766,7 +654,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lSpotlightTitle.setLetterSpacing(0.004f);
         lSpotlightMeta = Ui.text(Ui.medium, 30 * k, 0xD1FFFFFF);
         lSpotlightHeading = Ui.text(Ui.semibold, 30 * k, 0xE8FFFFFF);
-        for (Paint p : new Paint[] {labelPaint, titlePaint, metaPaint, clockPaint, lSpotlightTitle, lSpotlightMeta, lSpotlightHeading})
+        for (Paint p : new Paint[] {labelPaint, metaPaint, clockPaint, lSpotlightTitle, lSpotlightMeta, lSpotlightHeading})
             p.setShadowLayer(22 * k, 0, 2 * k, 0x59000000);
         lTitle = Ui.text(look.typeface(Ui.displaySemibold), 76 * k, L_INK);
         lTitle.setLetterSpacing(0.004f);
@@ -776,12 +664,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(look.typeface(Ui.medium), 25 * k, L_DIM);
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
-        lCatTitle = Ui.text(look.typeface(Ui.semibold), 32 * k, L_INK);
-        lCatLabel = Ui.text(look.typeface(Ui.medium), 25 * k, L_INK);
-        lBrowseTitle = new TextPaint(Ui.text(look.typeface(Ui.semibold), 60 * k, 0xFFFFFFFF));
-        lBrowseFacts = Ui.text(look.typeface(Ui.medium), 27 * k, 0xE6FFFFFF);
-        lBrowseText = new TextPaint(Ui.text(look.typeface(Ui.medium), 26 * k, 0xD9FFFFFF));
-        browseTextGen = -1;
         lTip = Ui.text(look.typeface(Ui.semibold), 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
         lDate = Ui.text(look.typeface(Ui.semibold), 34 * k, L_DIM);
@@ -791,7 +673,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lClockQuote = Ui.numbers(Ui.medium, 28 * k, L_DIM);
         lightGradient = null;
         buttonPaint = Ui.text(Ui.semibold, 29 * k, INK);
-        capsuleText = Ui.numbers(Ui.medium, 29 * k, 0xF2FFFFFF);
         tipPaint = Ui.text(Ui.semibold, 25 * k, 0xF2FFFFFF);
         tipPaint.setTextAlign(Paint.Align.CENTER);
         tipPaint.setShadowLayer(16 * k, 0, 1 * k, 0x99000000);
@@ -801,9 +682,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         staleQuote = Ui.text(Ui.medium, 21 * k, 0x99FFFFFF);
         staleQuote.setTextAlign(Paint.Align.RIGHT);
         rowTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
-        drawerLabel = Ui.text(Ui.medium, 23 * k, 0xEBFFFFFF);
-        drawerLabel.setTextAlign(Paint.Align.CENTER);
-        popLabel = Ui.text(Ui.medium, 27 * k, 0xEBFFFFFF);
+        popover.layout(k, w, h);
         cardTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
         cardText = Ui.text(Ui.medium, 29 * k, 0xF2FFFFFF);
         cardDim = Ui.numbers(Ui.medium, 23 * k, 0xADFFFFFF);
@@ -818,11 +697,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         pricePaint.setTextAlign(Paint.Align.RIGHT);
         changePaint = Ui.numbers(Ui.semibold, 21 * k, 0xFFFFFFFF);
         changePaint.setTextAlign(Paint.Align.CENTER);
-        sheetTitle = Ui.text(Ui.displaySemibold, 40 * k, 0xFFFFFFFF);
-        sheetTitle.setTextAlign(Paint.Align.CENTER);
-        gridLabel = new TextPaint(Ui.text(Ui.medium, 24 * k, 0x99FFFFFF));
-        gridLabel.setTextAlign(Paint.Align.CENTER);
-        toastPaint = new TextPaint(Ui.text(Ui.medium, 26 * k, 0xF2FFFFFF));
+        sheet.layout(k, w, h);
+        toasts.layout(k, w);
+        painter.layout(k);
         shadow.setMaskFilter(new BlurMaskFilter(SHADOW_BLUR * k, BlurMaskFilter.Blur.NORMAL));
         shadowSoft.setMaskFilter(new BlurMaskFilter(12 * k, BlurMaskFilter.Blur.NORMAL));
         shadowDeep.setMaskFilter(new BlurMaskFilter(DEEP_BLUR * k, BlurMaskFilter.Blur.NORMAL));
@@ -843,72 +720,58 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         boolean tilesMoving = step(tileFocus, dt);
         if (reorderAnim) tilesMoving |= stepReorder(dt, up);
-        boolean statusMoving = step(statusFocus, dt);
-        boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt);
         boolean spotlightRowMoving = spotlightRowShift.step(dt);
         if (topMoving) status.invalidate();
-        heroMoving |= topMoving | cardsMoving | spotlightRowMoving;
-        boolean drawerItemsMoving = step(drawerFocus, dt);
-        boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
-        boolean drawerMoving = drawer.step(dt);
-        boolean sheetMoving = sheet.step(dt);
-        boolean popMoving = step(popFocus, dt) | popIn.step(dt);
-        boolean catMoving = catIn.step(dt) | catRow.step(dt) | catFocus.step(dt) | step(catShift, dt);
-        boolean browseMoving = browseIn.step(dt) | browsePos.step(dt) | browseFocus.step(dt) | browseSwap.step(dt) | step(browseShift, dt);
-        boolean toastFading = tickToast(up);
-        boolean heroFading = tickHeroFade(up);
+        boolean heroMoving = topMoving | cardsMoving | spotlightRowMoving;
+        boolean gridMoving = sheet.tick(dt);
+        boolean pagerMoving = pager.pos.step(dt);
+        boolean sheetMoving = sheet.in.step(dt);
+        boolean popMoving = popover.tick(dt);
+        boolean widgetsMoving = widgetsPage.tick(dt);
+        boolean catMoving = watchingPage.tick(dt);
+        boolean browseMoving = catalogPage.tick(dt);
+        boolean toastFading = toasts.tick(up);
         heroMoving |= tickCards(up);
         heroMoving |= carousel.step(dt);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
-        if (drawerMoving || sheetMoving || catMoving || browseMoving || motionDirty) updateMotion();
-        // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
-        // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
-        // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
-        // glass shows the background where it ended up.
-        // Spotlight's shelf is pinned to row 0 of the catalog (see layoutShelf): its position is recomputed from
-        // catIn/catRow/drawer every frame they animate, so (unlike Cards, where the shelf only moves via its own
-        // translationY) it needs its layers invalidated while those are moving too, not just once they settle.
-        boolean spotlightShelfMoving = Prefs.spotlightOn() && (catMoving || drawerMoving);
-        if (tilesMoving || tilesDirty || spotlightShelfMoving) tiles.invalidate();
-        if (statusMoving || statusDirty || bgFading) status.invalidate();
-        if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
-        if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
-        if (gridMoving || gridDirty) sheetLayer.invalidate();
-        if (popMoving || popDirty) popLayer.invalidate();
-        if (!popOpen && popIn.value <= 0.001f && popLayer.getVisibility() == VISIBLE) popLayer.setVisibility(INVISIBLE);
-        if ((openingItem != null && up - openingAt >= OPEN_LOADER_MS) || (trailerOn && trailer.loading())) catDirty = browseDirty = true;     // the waiting dots and the trailer's spinner move
-        if (catMoving || catDirty) catalogLayer.invalidate();
-        if (browseMoving || browseDirty) browseLayer.invalidate();
-        if (drawerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
-        if (bgFading || (drawerWasMoving && !drawerMoving) || spotlightShelfMoving) platter.invalidate();
-        drawerWasMoving = drawerMoving;
-        if (catWasMoving && !catMoving) platter.invalidate();     // the glass shows the background where it ended up
-        catWasMoving = catMoving;
-        browseWasMoving = browseMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = catDirty = browseDirty = popDirty = false;
+        if (pagerMoving || sheetMoving || motionDirty) updateMotion();
+        // Changing page only moves the cached layers: redrawing the glass on every frame made the TV drop frames
+        // (measured: ~50 ms of GPU per frame). The app tiles have no glass; the widgets and the top buttons are drawn
+        // resting in place; the glass shelf is redrawn once the pages stop, so the glass shows the background where it
+        // ended up.
+        if (tilesMoving || tilesDirty) tiles.invalidate();
+        if (statusDirty || bgFading) status.invalidate();
+        if (heroMoving || heroDirty) heroLayer.invalidate();
+        if (widgetsPage.takeDirty() | widgetsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
+        if (gridMoving | sheet.takeDirty()) sheetLayer.invalidate();
+        if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) {      // the waiting dots move
+            watchingPage.invalidate();
+            catalogPage.invalidate();
+        }
+        if (watchingPage.takeDirty() | catMoving) catalogLayer.invalidate();
+        if (catalogPage.takeDirty() | browseMoving) browseLayer.invalidate();
+        if (pagerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
+        if (bgFading || (pagerWasMoving && !pagerMoving)) platter.invalidate();
+        pagerWasMoving = pagerMoving;
+        tilesDirty = statusDirty = heroDirty = drawerDirty = motionDirty = false;
         if (updateClock()) {
-            layoutStatus();
             status.invalidate();
-            if (hero != null && hero.clock) {
-                refreshHero(false);
-                heroLayer.invalidate();
-            }
             if (!picksOn()) heroLayer.invalidate();
         }
 
-        // Busy: something is moving, or the sheet or the drawer is open.
-        boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || sheetMoving || popMoving || popOpen || catMoving || browseMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
+        // Busy: something is moving, or the sheet or a page under the first is open.
+        boolean busy = tilesMoving || heroMoving || gridMoving || pagerMoving
+                || sheetMoving || popMoving || popover.isOpen() || widgetsMoving || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheet.isOpen() || sheet.in.value > 0.001f
+                || pager.current() != topSlot || toasts.busy();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
     }
 
-    private void wake() {
+    void wake() {
         if (!running || !idle) return;
         idle = false;
         lastNanos = 0;
@@ -922,45 +785,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return moving;
     }
 
-    /** Drawer and sheet: the layers' positions and opacity (without redrawing their content). */
+    /** Pages and sheet: the layers' positions and opacity (without redrawing their content). */
     private void updateMotion() {
-        float d = drawer.value, dc = Ui.clamp(d), s = Ui.clamp(sheet.value);
-        float b = smoothstep(0, 0.5f, Ui.clamp(browseIn.value));      // the browse screen takes the whole screen
-        float home = (1 - s) * (1 - b), top = home * (1 - smoothstep(0, 0.32f, dc));
-        float shift = SHIFT * k;
-        float catLift = (catIn.value * catLift() + catRow.value * CAT_PITCH) * k;     // the poster rows pull everything further up
-        float lift = -d * shift - catLift;
-        show(heroLayer, top, lift);
-        show(status, top, lift);
-        float da = home * smoothstep(0.1f, 0.6f, dc);
-        // The shelf is visible (at full alpha) on both pages — a sliver on the hero page, "row -1" of the catalog's
-        // own coordinate system once the drawer opens. `layoutShelf()`'s own position formula now bakes in the
-        // catIn/catRow transform directly (so it's pinned to Continue Watching, not independently animated), so the
-        // shelf layer needs no extra translateY of its own in Spotlight — only Cards mode still uses `lift`.
-        float shelfLift = Prefs.spotlightOn() ? 0 : lift;
-        if (Prefs.spotlightOn()) layoutShelf();
-        show(platter, home, shelfLift);
-        show(tiles, home, shelfLift);
-        drawerLayer.setTranslationY((1 - d) * shift - catLift);
-        drawerLayer.setAlpha(da);
-        showLayer(drawerLayer, da > 0.002f);
-        float ca = home * smoothstep(0, 0.35f, Ui.clamp(catIn.value));
-        catalogLayer.setAlpha(ca);
-        showLayer(catalogLayer, ca > 0.002f);
-        browseLayer.setAlpha(b);
-        browseLayer.setTranslationY((1 - Ui.clamp(browseIn.value)) * 60 * k);
-        showLayer(browseLayer, b > 0.002f);
-        showLayer(sheetLayer, s > 0.001f || sheetOpen);
+        float s = Ui.clamp(sheet.in.value);
+        pager.place(h, 1 - s);
+        showLayer(sheetLayer, s > 0.001f || sheet.isOpen());
         sheetLayer.setAlpha(s);
         float scale = 1.04f - 0.04f * s;
         sheetLayer.setScaleX(scale);
         sheetLayer.setScaleY(scale);
-    }
-
-    private static void show(View v, float alpha, float translationY) {
-        v.setAlpha(alpha);
-        v.setTranslationY(translationY);
-        v.setVisibility(alpha > 0.002f ? VISIBLE : INVISIBLE);
     }
 
     /**
@@ -968,7 +801,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * all while the page is fully closed (#memory-management, item 3): the layer comes back the moment it's needed
      * again, same as Android's own documented pattern for a hardware layer as a temporary aid, not a permanent canvas.
      */
-    private static void showLayer(View v, boolean visible) {
+    static void showLayer(View v, boolean visible) {
         v.setVisibility(visible ? VISIBLE : INVISIBLE);
         if (!Ui.LEGACY) {
             int want = visible ? LAYER_TYPE_HARDWARE : LAYER_TYPE_NONE;
@@ -1001,11 +834,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         scene.applyPalette();
     }
 
-    // MARK: - Recommendations: hero and background
-
-    private Recs.Pick currentPick() {
-        return picks.isEmpty() ? null : picks.get(Math.min(pickIndex, picks.size() - 1));
-    }
+    // MARK: - Recommendations: the picks and the background
 
     /** This hour's picks: the cards and the background image (called when Recs notifies and every 15 s). */
     private void updatePicks() {
@@ -1016,65 +845,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static boolean samePicks(List<Recs.Pick> a, List<Recs.Pick> b) {
         if (a.size() != b.size()) return false;
         for (int i = 0; i < a.size(); i++) if (!Recs.key(a.get(i)).equals(Recs.key(b.get(i)))) return false;
-        return true;
-    }
-
-    /**
-     * Rebuilds the hero. With `animate`, a different title slides in while the previous one slides out; details that
-     * arrive later (genre, runtime) just appear.
-     */
-    private void refreshHero(boolean animate) {
-        Hero next = makeHero();
-        if (next.sameText(hero) && hero.dots == next.dots && hero.dot == next.dot && hero.button == next.button) return;
-        boolean other = hero != null && (hero.clock != next.clock || !hero.title.equals(next.title));
-        if (animate && other) {
-            heroFrom = hero;
-            heroFadeAt = SystemClock.uptimeMillis();
-        }
-        boolean layoutChanged = hero == null || hero.clock != next.clock;
-        hero = next;
-        heroDirty = true;
-        if (layoutChanged) layoutStatus();
-    }
-
-    private Hero makeHero() {
-        Hero h = new Hero();
-        Recs.Pick p = currentPick();
-        if (p == null) {
-            h.clock = true;
-            h.label = Ui.date(System.currentTimeMillis()).toUpperCase(Ui.locale());
-            return h;
-        }
-        h.label = Recs.periodLabel();
-        h.title = p.title == null ? "" : p.title;
-        h.meta = p.meta == null ? "" : p.meta;
-        h.button = p.pkg != null;
-        h.dots = picks.size();
-        h.dot = pickIndex;
-        h.titleLayout = StaticLayout.Builder.obtain(h.title, 0, h.title.length(), titlePaint, Math.max(1, Math.round(HERO_TITLE_W * k)))
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .setLineSpacing(0, 0.94f)
-                .setIncludePad(false)
-                .build();
-        return h;
-    }
-
-    /** ←/→ on the hero: the next (or previous) of this hour's picks. */
-    private boolean browse(int dir) {
-        if (picks.size() < 2) return false;
-        int next = pickIndex;
-        for (int i = 0; i < picks.size(); i++) {
-            next = (next + dir + picks.size()) % picks.size();
-            if (zone != Z_HERO || picks.get(next).pkg != null) break;
-        }
-        if (next == pickIndex) return false;
-        pickIndex = next;
-        heroSlide = dir;
-        refreshHero(true);
-        Backdrop b = recs.backdrop(currentPick());
-        if (b != null) showBackdrop(b);
-        spoken.focusMoved();
         return true;
     }
 
@@ -1181,11 +951,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** How dark it is: 0 = day, 1 = night (in between during the transition). Spotlight's chrome (weather, buttons,
      * shelf) always sits over a photo with a dark corner treatment, by day or by night (Look.spotlightPhoto), so it
      * leans toward the night palette even in the day theme instead of using low-contrast ink on a bright scrim. That
-     * is only the hero page: the drawer and catalog pages sit on the look's own background, so by the time they are
-     * open this is the real day/night value again (a white Material page stays white by day). */
-    private float dark() {
+     * is only the first page: the others sit on the look's own background, so once another page shows this is the
+     * real day/night value again (a white Material page stays white by day). */
+    float dark() {
         if (!Prefs.spotlightOn() || !picksOn()) return night;
-        return night + (Math.max(night, 0.7f) - night) * (1 - Ui.clamp(drawer.value));
+        return night + (Math.max(night, 0.7f) - night) * (1 - pager.away());
     }
 
     /** The day or the night value of a glass surface (until those move into GlassLook). */
@@ -1193,12 +963,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return blend(onLight, onDark, dark());
     }
 
-    private float tone(float onLight, float onDark) {
+    float tone(float onLight, float onDark) {
         return onLight + (onDark - onLight) * dark();
     }
 
     /** Text colors for the current night value (dark by day, white at night). */
-    private void applyTone() {
+    void applyTone() {
         lTitle.setColor(look.color(Look.TITLE, dark()));
         lTab.setColor(look.color(Look.TAB, dark()));
         lTabOn.setColor(look.color(Look.TAB_ON, dark()));
@@ -1217,7 +987,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (bgFadeAt == 0) return false;
         float e = fadeEase(bgFadeAt, up);
         if (bgTo != null && bgFrom != null && glassOf(bgFrom) != null && glassOf(bgTo) != null) {
-            if (drawerLayer.getVisibility() == VISIBLE || toast != null) {
+            if (drawerLayer.getVisibility() == VISIBLE || toasts.onScreen()) {
                 int[] from = frostOf(bgFrom), to = frostOf(bgTo);
                 for (int i = 0; i < frostMix.length; i++) frostMix[i] = mix(from[i], to[i], e);
                 scene.setFrost(frostMix);
@@ -1233,15 +1003,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 scene.setFrost(frostOf(bgTo));
                 if (glassOf(bgTo) != null) scene.setGlassImage(glassOf(bgTo));
             }
-        }
-        return true;
-    }
-
-    private boolean tickHeroFade(long up) {
-        if (heroFadeAt == 0) return false;
-        if (fadeEase(heroFadeAt, up) >= 1) {
-            heroFadeAt = 0;
-            heroFrom = null;
         }
         return true;
     }
@@ -1289,75 +1050,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.drawBitmap(image, null, screen, imagePaint);
     }
 
-    // MARK: - Hero
+    // MARK: - Text
 
     private static void text(Canvas c, String s, float x, float y, Paint p, int color, float alpha) {
         if (s == null || s.isEmpty()) return;
         p.setColor(Ui.alpha(color, alpha));
         c.drawText(s, x, y, p);
-    }
-
-    // MARK: - Corner capsule: time and weather (when the hero shows a recommendation) and icon-only buttons
-
-    /** Live TV, the inputs with a device on, All Apps and Settings. */
-    private static List<HomeApps.Item> statusList(Context c) {
-        List<HomeApps.Item> list = new ArrayList<>();
-        list.addAll(HomeApps.shortcuts(c));
-        list.add(HomeApps.settings());
-        return list;
-    }
-
-    private void setStatusItems(List<HomeApps.Item> list) {
-        boolean same = list.size() == statusItems.size();
-        for (int i = 0; same && i < list.size(); i++) same = list.get(i).key.equals(statusItems.get(i).key);
-        String focusedKey = statusIndex < statusItems.size() ? statusItems.get(statusIndex).key : null;
-        statusItems = list;
-        if (!same || statusFocus.length != list.size()) {
-            statusFocus = new Spring[list.size()];
-            statusRects = new RectF[list.size()];
-            int index = Math.min(statusIndex, Math.max(0, list.size() - 1));
-            for (int i = 0; i < statusFocus.length; i++) {
-                statusFocus[i] = new Spring(0.26f, 0.85f, 0);
-                statusRects[i] = new RectF();
-                if (list.get(i).key.equals(focusedKey)) index = i;   // a device came on: keep focus on the same button
-            }
-            statusIndex = index;
-            if (zone == Z_STATUS && list.isEmpty()) zone = Z_SHELF;
-            aim(statusFocus, zone == Z_STATUS ? statusIndex : -1, true);   // only the capsule's springs
-            statusDirty = true;
-        }
-        layoutStatus();
-    }
-
-    private boolean showInfo() {
-        return hero != null && !hero.clock;
-    }
-
-    private void layoutStatus() {
-        if (capsuleText == null) return;
-        int n = statusItems.size();
-        float b = BUTTON * k, gap = 4 * k, pad = 6 * k;
-        float info = 0;
-        if (showInfo()) {
-            info = 26 * k + capsuleText.measureText(clockText);
-            HomeData.Weather wx = data.weather;
-            if (!Double.isNaN(wx.temp) && Prefs.weather()) {
-                info += 22 * k + Symbols.width(getContext(), Symbols.weather(wx.code, wx.isDay), 24 * k) + 8 * k
-                        + capsuleText.measureText(HomeData.degrees(wx.temp));
-            }
-            info += 22 * k;
-        }
-        capsuleInfoW = info;
-        float buttons = n * b + Math.max(0, n - 1) * gap;
-        float right = CONTENT_R * k, top = CAPSULE_TOP * k;
-        float left = right - pad - buttons - (info > 0 ? info + 12 * k : pad);
-        capsuleRect.set(left, top, right, top + CAPSULE_H * k);
-        float x = right - pad - buttons, cy = capsuleRect.centerY();
-        for (int i = 0; i < n; i++) {
-            statusRects[i].set(x, cy - b / 2, x + b, cy + b / 2);
-            x += b + gap;
-        }
-        statusDirty = true;
     }
 
     // MARK: - Quotes and shelf
@@ -1388,50 +1086,69 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void layoutShelf() {
         int n = shelf.size();
-        float pad = SHELF_PAD * k, side = look.m.shelfPad * k, gap = look.m.shelfGap * k;
+        float gap = look.m.shelfGap * k;
         float full = (CONTENT_R - MARGIN) * k;
         // Tiles in the TV banners' own 16:9, so an app's art is never stretched; never taller than L_TILE_H. The glass
         // keeps its bottom edge, so with more apps it only gets lower.
         float fit = (full - Math.max(0, n - 1) * gap) / Math.max(1, n);
-        float tw = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
-        float th = tw * 9f / 16;
-        // Looks without a visible glass pill (tiles fill the width, no side padding) keep a slim bar above Continue Watching;
-        // the others keep Cards' own shelf padding, so the shelf is the same size in both styles.
-        if (Prefs.spotlightOn() && look.m.shelfFill) pad = 10 * k;
-        float width = n * tw + Math.max(0, n - 1) * gap, left = look.m.shelfFill ? MARGIN * k : (w - width) / 2f;
-        float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
-        // Spotlight shows a sliver of the shelf on the hero page (about half the platter block, as a hint there's
-        // more below), and once the page opens, the shelf is "row -1" of the catalog's own coordinate system —
-        // positioned just above row 0, with the exact same `catIn`/`catRow` transform `drawCatalog` applies to every
-        // real row — so it's guaranteed to sit immediately above Continue Watching, never overlapping it, and
-        // scrolls away with the same motion as everything else once you move deeper into the catalog. The two
-        // states are blended by `drawer.value` (already animating every frame it moves).
-        if (Prefs.spotlightOn()) {
-            float platterH = th + 2 * pad;
-            float hiddenTop = h - platterH * 0.5f;
-            // Row 0's own top (same formula `drawCatalog` uses for `y0`), minus the same gap every catalog row
-            // keeps from the one above it (CAT_ROW_GAP), minus the shelf's own height: the shelf's *bottom* lands
-            // just above Continue Watching's *top*, with the same rhythm as Continue Watching has above Shows you watch.
-            float row0Top = (catY0() - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
-            // The gap shrinks only to fit the resting layout (row 0 at its docked spot, catRow 0); it must not be a
-            // clamp on the live position, or the shelf would stop while row 0 keeps scrolling up over it.
-            float restRow0Top = (catY0() - catLift()) * k;
-            float rowGap = Math.min(CAT_ROW_GAP * k, Math.max(0, restRow0Top - platterH - 24 * k));
-            // Always row 0's live position minus an offset, so the two move in lockstep (blending by another spring
-            // let Continue Watching slide over the shelf mid-transition). The offset eases from the hidden sliver's to
-            // the docked one while the catalog is still fading in (see `ca` in updateMotion).
-            float hiddenOff = (catY0() * k) - hiddenTop;
-            float dockedOff = rowGap + platterH;
-            float e = smoothstep(0, 0.35f, Ui.clamp(catIn.value));
-            top = row0Top - (hiddenOff + (dockedOff - hiddenOff) * e);
-        }
+        shelfTileW = look.m.shelfFill ? Math.min(300 * k, fit) : Math.min(L_TILE_H * 16f / 9 * k, fit);
+        shelfTileH = shelfTileW * 9f / 16;
+        crispLogos.clear();
+        placeTop();
+    }
+
+    // MARK: - Page 1's layout: one column (top bar, tabs, cards or Spotlight's block, shelf) placed by nodes
+
+    /** Spotlight's block, its poster row's foot `SPOTLIGHT_SHELF_GAP` above the shelf's glass (1920-wide units). */
+    private static final float SPOTLIGHT_BLOCK_H = 500, SPOTLIGHT_SHELF_GAP = 52;
+    /** Below the shelf's glass, to the screen's foot. */
+    private static final float SHELF_FOOT = 60;
+    private float shelfTileW, shelfTileH;
+    /** Spotlight's poster row's top now (pixels): its heading and the title hang from it. */
+    private float spotlightRowTop;
+    private Node topRoot, tabsNode, cardsNode, spotlightNode, shelfNode;
+
+    /**
+     * Page 1 as one column between the margins: the top bar (weather and buttons) down to the tabs; in Cards the tabs,
+     * then the cards; in Spotlight its title, heading and poster row, resting on the shelf; the shelf at the foot. The
+     * shelf, tabs, cards and Spotlight's row are placed from the nodes, and LayoutCheck logs any two that overlap.
+     */
+    private void placeTop() {
+        if (w == 0) return;
+        Look.Metrics m = look.m;
+        boolean cardsStyle = picksOn() && !Prefs.spotlightOn(), spotlight = picksOn() && Prefs.spotlightOn();
+        float platterH = shelf.isEmpty() ? 0 : shelfTileH + 2 * SHELF_PAD * k;
+        tabsNode = new Node("tabs").size(Node.FILL, m.tabH * k).when(cardsStyle);
+        cardsNode = new Node("cards").size(Node.FILL, m.cardH * k).when(cardsStyle);
+        spotlightNode = new Node("spotlight").size(Node.FILL, SPOTLIGHT_BLOCK_H * k).when(spotlight);
+        shelfNode = new Node("shelf").size(Node.FILL, platterH).when(!shelf.isEmpty());
+        Node column = Stack.column("page 1", 0,
+                Node.space(0, HomeGrid.SAFE_TOP * k),
+                new Node("weather and buttons").size(Node.FILL, (m.tabTop - HomeGrid.SAFE_TOP) * k),
+                tabsNode,
+                Node.space(0, (m.cardsTop - m.tabTop - m.tabH) * k).when(cardsStyle),
+                cardsNode,
+                Node.space(0, 0).flex(),
+                spotlightNode,
+                Node.space(0, SPOTLIGHT_SHELF_GAP * k).when(spotlight),
+                shelfNode,
+                Node.space(0, SHELF_FOOT * k)).flex();
+        topRoot = Stack.row("top", 0, Node.space(MARGIN * k, 0), column, Node.space((HomeGrid.W - CONTENT_R) * k, 0));
+        topRoot.place(0, 0, w, h);
+        LayoutCheck.check("top", topRoot, new RectF(MARGIN * k, HomeGrid.SAFE_TOP * k, CONTENT_R * k, HomeGrid.SAFE_BOTTOM * k));
+        spotlightRowTop = spotlightNode.frame.bottom - SPOTLIGHT_POSTER_H * k;
+        // The shelf: the glass is the node; the tiles sit inside it, centred (or from the margin when they fill it).
+        int n = shelf.size();
+        float pad = SHELF_PAD * k, side = m.shelfPad * k, gap = m.shelfGap * k, tw = shelfTileW, th = shelfTileH;
+        float width = n * tw + Math.max(0, n - 1) * gap, left = m.shelfFill ? MARGIN * k : (w - width) / 2f;
+        float top = shelfNode.frame.top;
         platterRect.set(left - side, top, left + width + side, top + th + 2 * pad);
         float x = left, y = top + pad;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n && i < tileRects.length; i++) {
             tileRects[i].set(x, y, x + tw, y + th);
             x += tw + gap;
         }
-        crispLogos.clear();
+        layoutLight();
     }
 
     /** Shelf layer: the glass bar and its shadow (it only changes with the background). */
@@ -1607,48 +1324,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (it.kind == HomeApps.ALL_APPS && look.allAppsTile(c, cell, r, it.label, fc, dark())) {
             // drawn by the look
         } else {
-            if (it.tile != null) roundImage(c, it.tile, cell, r);
+            if (it.tile != null) painter.roundImage(c, it.tile, cell, r);
         }
         look.focusRing(c, cell, r, fc, dark(), 1);
-    }
-
-    /**
-     * `image` stretched over `cell`, with corners of radius `r`. Android 12+ clips to the rounded shape; on Android 8 to
-     * 11 that anti-aliased clip costs the GPU a mask on every frame of a focus animation (measured on a Mi Box 3: most of
-     * a 49 ms frame), so there the image is the shader of a rounded rectangle instead, which looks the same.
-     */
-    private void roundImage(Canvas c, Bitmap image, RectF cell, float r) {
-        roundImage(c, image, cell, r, 0);
-    }
-
-    /** As above; the picture is cropped to the shape of `cell` (never stretched), `shift` moving the crop sideways (a share of its width). */
-    private void roundImage(Canvas c, Bitmap image, RectF cell, float r, float shift) {
-        if (!Ui.LEGACY) {
-            int iw = image.getWidth(), ih = image.getHeight();
-            float want = cell.width() / cell.height(), sw = iw, sh = ih;
-            if ((float) iw / ih > want) sw = ih * want;
-            else sh = iw / want;
-            float sx = Math.max(0, Math.min(iw - sw, (iw - sw) / 2 + shift * sw)), sy = (ih - sh) / 2;
-            imageSrc.set(Math.round(sx), Math.round(sy), Math.round(sx + sw), Math.round(sy + sh));
-            clip.reset();
-            clip.addRoundRect(cell, r, r, Path.Direction.CW);
-            c.save();
-            c.clipPath(clip);
-            c.drawBitmap(image, imageSrc, cell, bitmapPaint);
-            c.restore();
-            return;
-        }
-        BitmapShader shader = imageShaders.get(image);
-        if (shader == null) {
-            shader = new BitmapShader(image, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            imageShaders.put(image, shader);
-        }
-        imageMatrix.setScale(cell.width() / image.getWidth(), cell.height() / image.getHeight());
-        imageMatrix.postTranslate(cell.left, cell.top);
-        shader.setLocalMatrix(imageMatrix);
-        imageFill.setShader(shader);
-        c.drawRoundRect(cell, r, r, imageFill);
-        imageFill.setShader(null);
     }
 
     /**
@@ -1704,340 +1382,90 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return out;
     }
 
-    // MARK: - Bottom drawer
+    // MARK: - Pages (HomePager): Down past a page's last row goes to the next page that has something to show
 
-    private void setDrawerItems(List<HomeApps.Item> list) {
-        boolean same = list.size() == drawerItems.size();
-        for (int i = 0; same && i < list.size(); i++) {
-            same = list.get(i).key.equals(drawerItems.get(i).key) && list.get(i).connected == drawerItems.get(i).connected;
-        }
-        drawerItems = list;
-        if (drawerFocus.length != list.size()) {
-            drawerFocus = new Spring[list.size()];
-            drawerRects = new RectF[list.size()];
-            for (int i = 0; i < drawerFocus.length; i++) {
-                drawerFocus[i] = new Spring(0.28f, 0.85f, 0);
-                drawerRects[i] = new RectF();
-            }
-            drawerIndex = Math.min(drawerIndex, Math.max(0, list.size() - 1));
-            retarget(true);
-        }
-        layoutDrawer();
-        if (!same) drawerDirty = true;
-    }
-
-    private void layoutDrawer() {
-        int n = drawerItems.size();
-        float left = MARGIN * k, right = CONTENT_R * k;
-        float gap = 18 * k;
-        float tw = Math.min(230 * k, (right - left - Math.max(0, n - 1) * gap) / Math.max(1, n));
-        float x = left, top = ROW_TOP * k;
-        for (int i = 0; i < n; i++) {
-            drawerRects[i].set(x, top, x + tw, top + ROW_H * k);
-            x += tw + gap;
-        }
-        float cardsTop = CARDS_TOP * k;
-        quotesCard.set(left, cardsTop, right, cardsTop + CARDS_H * k);     // the weather is at the top of the home screen now
-        drawerDirty = true;
-    }
-
-    /** How long the catalog posters stay decoded after the drawer closes: a quick close and reopen stays instant. */
+    /** How long the catalog posters stay decoded after going back to the first page: a quick return stays instant. */
     private static final long POSTERS_KEEP_MS = 10_000;
     private final Runnable dropPosters = this::dropPosters;
 
-    /** The drawer (and the browse screen in it) has been closed a while: its posters go; they're read back from disk. */
+    /** Back on the first page a while: the rows' posters go; they're read back from disk. */
     private void dropPosters() {
-        if (drawerOpen) return;
+        if (pager.current() != topSlot) return;
         catalogs.trim();
-        AppLog.w("catalog posters dropped (drawer closed)");
+        AppLog.w("catalog posters dropped (back on the first page)");
     }
 
-    /** The drawer closed: its posters are dropped in a few seconds, unless it opens again first. */
+    /** Back on the first page: the posters are dropped in a few seconds, unless a page with them shows again first. */
     private void catalogsClosed() {
         handler.removeCallbacks(dropPosters);
         handler.postDelayed(dropPosters, POSTERS_KEEP_MS);
     }
 
-    private void openDrawer() {
-        handler.removeCallbacks(dropPosters);
-        catalogs.refreshIfStale();      // the poster rows under the cards (a request each, once in a few hours)
-        syncRows();
-        syncBrowse();
-        if (drawerItems.isEmpty()) {
-            // No inputs (a streamer): the drawer opens on the poster rows (Trakt's, else TMDB's catalogs). Neither has
-            // loaded yet: nothing to open onto, so stay put; the next press (or the fetch finishing) tries again.
-            if (catRows.isEmpty() && browseRows.isEmpty()) return;
-            drawerOpen = true;
-            drawer.target = 1;
-            drawerDirty = true;
-            if (!enterCatalog()) enterBrowse();
-            return;
+    /** ↓ (`dir` 1) or ↑ (-1) past the focused page's edge: the next page with something to show; false if none. */
+    private boolean pageBy(int dir) {
+        // Leaving the first page: the rows are read (and, when stale, fetched) first, as their pages may not know them yet.
+        if (pager.current() == topSlot) catalogs.refreshIfStale();
+        watchingPage.sync();
+        catalogPage.sync();
+        pager.refresh();
+        HomePager.Slot to = pager.next(dir);
+        if (to == null) return false;
+        goTo(to, false);
+        return true;
+    }
+
+    /** `to` becomes the page shown, with the focus on it: on its first row coming from above, its last from below. */
+    private void goTo(HomePager.Slot to, boolean snap) {
+        HomePager.Slot from = pager.current();
+        boolean fromAbove = pager.order(from) < pager.order(to);
+        if (from != to) {
+            if (from == watchingSlot) watchingPage.leave();
+            else if (from == catalogSlot) catalogPage.leave();
         }
-        drawerOpen = true;
-        drawer.target = 1;
-        zone = Z_DRAWER;
-        drawerIndex = shelf.isEmpty() ? 0 : nearest(drawerRects, tileRects[shelfIndex].centerX());
-        for (int i = 0; i < drawerFocus.length; i++) drawerFocus[i].snap(i == drawerIndex ? 1 : 0);
-        drawerDirty = true;
-    }
-
-    private void closeDrawer() {
-        drawerOpen = false;
-        catalogsClosed();
-        drawer.target = 0;
-        catIn.target = 0;
-        catRow.target = 0;
-        zone = Z_SHELF;
-        for (Spring f : drawerFocus) f.snap(0);   // the drawer goes away: its focus doesn't need to animate
-        if (!shelf.isEmpty() && drawerIndex < drawerRects.length) shelfIndex = nearest(tileRects, drawerRects[drawerIndex].centerX());
-    }
-
-    // MARK: - Spotlight's own paging (the shelf doesn't live on its hero screen: Down pages straight to the
-    // drawer/catalog screen in one press, landing on the shelf as that page's first row; Cards mode needs two presses
-    // — Down to the shelf, Down again to open the drawer — and keeps its own shelf position/openDrawer() untouched).
-
-    /** Down from the poster row: one page, not two — the shelf rises as this page's first row *and* the catalog rows
-     * (Continue Watching etc.) come in right below it in the same motion, not a second Down-press away. Focus lands
-     * on the shelf (`zone = Z_SHELF`); a further Down moves focus into the already-visible catalog rows via the
-     * ordinary `Z_SHELF` → `openDrawer()` → `enterCatalog()` path (harmless to call again — `catIn` is already at 1,
-     * so that's just a focus change, not a second "opening" animation). */
-    private void openSpotlightPage() {
-        handler.removeCallbacks(dropPosters);
-        catalogs.refreshIfStale();
-        syncRows();
-        syncBrowse();
-        drawerOpen = true;
-        drawer.target = 1;
-        zone = Z_SHELF;
-        if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, spotlightFocusedRect.centerX());
-        if (!catRows.isEmpty()) {
-            catRowIndex = 0;
-            catIn.target = 1;
-            catRow.target = 0;
-        }
-    }
-
-    /** Up from the shelf (or Back, from anywhere on the drawer/catalog page): closes that page and returns straight
-     * to the poster row, undoing what `openSpotlightPage()` started. */
-    private void closeSpotlightPage() {
-        drawerOpen = false;
-        catalogsClosed();
-        drawer.target = 0;
-        catIn.target = 0;
-        catRow.target = 0;
-        for (Spring f : drawerFocus) f.snap(0);
-        zone = Z_CARDS;
-        cardIndex = 0;
-    }
-
-    // MARK: - The input popover (HDMI input, AV input): a choice among the inputs of one kind
-
-    /** OK on an input button: one input opens at once; several open the popover, with the first one that has a device on it. */
-    private void openInputs(HomeApps.Item group, RectF from) {
-        List<HomeApps.Item> list = HomeApps.inputGroup(getContext().getApplicationContext(), group.key);
-        if (list.isEmpty()) return;
-        if (list.size() == 1) {
-            launch(list.get(0), from);
-            return;
-        }
-        popActions = null;
-        popItems = list;
-        popTitle = group.label;
-        popIndex = 0;
-        for (int i = 0; i < list.size(); i++) {
-            if (list.get(i).connected) {
-                popIndex = i;
-                break;
-            }
-        }
-        showPop(null);
-    }
-
-    /** Opens the popover with `popItems` and `popIndex` set; beside `anchor` (a poster), or at the top right when null. */
-    private void showPop(RectF anchor) {
-        if (popFocus.length != popItems.size()) {
-            popFocus = new Spring[popItems.size()];
-            for (int i = 0; i < popFocus.length; i++) popFocus[i] = new Spring(0.3f, 0.82f, 0);
-        }
-        aim(popFocus, popIndex, true);
-        layoutPop(anchor);
-        popOpen = true;
-        popIn.target = 1;
-        popLayer.setVisibility(VISIBLE);
-        popDirty = statusDirty = true;
-        wake();
-        spoken.focusMoved();
-    }
-
-    // MARK: - A poster's menu (hold OK on Continue Watching, Shows you watch, Watchlist)
-
-    private boolean tileMenuReady() {
-        return !sheetOpen && zone == Z_CATALOG && !catRows.isEmpty() && catRowIndex < catRows.size()
-                && catCol[catRowIndex] < catRows.get(catRowIndex).items.size();
-    }
-
-    /** One action for the focused poster: Remove where Trakt takes it off the list, else Hide (only this launcher forgets it). */
-    private void openTileMenu() {
-        handler.removeCallbacks(holdStart);
-        holdArmed = false;
-        if (popOpen || opening != null || !tileMenuReady()) return;
-        okHeld = true;      // the release of this press opens nothing
-        final Catalogs.Row row = catRows.get(catRowIndex);
-        final Catalogs.Item it = row.items.get(catCol[catRowIndex]);
-        final boolean remove = catalogs.actionFor(row.key, it) == Catalogs.REMOVE;
-        final String rowTitle = row.title;
-        final String label = !remove ? Ui.tr("Hide from this row")
-                : Trakt.WATCHLIST.equals(row.key) ? Ui.tr("Remove from Watchlist") : Ui.tr("Remove");
-        final List<Runnable> actions = new ArrayList<>();
-        popItems = new ArrayList<>();
-        popItems.add(HomeApps.action(HomeApps.APP, "tile", label, null));
-        actions.add(() -> catalogs.act(row.key, it, r -> {
-            if (r == Trakt.FAILED) showToast(Ui.tr("Couldn't remove it. Try again."));
-            else if (r == Catalogs.HIDDEN) showToast(Ui.trf("Hidden from {row}: {title}", "row", rowTitle, "title", it.title));
-            else showToast(Ui.trf("Removed from {row}: {title}", "row", rowTitle, "title", it.title));
-        }));
-        if (catalogs.canMark(row.key, it)) {
-            popItems.add(HomeApps.action(HomeApps.APP, "mark", Ui.tr("Mark as watched"), null));
-            actions.add(() -> catalogs.mark(row.key, it, r -> {
-                if (r == Trakt.DONE) showToast(Ui.trf("Marked as watched: {title}", "title", it.title));
-                else showToast(Ui.tr("Couldn't mark it as watched. Try again."));
-            }));
-        }
-        popActions = actions.toArray(new Runnable[0]);
-        popTitle = it.title;
-        popIndex = 0;
-        posterRect(catRowIndex, catCol[catRowIndex], tileAnchor);
-        click.open();
-        showPop(tileAnchor);
-    }
-
-    private void closePop(boolean snap) {
-        if (!popOpen && popIn.value <= 0.001f) return;
-        popOpen = false;
-        popIn.target = 0;
-        if (snap) {
-            popIn.snap(0);
-            popLayer.setVisibility(INVISIBLE);
-        }
-        popDirty = statusDirty = true;
-        wake();
-        spoken.focusMoved();
-    }
-
-    private void movePop(int dy) {
-        if (dy == 0) return;
-        int next = Math.max(0, Math.min(popItems.size() - 1, popIndex + dy));
-        if (next == popIndex) return;
-        popIndex = next;
-        aim(popFocus, popIndex, false);
-        popDirty = true;
-        click.move();
-        spoken.focusMoved();
-    }
-
-    private void choosePop() {
-        if (popIndex >= popItems.size()) {
-            closePop(false);
-            return;
-        }
-        if (popActions != null) {
-            Runnable action = popActions[popIndex];
-            closePop(false);
-            click.open();
-            action.run();
-            return;
-        }
-        HomeApps.Item it = popItems.get(popIndex);
-        popRowRect(popIndex, popRow);
-        final RectF from = new RectF(popRow);
-        closePop(false);
-        click.open();
-        launch(it, from);
-    }
-
-    /** The panel at the top right (the inputs), or beside `anchor`: to its right, to its left when that doesn't fit. */
-    private void layoutPop(RectF anchor) {
-        float pw = POP_W * k, ph = (POP_TITLE_H + POP_PAD) * k + popItems.size() * POP_ROW_H * k;
-        float left, top;
-        if (anchor == null) {
-            left = CONTENT_R * k - pw;
-            top = POP_TOP * k;
+        pager.refresh();
+        if (to == topSlot) {
+            zone = Z_SHELF;
+            catalogsClosed();
         } else {
-            float gap = 24 * k, edge = 24 * k;
-            left = anchor.right + gap;
-            if (left + pw > w - edge) left = anchor.left - gap - pw;
-            left = Math.max(edge, left);
-            top = Math.max(edge, Math.min(anchor.top, h - ph - edge));
-        }
-        popPanel.set(left, top, left + pw, top + ph);
-        placePop();
-    }
-
-    /** The popover's layer is just big enough for the panel and its shadow: it follows the panel. */
-    private void placePop() {
-        int x = Math.round(popPanel.left - 40 * k), y = Math.round(popPanel.top - 38 * k);
-        popLayer.layout(x, y, x + popLayer.getMeasuredWidth(), y + popLayer.getMeasuredHeight());
-    }
-
-    /** Row `i` of the popover in screen coordinates. */
-    private void popRowRect(int i, RectF out) {
-        float y = popPanel.top + (POP_TITLE_H + POP_PAD / 2f) * k + i * POP_ROW_H * k;
-        out.set(popPanel.left + POP_PAD * k, y, popPanel.right - POP_PAD * k, y + (POP_ROW_H - 6) * k);
-    }
-
-    /** Glass panel with the kind's name and a row for each input: the focused one white with dark text, one with no device dimmed. */
-    private void drawPopover(Canvas c) {
-        float a = Ui.clamp(popIn.value);
-        if (a <= 0.01f || popItems.isEmpty()) return;
-        applyTone();
-        float s = 0.95f + 0.05f * a;
-        int save = c.saveLayerAlpha(popPanel.left - 60 * k, popPanel.top - 40 * k, popPanel.right + 60 * k, popPanel.bottom + 80 * k,
-                Math.round(255 * a));
-        c.scale(s, s, popPanel.right - 60 * k, popPanel.top);
-        drawerGlass(c, popPanel, 34 * k, 0.8f, 0x22000000, 14 * k);
-        rowTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
-        fitPaint.set(rowTitle);
-        c.drawText(TextUtils.ellipsize(popTitle, fitPaint, popPanel.width() - (2 * POP_PAD + 28) * k, TextUtils.TruncateAt.END).toString(),
-                popPanel.left + (POP_PAD + 14) * k, popPanel.top + 44 * k, rowTitle);
-        for (int i = 0; i < popItems.size() && i < popFocus.length; i++) {
-            HomeApps.Item it = popItems.get(i);
-            float f = Ui.clamp(popFocus[i].value), r = 24 * k;
-            popRowRect(i, popRow);
-            if (f > 0.01f) {
-                tmp.set(popRow);
-                tmp.offset(0, 8 * k * f);
-                shadow.setColor(Ui.alpha(0xFF000000, 0.35f * f));
-                shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
-                fill.setShader(null);
-                fill.setColor(Ui.alpha(WHITE, f));
-                c.drawRoundRect(popRow, r, r, fill);
+            if (from == topSlot) {
+                handler.removeCallbacks(dropPosters);
+                catalogs.refreshIfStale();      // the poster rows (a request each, once in a few hours)
             }
-            int ink = blend(look.color(it.connected ? Look.ITEM_ON : Look.ITEM_OFF, dark()), INK, f);
-            if (it.symbol != null) Symbols.draw(getContext(), c, it.symbol, popRow.left + 44 * k, popRow.centerY(), 32 * k, ink);
-            float textX = it.symbol != null ? 88 : 28;     // a poster's menu has no icons
-            popLabel.setColor(ink);
-            fitPaint.set(popLabel);
-            String label = TextUtils.ellipsize(it.label, fitPaint, popRow.width() - (textX + 12) * k, TextUtils.TruncateAt.END).toString();
-            c.drawText(label, popRow.left + textX * k, popRow.centerY() + Ui.halfCap(popLabel), popLabel);
+            if (to == widgetsSlot) {
+                zone = Z_DRAWER;
+            } else if (to == watchingSlot) {
+                zone = Z_CATALOG;
+                if (from != to) watchingPage.enter(fromAbove);
+            } else {
+                zone = Z_BROWSE;
+                if (from != to) catalogPage.enter(fromAbove);
+            }
         }
-        c.restoreToCount(save);
+        pager.show(to, snap);
+        motionDirty = true;
+        wake();
     }
 
-    /** Color for the drawer's text and symbols: dark by day, white at night. */
-    private int drawerInk(float alpha) {
-        return Ui.alpha(look.color(Look.INK_PURE, dark()), alpha);
+    /** A page's data changed: an empty page is left out, and the focus on it goes to the page above. */
+    void pagesChanged() {
+        if (pager == null) return;
+        pager.refresh();
+        HomePager.Slot at = pager.current();
+        if (!pager.shows(at)) {
+            goTo(pager.above(at), false);
+            retarget(false);
+        }
+        motionDirty = true;
+        wake();
     }
 
-    /** Glass for a drawer card or button: white by day, smoked at night (both during the transition). */
-    private void drawerGlass(Canvas c, RectF r, float radius, float lightTint, int shadowColor, float drop) {
-        look.drawerGlass(c, r, radius, lightTint, shadowColor, drop, dark());
+    /** The quotes card is on (Settings) and has coins to show: page 2 has something. */
+    boolean quotesOn() {
+        return Prefs.quotes() && HomeData.active().length > 0;
     }
 
-    private void drawerCard(Canvas c, RectF r) {
-        drawerGlass(c, r, 30 * k, 0.72f, 0x1A000000, 10 * k);
-    }
-
-    private void drawDrawer(Canvas c) {
+    /** Page 2's quotes card at `r`, in this look's colors. */
+    void drawQuotes(Canvas c, RectF r) {
         rowTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
         cardTitle.setColor(look.color(Look.DRAWER_ROW, dark()));
         cardText.setColor(drawerInk(0.95f));
@@ -2047,44 +1475,101 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         hourPaint.setColor(look.color(Look.DRAWER_DIM, dark()));
         hourTemp.setColor(drawerInk(0.95f));
         pricePaint.setColor(drawerInk(0.95f));
-        int top = -1;
-        for (int i = 0; i < drawerItems.size(); i++) if (drawerFocus[i].value > 0.02f && (top < 0 || drawerFocus[i].value > drawerFocus[top].value)) top = i;
-        for (int i = 0; i < drawerItems.size(); i++) if (i != top) drawDrawerTile(c, i);
-        if (top >= 0) drawDrawerTile(c, top);
-        if (Prefs.quotes() && HomeData.active().length > 0) drawQuotesCard(c, quotesCard);
+        drawQuotesCard(c, r);
     }
 
-    /** Square drawer button: symbol and name; an input with no device is dimmed. Focused: white, with dark text. */
-    private void drawDrawerTile(Canvas c, int i) {
-        HomeApps.Item it = drawerItems.get(i);
-        float f = Ui.clamp(drawerFocus[i].value), s = 1 + 0.07f * f;
-        RectF base = drawerRects[i];
-        float cx = base.centerX(), cy = base.centerY();
-        cell.set(cx - base.width() * s / 2, cy - base.height() * s / 2, cx + base.width() * s / 2, cy + base.height() * s / 2);
-        float r = 20 * k * s;
-        if (f > 0.01f) {
-            tmp.set(cell);
-            tmp.offset(0, 12 * k * f);
-            shadow.setColor(Ui.alpha(0xFF000000, 0.45f * f));
-            shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
+    // MARK: - The popover (HomePopover): the inputs of one kind, or a poster's menu
+
+    /** OK on an input button: one input opens at once; several open the popover, with the first one that has a device on it. */
+    private void openInputs(HomeApps.Item group, RectF from) {
+        List<HomeApps.Item> list = HomeApps.inputGroup(getContext().getApplicationContext(), group.key);
+        if (list.isEmpty()) return;
+        if (list.size() == 1) {
+            launch(list.get(0), from);
+            return;
         }
-        if (f < 0.99f) drawerGlass(c, cell, r, 0.7f, 0x14000000, 6 * k);
-        if (f > 0.01f) {
-            fill.setShader(null);
-            fill.setColor(Ui.alpha(WHITE, f));
-            c.drawRoundRect(cell, r, r, fill);
+        int at = 0;
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).connected) {
+                at = i;
+                break;
+            }
         }
-        int ink = blend(look.color(Look.ITEM_ON, dark()), INK, f);
-        Symbols.draw(getContext(), c, it.symbol, cx, cell.top + cell.height() * 0.4f, 34 * k * s, ink);
-        drawerLabel.setColor(ink);
-        drawerLabel.setTextSize(23 * k * s);
-        float room = cell.width() - 16 * k, wide = drawerLabel.measureText(it.label);
-        // A long name ("Home Settings", an input you renamed) shrinks a little before it gets cut.
-        if (wide > room) drawerLabel.setTextSize(Math.max(18 * k * s, 23 * k * s * room / wide));
-        fitPaint.set(drawerLabel);
-        String label = TextUtils.ellipsize(it.label, fitPaint, room, TextUtils.TruncateAt.END).toString();
-        c.drawText(label, cx, cell.top + cell.height() * 0.8f, drawerLabel);
-        drawerLabel.setTextSize(23 * k);
+        showPop(group.label, list, at, null, null);
+    }
+
+    private void showPop(String title, List<HomeApps.Item> list, int at, Runnable[] actions, RectF anchor) {
+        popover.show(title, list, at, actions, anchor);
+        statusDirty = true;
+        wake();
+        spoken.focusMoved();
+    }
+
+    private void closePop(boolean snap) {
+        if (!popover.close(snap)) return;
+        statusDirty = true;
+        wake();
+        spoken.focusMoved();
+    }
+
+    /** OK in the popover: a poster's menu runs its action; an input opens. */
+    private void choosePop() {
+        HomeApps.Item it = popover.choose(popRow);
+        statusDirty = true;
+        wake();
+        spoken.focusMoved();
+        click.open();
+        if (it != null) launch(it, new RectF(popRow));
+    }
+
+    private boolean tileMenuReady() {
+        return !sheet.isOpen() && zone == Z_CATALOG && watchingPage.focusedItem() != null;
+    }
+
+    /** One action for the focused poster: Remove where Trakt takes it off the list, else Hide (only this launcher forgets it). */
+    private void openTileMenu() {
+        handler.removeCallbacks(holdStart);
+        holdArmed = false;
+        if (popover.isOpen() || opening != null || !tileMenuReady()) return;
+        okHeld = true;      // the release of this press opens nothing
+        final Catalogs.Row row = watchingPage.focusedRow();
+        final Catalogs.Item it = watchingPage.focusedItem();
+        final boolean remove = catalogs.actionFor(row.key, it) == Catalogs.REMOVE;
+        final String rowTitle = row.title;
+        final String label = !remove ? Ui.tr("Hide from this row")
+                : Trakt.WATCHLIST.equals(row.key) ? Ui.tr("Remove from Watchlist") : Ui.tr("Remove");
+        final List<Runnable> actions = new ArrayList<>();
+        List<HomeApps.Item> items = new ArrayList<>();
+        items.add(HomeApps.action(HomeApps.APP, "tile", label, null));
+        actions.add(() -> catalogs.act(row.key, it, r -> {
+            if (r == Trakt.FAILED) showToast(Ui.tr("Couldn't remove it. Try again."));
+            else if (r == Catalogs.HIDDEN) showToast(Ui.trf("Hidden from {row}: {title}", "row", rowTitle, "title", it.title));
+            else showToast(Ui.trf("Removed from {row}: {title}", "row", rowTitle, "title", it.title));
+        }));
+        if (catalogs.canMark(row.key, it)) {
+            items.add(HomeApps.action(HomeApps.APP, "mark", Ui.tr("Mark as watched"), null));
+            actions.add(() -> catalogs.mark(row.key, it, r -> {
+                if (r == Trakt.DONE) showToast(Ui.trf("Marked as watched: {title}", "title", it.title));
+                else showToast(Ui.tr("Couldn't mark it as watched. Try again."));
+            }));
+        }
+        watchingPage.focusedRect(tileAnchor);
+        click.open();
+        showPop(it.title, items, 0, actions.toArray(new Runnable[0]), tileAnchor);
+    }
+
+    /** Color for the drawer's text and symbols: dark by day, white at night. */
+    private int drawerInk(float alpha) {
+        return Ui.alpha(look.color(Look.INK_PURE, dark()), alpha);
+    }
+
+    /** Glass for a drawer card or button: white by day, smoked at night (both during the transition). */
+    void drawerGlass(Canvas c, RectF r, float radius, float lightTint, int shadowColor, float drop) {
+        look.drawerGlass(c, r, radius, lightTint, shadowColor, drop, dark());
+    }
+
+    private void drawerCard(Canvas c, RectF r) {
+        drawerGlass(c, r, 30 * k, 0.72f, 0x1A000000, 10 * k);
     }
 
     private void refreshDrawerText() {
@@ -2178,20 +1663,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Sets the springs' targets from the current focus (snap: no animation). */
     private void retarget(boolean snap) {
-        // Only the group whose focus changed is redrawn (moving along the shelf doesn't redraw the hero or capsule).
-        boolean tilesChanged = aim(tileFocus, !sheetOpen && zone == Z_SHELF ? shelfIndex : -1, snap);
-        boolean statusChanged = aim(statusFocus, !sheetOpen && zone == Z_STATUS ? statusIndex : -1, snap);
-        boolean drawerChanged = aim(drawerFocus, !sheetOpen && zone == Z_DRAWER ? drawerIndex : -1, snap);
-        boolean heroChanged = heroFocus.target != (!sheetOpen && zone == Z_HERO ? 1 : 0);
-        heroFocus.target = !sheetOpen && zone == Z_HERO ? 1 : 0;
-        if (snap) heroFocus.snap(heroFocus.target);
-        boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
-        heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
-        statusChanged |= topChanged;
+        // Only the group whose focus changed is redrawn (moving along the shelf doesn't redraw the picks or the buttons).
+        boolean tilesChanged = aim(tileFocus, !sheet.isOpen() && zone == Z_SHELF ? shelfIndex : -1, snap);
+        boolean topChanged = aim(topFocus, !sheet.isOpen() && zone == Z_TOP ? topIndex : -1, snap);
+        boolean heroChanged = aim(cardFocus, !sheet.isOpen() && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
         tilesDirty |= snap || tilesChanged;
-        statusDirty |= snap || statusChanged;
+        statusDirty |= snap || topChanged;
         heroDirty |= snap || heroChanged;
-        drawerDirty |= snap || drawerChanged;
+        drawerDirty |= snap;
         spoken.focusMoved();
     }
 
@@ -2207,327 +1686,49 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return changed;
     }
 
-    // MARK: - "All Apps" sheet
-
-    private void setOthers(List<HomeApps.Item> list) {
-        others = list;
-        gridFocus = new Spring[list.size()];
-        for (int i = 0; i < gridFocus.length; i++) gridFocus[i] = new Spring(0.3f, 0.82f, 0);
-        gridLabels = null;
-        gridIndex = Math.min(gridIndex, Math.max(0, list.size() - 1));
-        retargetGrid(true);
-        gridDirty = true;
-    }
+    // MARK: - "All Apps" (HomeSheet)
 
     private void openSheet() {
-        sheetOpen = true;
-        gridIndex = 0;
-        scroll.snap(0);
-        retargetGrid(true);
+        sheet.open();
         retarget(false);
-        sheet.target = 1;
-        gridDirty = true;
+        spoken.focusMoved();
     }
 
     private void closeSheet() {
-        sheetOpen = false;
-        sheet.target = 0;
+        sheet.close();
         retarget(false);
+        spoken.focusMoved();
         if (shelfEdited) {     // the grid was kept as it was while open: apps that went to the shelf leave it now
             shelfEdited = false;
             reload();
         }
     }
 
-    private void retargetGrid(boolean snap) {
-        for (int i = 0; i < gridFocus.length; i++) {
-            gridFocus[i].target = sheetOpen && i == gridIndex ? 1 : 0;
-            if (snap) gridFocus[i].snap(gridFocus[i].target);
-        }
-        int rows = Math.max(1, (others.size() + COLUMNS - 1) / COLUMNS);
-        int visible = Math.min(rows, VISIBLE_ROWS);
-        int r = gridIndex / COLUMNS;
-        float target = scroll.target;
-        if (r < target) target = r;
-        else if (r > target + visible - 1) target = r - visible + 1;
-        scroll.target = Math.max(0, Math.min(rows - visible, target));
-        if (snap) scroll.snap(scroll.target);
-        spoken.focusMoved();
-    }
-
-    private void drawSheet(Canvas c) {
-        tmp.set(0, 0, w, h);
-        look.sheetBackground(c, tmp, dark());
-        sheetTitle.setColor(look.sheetTitleInk(dark()));
-        float shift = scroll.value * GRID_ROW * k;
-        c.drawText(Ui.tr("All Apps"), w / 2f, 124 * k - shift, sheetTitle);
-        int n = others.size();
-        if (gridLabels == null || gridLabels.length != n) {
-            gridLabels = new String[n];
-            for (int i = 0; i < n; i++) {
-                gridLabels[i] = TextUtils.ellipsize(others.get(i).label, gridLabel, (GRID_W - 10) * k, TextUtils.TruncateAt.END).toString();
-            }
-        }
-        float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
-        float left = (1920 - gridWidth) / 2 * k;
-        float gridTop = GRID_TOP * k;
-        for (int i = 0; i < n; i++) {
-            int r = i / COLUMNS, col = i % COLUMNS;
-            float y = gridTop + r * GRID_ROW * k - shift;
-            if (y > h || y + GRID_ROW * k < 0) continue;
-            float x = left + col * (GRID_W + GRID_GAP) * k;
-            gridCell.set(x, y, x + GRID_W * k, y + GRID_H * k);
-            // Only the targeted tile grows (#memory-management, same as the shelf): doesn't explain this screen's
-            // own GPU growth (measured separately, cause unidentified), but still the correct behavior on its own
-            // merits — matches every other fixed section, and costs nothing since it's still provably no worse.
-            float f = i == gridIndex ? gridFocus[i].value : 0;
-            drawCard(c, others.get(i).tile, gridCell, GRID_RADIUS * k, f, 0.08f);
-            if (sheetOpen && i == gridIndex) focusedCell.set(cell);
-            gridLabel.setColor(look.gridLabelInk(f, dark()));
-            c.drawText(gridLabels[i], gridCell.centerX(), gridCell.bottom + (40 + 6 * f) * k, gridLabel);
-        }
-    }
-
-    /** 16:9 sheet card. Focused (the shelf's subtle focus): it grows, with a shadow, a soft sheen and a thin border. */
-    private void drawCard(Canvas c, Bitmap image, RectF base, float radius, float f, float grow) {
-        float s = 1 + grow * f;
-        float cx = base.centerX(), cy = base.centerY();
-        cell.set(cx - base.width() * s / 2, cy - base.height() * s / 2, cx + base.width() * s / 2, cy + base.height() * s / 2);
-        float r = radius * s;
-        float fc = Ui.clamp(f);
-        if (f > 0.01f) {
-            tmp.set(cell);
-            tmp.offset(0, 16 * k * f);
-            shadow.setColor(Ui.alpha(0xFF000000, 0.55f * fc));
-            shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
-        }
-        if (image != null) roundImage(c, image, cell, r);
-        if (f > 0.01f) {
-            float bh = base.height();
-            if (cardSheen == null || cardSheenH != bh) {
-                cardSheen = new LinearGradient(0, -bh / 2, 0, 0, 0x1AFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
-                cardSheenH = bh;
-            }
-            c.save();
-            c.translate(cx, cy);
-            c.scale(s, s);
-            tmp.set(-base.width() / 2, -bh / 2, base.width() / 2, bh / 2);
-            sheen.setShader(cardSheen);
-            sheen.setAlpha(Math.round(255 * fc));
-            c.drawRoundRect(tmp, radius, radius, sheen);
-            sheen.setAlpha(255);
-            c.restore();
-        }
-        if (fc < 0.99f) {
-            veil.setColor(Ui.alpha(0xFF000000, 0.08f * (1 - fc)));
-            c.drawRoundRect(cell, r, r, veil);
-        }
-        if (!look.focusRing(c, cell, r, fc, dark(), 1)) {
-            border.setColor(0x14FFFFFF);
-            c.drawRoundRect(cell, r, r, border);
-            if (f > 0.01f) {
-                rim.setShader(null);
-                rim.setColor(Ui.alpha(0xFFFFFFFF, 0.4f * fc));
-                rim.setStrokeWidth(1.5f * k);
-                c.drawRoundRect(cell, r, r, rim);
-                rim.setStrokeWidth(2.5f * k);
-            }
-        }
-    }
-
-    // MARK: - Poster rows (under the drawer's weather and quotes; Down from the drawer's buttons)
-
-    private static final int CAT_VISIBLE = 8;
-    private static final float CAT_ROW_FOOT = 400, CAT_BOTTOM = 1040;      // a row ends 400 below its top; the screen 40 short of 1080
-
-    /** The quotes card is the only card left in the drawer; without it the rows start where the cards would, and higher up. */
-    private boolean cardsOn() {
-        return Prefs.quotes() && HomeData.active().length > 0;
-    }
-
-    private float catY0() {
-        return cardsOn() ? CAT_Y0 : CARDS_TOP;
-    }
-
-    private float catLift() {
-        float lift = cardsOn() ? CAT_LIFT : CARDS_TOP - 140;
-        // Spotlight's shelf is docked just above row 0 (see layoutShelf): row 0 needs to rest a bit lower than Cards'
-        // does, so there's room for the shelf's full glass pill (not just its tiles) between it and the screen's top edge.
-        // A shelf with Cards' full padding is taller by 2 * (SHELF_PAD - 10): row 0 sits that much lower again.
-        return Prefs.spotlightOn() ? lift - SPOTLIGHT_SHELF_GAP - (look.m.shelfFill ? 0 : 2 * (SHELF_PAD - 10)) : lift;
-    }
+    // MARK: - Pages 3 and 4: the poster rows, and what they ask of the home screen
 
     @Override public void onCatalogs() {
         wake();
-        syncRows();
-        syncBrowse();
-        catDirty = browseDirty = true;
+        watchingPage.sync();
+        catalogPage.sync();
+        watchingPage.invalidate();
+        catalogPage.invalidate();
+        pagesChanged();
     }
 
     @Override public void onDetails() {
-        if (browseShown == null) return;
-        browseInfo = details.known(browseShown.kind, browseShown.id);
-        if (browseInfo == null) return;
-        // The details' answer also told Launcher where it streams: the badge looks again in what is kept.
-        if (browseShown.servicePkg == null) browseShown.serviceAsked = 0;
-        dropBrowseBackdrop();
-        browseTextGen = -1;
-        browseDirty = true;
-        scheduleAutoTrailer();
-        wake();
+        catalogPage.onDetails();
     }
 
-    /** The focused row in the new rows: the one with the same key, else the same place (within the new rows). */
-    private static int sameRow(List<Catalogs.Row> old, int index, List<Catalogs.Row> rows) {
-        if (index < old.size()) {
-            for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(old.get(index).key)) return i;
-        }
-        return Math.min(index, Math.max(0, rows.size() - 1));
-    }
-
-    /**
-     * Each new row's focused column: on the title that had the focus in the row with the same key, when it is still
-     * there; else the same column (within the new row). A row that changed never moves the focus to another title.
-     */
-    private static int[] sameTitles(List<Catalogs.Row> old, int[] oldCols, List<Catalogs.Row> rows) {
-        Map<String, String> focused = new HashMap<>();
-        Map<String, Integer> column = new HashMap<>();
-        for (int i = 0; i < old.size() && i < oldCols.length; i++) {
-            Catalogs.Row r = old.get(i);
-            if (r.items.isEmpty()) continue;
-            int c = Math.min(oldCols[i], r.items.size() - 1);
-            focused.put(r.key, Catalogs.hideKey(r.key, r.items.get(c)));
-            column.put(r.key, c);
-        }
-        int[] cols = new int[rows.size()];
-        for (int i = 0; i < rows.size(); i++) {
-            Catalogs.Row r = rows.get(i);
-            String who = focused.get(r.key);
-            int c = -1;
-            for (int j = 0; who != null && j < r.items.size() && c < 0; j++) if (who.equals(Catalogs.hideKey(r.key, r.items.get(j)))) c = j;
-            if (c < 0) {
-                Integer was = column.get(r.key);
-                c = Math.min(was == null ? (i < oldCols.length ? oldCols[i] : 0) : was, Math.max(0, r.items.size() - 1));
-            }
-            cols[i] = c;
-        }
-        return cols;
-    }
-
-    /** Takes the catalog's current rows (a new list after a fetch), keeping the focus on the same title when it can. */
-    private void syncRows() {
-        List<Catalogs.Row> rows = catalogs.rows();
-        if (rows == catRows) return;
-        List<Catalogs.Row> old = catRows;
-        catRows = rows;
-        catShift = new Spring[rows.size()];
-        for (int i = 0; i < catShift.length; i++) catShift[i] = new Spring(0.34f, 1f, 0);
-        int focusedRow = sameRow(old, catRowIndex, rows);
-        catCol = sameTitles(old, catCol, rows);
-        int[] cols = catCol;
-        for (int i = 0; i < cols.length; i++) catShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        catRowIndex = focusedRow;
-        if (zone == Z_CATALOG && rows.isEmpty()) leaveCatalog();
-        else if (zone == Z_CATALOG) catRow.target = catScrollTarget();
-    }
-
-    /**
-     * How far the rows have scrolled (in rows) with the focus on row `catRowIndex`: the focused row rises with each press,
-     * but never past the point where the last row's foot reaches the bottom of the screen, so a few rows don't leave it empty.
-     */
-    private float catScrollTarget() {
-        float firstTop = catY0() - catLift();
-        float lastFoot = firstTop + (catRows.size() - 1) * CAT_PITCH + CAT_ROW_FOOT;
-        float most = Math.max(0, lastFoot - CAT_BOTTOM) / CAT_PITCH;
-        return Math.min(catRowIndex, most);
-    }
-
-    private boolean enterCatalog() {
-        syncRows();
-        if (catRows.isEmpty()) return false;
-        zone = Z_CATALOG;
-        catRowIndex = 0;
-        catIn.target = 1;
-        catRow.target = 0;
-        popCatalogFocus();
-        return true;
-    }
-
-    private void leaveCatalog() {
-        catIn.target = 0;
-        catRow.target = 0;
-        catDirty = true;
-        if (drawerItems.isEmpty()) closeDrawer();       // nothing in the drawer to land on: back to the shelf
-        else zone = Z_DRAWER;
-        wake();
-    }
-
-    private void popCatalogFocus() {
-        catFocus.snap(0);
-        catFocus.target = 1;
-        catDirty = true;
-    }
-
-    /** Arrows inside the rows: left and right along a row, up and down between rows (up from the first goes back to the drawer). */
-    private boolean moveCatalog(int dx, int dy) {
-        if (catRows.isEmpty()) return false;
-        int r = catRowIndex;
-        if (dx != 0) {
-            int next = Math.max(0, Math.min(catRows.get(r).items.size() - 1, catCol[r] + dx));
-            if (next == catCol[r]) return false;
-            catCol[r] = next;
-            float first = catShift[r].target;
-            if (next < first) first = next;
-            else if (next > first + CAT_VISIBLE - 1) first = next - CAT_VISIBLE + 1;
-            catShift[r].target = first;
-        } else if (dy < 0) {
-            if (r == 0) {
-                leaveCatalog();
-                return true;
-            }
-            catRowIndex--;
-            catRow.target = catScrollTarget();
-        } else {
-            if (r >= catRows.size() - 1) return enterBrowse();      // past the last row: TMDB's catalogs
-            catRowIndex++;
-            catRow.target = catScrollTarget();
-        }
-        popCatalogFocus();
-        return true;
-    }
-
-    /** Where poster `i` of row `r` is on screen now. */
-    private void posterRect(int r, int i, RectF out) {
-        float y0 = (catY0() + r * CAT_PITCH - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
-        float x = MARGIN * k + (i - catShift[r].value) * (CAT_POSTER_W + CAT_GAP) * k;
-        out.set(x, y0 + 50 * k, x + CAT_POSTER_W * k, y0 + (50 + CAT_POSTER_H) * k);
-    }
-
-    private void drawCatalog(Canvas c) {
-        if (catRows.isEmpty() || catIn.value < 0.002f || lCatTitle == null) return;
-        lCatTitle.setColor(look.color(Look.TITLE, dark()));
-        lCatLabel.setColor(look.color(Look.TITLE, dark()));
-        lCardMeta.setColor(look.color(Look.META, dark()));
-        for (int r = 0; r < catRows.size(); r++) {
-            float y0 = (catY0() + r * CAT_PITCH - catIn.value * catLift() - catRow.value * CAT_PITCH) * k;
-            if (y0 > h || y0 + CAT_PITCH * k < 0) continue;
-            Catalogs.Row row = catRows.get(r);
-            c.drawText(row.title, MARGIN * k + 4 * k, y0 + 30 * k, lCatTitle);
-            int first = Math.max(0, (int) Math.floor(catShift[r].value)), last = Math.min(row.items.size() - 1, first + CAT_VISIBLE + 1);
-            for (int i = first; i <= last; i++) {
-                posterRect(r, i, cardRect);
-                if (cardRect.right < 0 || cardRect.left > w) continue;
-                Catalogs.Item it = row.items.get(i);
-                drawPoster(c, cardRect, it, zone == Z_CATALOG && r == catRowIndex && i == catCol[r] ? Ui.clamp(catFocus.value) : 0, y0, true);
-            }
-        }
+    /** The focus is on page 3. */
+    boolean onWatchingPage() {
+        return zone == Z_CATALOG;
     }
 
     /**
      * The app a poster opens in: the one that published it (Watch Next), else what is kept about where it streams,
      * and for the focused poster what TMDB says. Null until known.
      */
-    private String catalogService(Catalogs.Item it, boolean focused) {
+    String catalogService(Catalogs.Item it, boolean focused) {
         if (it.appPkg != null) return it.appPkg;
         if (it.id <= 0) return null;
         if (focused) {      // TMDB is asked only once the focus rests on it (holding an arrow asks for nothing on the way)
@@ -2536,12 +1737,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 restKey = key;
                 restAt = SystemClock.uptimeMillis();
                 handler.removeCallbacks(rested);
-                handler.postDelayed(rested, REST_MS + 10);
+                handler.postDelayed(rested, HomeCatalogPage.REST_MS + 10);
             }
         }
-        boolean rest = focused && SystemClock.uptimeMillis() - restAt >= REST_MS;
+        boolean rest = focused && SystemClock.uptimeMillis() - restAt >= HomeCatalogPage.REST_MS;
         // On the browse screen the details' answer brings where it streams: asked only when it came from disk without it.
-        boolean waitDetails = it == browseShown && zone == Z_BROWSE && browseInfo == null;
+        boolean waitDetails = catalogPage.waitsForDetails(it);
         if (it.serviceAsked < 1 || (rest && !waitDetails && it.serviceAsked < 2 && it.servicePkg == null)) {
             boolean fetch = rest && !waitDetails && it.serviceAsked < 2;
             it.serviceAsked = fetch ? 2 : 1;
@@ -2572,575 +1773,34 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** A badge arrived: the layers that draw them are drawn again. */
     private void markBadges() {
-        catDirty = browseDirty = heroDirty = true;
+        heroDirty = true;
+        watchingPage.invalidate();
+        catalogPage.invalidate();
         wake();
     }
 
-    /** The service's round icon in the corner of a card or poster (`r`, as drawn now). */
-    private void drawBadge(Canvas c, RectF r, String pkg) {
-        if (pkg == null || pkg.isEmpty()) return;
-        int px = Math.round(34 * k);
-        Bitmap b = ServiceBadge.get(getContext(), pkg, px, badgesReady);
-        if (b != null) c.drawBitmap(b, r.left + 10 * k, r.top + 10 * k, null);
-    }
-
-    /** One poster of a row (Trakt's under the drawer, TMDB's on the browse screen) with its badge (`badge`), bar, loader and captions; `y0` is the row's top. */
-    private void drawPoster(Canvas c, RectF cardRect, Catalogs.Item it, float f, float y0, boolean badge) {
-        Bitmap poster = catalogs.poster(it, Math.round(CAT_POSTER_W * k * 1.25f));
-        if (poster == null) {
-            fill.setShader(null);
-            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
-            c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
-        }
-        drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
-        if (badge && poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
-        if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
-            barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
-            fill.setShader(null);
-            fill.setColor(0x73FFFFFF);
-            c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
-            barRect.right = barRect.left + barRect.width() * Math.min(1f, it.progress);
-            fill.setColor(0xFFFFFFFF);
-            c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
-        }
-        if (it == openingItem && SystemClock.uptimeMillis() - openingAt >= OPEN_LOADER_MS) {
-            // Waiting for where it streams: the poster dims a little and three dots pulse over it.
-            fill.setShader(null);
-            fill.setColor(0x80000000);
-            c.drawRoundRect(cell, 14 * k, 14 * k, fill);
-            fill.setColor(0xFFFFFFFF);
-            Ui.dots(c, cell.centerX(), cell.centerY(), 7 * k, (SystemClock.uptimeMillis() - openingAt) / 1000f, fill);
-        }
-        fitPaint.set(lCatLabel);
-        c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
-                cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
-        String meta = it.sub != null ? it.sub : it.stars;
-        if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
-    }
-
-    // MARK: - Browse screen (TMDB's catalogs): the focused title's details above, one catalog row below
-
-    private static final float BROWSE_Y0 = 640, BROWSE_PITCH = 460;
+    // MARK: - What pages 3 and 4 ask of the home screen
 
     /** A badge picture is ready: the layers that show badges are drawn again (once; the picture then stays). */
     private final Runnable markBadgesRun = this::markBadges;
-    private final Runnable badgesReady = () -> post(markBadgesRun);
+    final Runnable badgesReady = () -> post(markBadgesRun);
 
-    /** Takes TMDB's current rows (a new list after a fetch), keeping the focus where it was when it can. */
-    private void syncBrowse() {
-        List<Catalogs.Row> rows = catalogs.browseRows();
-        if (rows == browseRows) return;
-        List<Catalogs.Row> old = browseRows;
-        browseRows = rows;
-        browseShift = new Spring[rows.size()];
-        for (int i = 0; i < browseShift.length; i++) browseShift[i] = new Spring(0.34f, 1f, 0);
-        int focusedRow = sameRow(old, browseRowIndex, rows);
-        browseCol = sameTitles(old, browseCol, rows);
-        int[] cols = browseCol;
-        for (int i = 0; i < cols.length; i++) browseShift[i].snap(Math.max(0, cols[i] - CAT_VISIBLE + 1));
-        browseRowIndex = focusedRow;
-        browsePos.snap(browseRowIndex);
-        if (zone == Z_BROWSE) {
-            if (rows.isEmpty()) leaveBrowse();
-            else touchBrowse();
-        }
-        browseDirty = true;
+    /** The focus is on page 4. */
+    boolean onCatalogPage() {
+        return zone == Z_BROWSE;
     }
 
-    /** Down from the last of Trakt's rows (or from the drawer's buttons when there are none): the catalogs. */
-    private boolean enterBrowse() {
-        syncBrowse();
-        if (browseRows.isEmpty()) return false;
-        zone = Z_BROWSE;
-        browseIn.target = 1;
-        browsePos.snap(browseRowIndex);
-        browseFocus.snap(0);
-        browseFocus.target = 1;
-        touchBrowse();
-        return true;
-    }
-
-    private void leaveBrowse() {
-        browseTouched = "";
-        cancelAutoTrailer();
-        stopTrailer();
-        browseIn.target = 0;
-        if (!catRows.isEmpty()) zone = Z_CATALOG;
-        else if (drawerItems.isEmpty()) closeDrawer();
-        else zone = Z_DRAWER;
-        browseDirty = true;
-        wake();
-    }
-
-    /** Left and right change the title, up and down the catalog (up from the first goes back to Trakt's rows). */
-    private boolean moveBrowse(int dx, int dy) {
-        if (browseRows.isEmpty()) return false;
-        int r = browseRowIndex;
-        if (dx != 0) {
-            int next = Math.max(0, Math.min(browseRows.get(r).items.size() - 1, browseCol[r] + dx));
-            if (next == browseCol[r]) return false;
-            browseCol[r] = next;
-            float first = browseShift[r].target;
-            if (next < first) first = next;
-            else if (next > first + CAT_VISIBLE - 1) first = next - CAT_VISIBLE + 1;
-            browseShift[r].target = first;
-        } else if (dy < 0) {
-            if (r == 0) {
-                leaveBrowse();
-                return true;
-            }
-            browseRowIndex--;
-            browsePos.target = browseRowIndex;
-        } else {
-            if (r >= browseRows.size() - 1) return false;
-            browseRowIndex++;
-            browsePos.target = browseRowIndex;
-        }
-        browseFocus.snap(0);
-        browseFocus.target = 1;
-        touchBrowse();
-        return true;
-    }
-
-    private Catalogs.Item browseItem() {
-        if (browseRows.isEmpty()) return null;
-        List<Catalogs.Item> items = browseRows.get(browseRowIndex).items;
-        int c = Math.min(browseCol[browseRowIndex], items.size() - 1);
-        return c < 0 ? null : items.get(c);
-    }
-
-    /**
-     * The focused title changed: shows what is already known about it, and asks for its details (and its neighbours',
-     * so the next press is quick) once the focus rests there (holding an arrow asks for nothing on the way).
-     */
-    private void touchBrowse() {
-        Catalogs.Item it = browseItem();
-        browseShown = it;
-        browseInfo = it == null ? null : details.known(it.kind, it.id);
-        browseRested = null;
-        handler.removeCallbacks(askDetails);
-        if (it != null) handler.postDelayed(askDetails, REST_MS);
-        dropBrowseBackdrop();
-        browseTextGen = -1;
-        browseDirty = true;
-        String key = it == null ? "" : it.kind + it.id;
-        if (!key.equals(browseTouched)) {      // another title (not just the lists made again): its trailer may start by itself
-            browseTouched = key;
-            trailerSpent = false;
-            cancelAutoTrailer();
-        }
-        scheduleAutoTrailer();
-        wake();
-    }
-
-    /** How long the focus stays on a title before TMDB is asked about it. */
-    private static final long REST_MS = 150;
-
-    private final Runnable askDetails = this::askDetails;
-    private Catalogs.Item browseRested;     // the title the focus has rested on (its picture may be asked for)
-
-    private void askDetails() {
-        Catalogs.Item it = browseShown;
-        if (it == null || zone != Z_BROWSE) return;
-        browseRested = it;
-        browseInfo = details.info(it.kind, it.id);
-        List<Catalogs.Item> items = browseRows.isEmpty() ? null : browseRows.get(browseRowIndex).items;
-        int c = browseCol.length > browseRowIndex ? browseCol[browseRowIndex] : -1;
-        for (int d = -1; items != null && d <= 1; d += 2) {
-            if (c + d >= 0 && c + d < items.size()) details.info(items.get(c + d).kind, items.get(c + d).id);
-        }
-        dropBrowseBackdrop();
-        browseTextGen = -1;
-        browseDirty = true;
-        wake();
-    }
-
-    /** No picture for the focused title: the old one goes. */
-    private void dropBrowseBackdrop() {
-        if (browseInfo != null && browseInfo.backdrop.isEmpty() && browseBack != null) {
-            browsePrev = browseBack;
-            browseBack = null;
-            browseSwap.snap(0);
-            browseSwap.target = 1;
-        }
-    }
-
-    /** Where poster `i` of row `r` is on the browse screen now. */
-    private void browseRect(int r, int i, RectF out) {
-        float y0 = (BROWSE_Y0 + (r - browsePos.value) * BROWSE_PITCH) * k;
-        float x = MARGIN * k + (i - browseShift[r].value) * (CAT_POSTER_W + CAT_GAP) * k;
-        out.set(x, y0 + 50 * k, x + CAT_POSTER_W * k, y0 + (50 + CAT_POSTER_H) * k);
-    }
-
-    private void drawBrowse(Canvas c) {
-        if (browseRows.isEmpty() || browseIn.value < 0.002f || lBrowseTitle == null) return;
-        drawBrowseDetails(c);
-        lCatTitle.setColor(look.color(Look.TITLE, dark()));
-        lCatLabel.setColor(look.color(Look.TITLE, dark()));
-        lCardMeta.setColor(look.color(Look.META, dark()));
-        c.save();
-        c.clipRect(0, (BROWSE_Y0 - 20) * k, w, h);        // the row sliding out never reaches the details
-        for (int r = 0; r < browseRows.size(); r++) {
-            float d = r - browsePos.value;
-            if (Math.abs(d) >= 1) continue;
-            float y0 = (BROWSE_Y0 + d * BROWSE_PITCH) * k;
-            Catalogs.Row row = browseRows.get(r);
-            c.drawText(row.title, MARGIN * k + 4 * k, y0 + 30 * k, lCatTitle);
-            int first = Math.max(0, (int) Math.floor(browseShift[r].value)), last = Math.min(row.items.size() - 1, first + CAT_VISIBLE + 1);
-            for (int i = first; i <= last; i++) {
-                browseRect(r, i, browseCell);
-                if (browseCell.right < 0 || browseCell.left > w) continue;
-                drawPoster(c, browseCell, row.items.get(i), zone == Z_BROWSE && r == browseRowIndex && i == browseCol[r] ? Ui.clamp(browseFocus.value) : 0, y0, false);      // no badge: the details card above shows the service
-            }
-        }
-        c.restore();
-    }
-
-    /** The video window on the left of the top card (16:9): the backdrop shows in it until the trailer plays. */
-    private void browseStage(RectF out) {
-        float left = MARGIN * k, height = 440 * k;
-        out.set(left, 90 * k, left + height * 16 / 9, 90 * k + height);
-    }
-
-    /** The focused title: its backdrop in the video window (cross-fading from the last one), the description beside it. */
-    private void drawBrowseDetails(Canvas c) {
-        browseStage(stage);
-        float r = 12 * k;
-        // The picture only once the focus rests (askDetails): a quick scroll asks for none of the titles it passes.
-        if (browseInfo != null && browseRested == browseShown) {
-            Bitmap want = details.backdrop(browseInfo);
-            if (want != null && want != browseBack) {
-                browsePrev = browseBack;
-                browseBack = want;
-                browseSwap.snap(0);
-                browseSwap.target = 1;
-                wake();
-            }
-        }
-        float swap = Ui.clamp(browseSwap.value);
-        if (swap > 0.999f) browsePrev = null;
-        tmp.set(stage);
-        tmp.offset(0, 10 * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f)));
-        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
-        if (browseBack == null && browsePrev == null) {
-            fill.setShader(null);
-            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
-            c.drawRoundRect(stage, r, r, fill);
-        } else {
-            if (browsePrev != null) roundImage(c, browsePrev, stage, r);
-            if (browseBack != null) {
-                int alpha = browsePrev == null ? 255 : Math.round(255 * swap);
-                bitmapPaint.setAlpha(alpha);
-                imageFill.setAlpha(alpha);
-                roundImage(c, browseBack, stage, r);
-                bitmapPaint.setAlpha(255);
-                imageFill.setAlpha(255);
-            }
-        }
-        if (trailerOn && trailer.loading()) {      // asked for, not showing yet: the picture dims and a spinner turns on it
-            fill.setShader(null);
-            fill.setColor(0x73000000);
-            c.drawRoundRect(stage, r, r, fill);
-            spin.setStrokeWidth(6 * k);
-            Ui.spinner(c, stage.centerX(), stage.centerY(), 34 * k, SystemClock.uptimeMillis() / 1000f, spin);
-        }
-        if (browseTextGen != Ui.generation) buildBrowseText();
-        lBrowseTitle.setColor(look.color(Look.TITLE, dark()));
-        lBrowseFacts.setColor(look.color(Look.META, dark()));
-        lBrowseText.setColor(look.color(Look.META, dark()));
-        float x = stage.right + 56 * k, y = stage.top;
-        if (browseTitleText != null) {
-            c.save();
-            c.translate(x, y);
-            browseTitleText.draw(c);
-            c.restore();
-            y += browseTitleText.getHeight();
-        }
-        if (!browseFacts.isEmpty()) {
-            float base = y + 18 * k - lBrowseFacts.ascent();
-            c.drawText(browseFacts, x, base, lBrowseFacts);
-            y = base + lBrowseFacts.descent();
-        }
-        if (browseOverviewText != null) {
-            c.save();
-            c.translate(x, y + 24 * k);
-            browseOverviewText.draw(c);
-            c.restore();
-        }
-        String service = browseShown == null ? null : catalogService(browseShown, true);      // the same service OK opens it in
-        if (service != null && !service.isEmpty()) {
-            int px = Math.round(64 * k);
-            Bitmap badge = ServiceBadge.get(getContext(), service, px, badgesReady);
-            if (badge != null) c.drawBitmap(badge, w - MARGIN * k - px, stage.top, null);
-        }
-        drawTrailerHint(c);
-    }
-
-    private void buildBrowseText() {
-        browseTextGen = Ui.generation;
-        browseTitleText = null;
-        browseOverviewText = null;
-        browseFacts = "";
-        Catalogs.Item it = browseShown;
-        if (it == null) return;
-        int width = Math.max(1, Math.round(w - MARGIN * k - (stage.right + 56 * k) - 90 * k));
-        browseTitleText = StaticLayout.Builder.obtain(it.title, 0, it.title.length(), lBrowseTitle, width)
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .setLineSpacing(0, 0.94f)
-                .setIncludePad(false)
-                .build();
-        List<String> facts = new ArrayList<>();
-        String overview = "";
-        Details.Info info = browseInfo;
-        if (info != null) {
-            if (!info.facts.isEmpty()) facts.add(info.facts);
-            if (!info.genres.isEmpty()) facts.add(info.genres);
-            overview = !info.overview.isEmpty() ? info.overview : info.tagline;
-        } else if (it.stars != null) {
-            facts.add(it.stars);
-        }
-        browseFacts = String.join("  ·  ", facts);
-        if (!overview.isEmpty()) {
-            browseOverviewText = StaticLayout.Builder.obtain(overview, 0, overview.length(), lBrowseText, width)
-                    .setMaxLines(6)
-                    .setEllipsize(TextUtils.TruncateAt.END)
-                    .setLineSpacing(0, 1.05f)
-                    .setIncludePad(false)
-                    .build();
-        }
-    }
-
-    // MARK: - Trailer of the focused title: in the backdrop card (YouTube's embedded player), or in the YouTube app
-
-    private TrailerPlayer trailer;
-    private boolean trailerOn;
-    /** The running trailer started by itself (after the wait on a title): if it can't play, nothing opens. */
-    private boolean trailerAuto;
-    private static final long AUTO_TRAILER_MS = 3000;
-    /** This title's trailer has played or been stopped: no new automatic start until the focus moves to another title. */
-    private boolean trailerSpent, autoPending;
-    private final Runnable autoTrailer = () -> {
-        autoPending = false;
-        if (zone == Z_BROWSE && !sheetOpen && !trailerOn && !trailerSpent && this.opening == null && !okDown && autoTrailerOk()) startTrailer(true);
-    };
-    private String trailerId = "";
-    /** Titles whose every trailer the embedded player refused (this run): no hint and no autoplay for them. */
-    private final java.util.Set<String> trailerBlocked = new java.util.HashSet<>();
-    private String browseTouched = "";      // the title focused last: kind + id
-    private String[] trailerIds = new String[0];     // this title's candidates, best first, and which one plays
-    private int trailerAt;
-    private final RectF pill = new RectF();
-    private final Paint spin = new Paint(Paint.ANTI_ALIAS_FLAG);
-    {
-        spin.setStyle(Paint.Style.STROKE);
-        spin.setStrokeCap(Paint.Cap.ROUND);
-        spin.setColor(0xFFFFFFFF);
-    }
-    private final Path playArrow = new Path();
-    private final TrailerPlayer.Listener trailerListener = new TrailerPlayer.Listener() {
-        @Override public void onPlaying() {
-            browseDirty = true;
-        }
-
-        @Override public void onEnded() {
-            stopTrailer();
-        }
-
-        @Override public void onFailed() {
-            if (trailerOn && trailerAt + 1 < trailerIds.length) {      // blocked here or not embeddable: the next trailer of the title
-                trailerAt++;
-                playTrailerAt();
-                return;
-            }
-            boolean auto = trailerAuto;
-            if (browseShown != null) trailerBlocked.add(browseShown.kind + browseShown.id);
-            stopTrailer();
-            if (!auto) showToast(Ui.tr("This trailer isn't available in your region."));      // asked for with a long press: say why nothing plays       // asked for with a long press, and the embedded player won't play it: the YouTube app will
-        }
-    };
-
-    /** Resting on a title starts its trailer after a few seconds, when trailers are on the home screen and the player can run. */
-    private boolean autoTrailerOk() {
-        return Prefs.trailers() && TrailerPlayer.available() && playableTrailer();
-    }
-
-    /** The focused title has a trailer and the embedded player hasn't refused them all. */
-    private boolean playableTrailer() {
-        return browseInfo != null && !browseInfo.trailer.isEmpty() && browseShown != null
-                && !trailerBlocked.contains(browseShown.kind + browseShown.id);
-    }
-
-    private void scheduleAutoTrailer() {
-        if (autoPending || trailerSpent || trailerOn || zone != Z_BROWSE || !autoTrailerOk()) return;
-        autoPending = true;
-        handler.postDelayed(autoTrailer, AUTO_TRAILER_MS);
-    }
-
-    private void cancelAutoTrailer() {
-        autoPending = false;
-        handler.removeCallbacks(autoTrailer);
-    }
-
-    /** Long press on OK or the remote's Play/Pause: starts the trailer, or pauses or resumes the one playing. */
-    private void trailerKey() {
-        if (trailerOn) trailer.togglePause();
-        else startTrailer(false);
-    }
-
-    /** `auto`: started by the wait on a title, so it only ever plays in the card (YouTube opens only on a long press). */
-    private void startTrailer(boolean auto) {
-        if (zone != Z_BROWSE) return;
-        cancelAutoTrailer();
-        trailerSpent = true;
-        trailerAuto = auto;
-        if (!auto && browseShown != null && trailerBlocked.contains(browseShown.kind + browseShown.id)) {      // refused before: don't try again
-            showToast(Ui.tr("This trailer isn't available in your region."));
-            return;
-        }
-        trailerIds = browseInfo == null || browseInfo.trailers.isEmpty() ? new String[0] : browseInfo.trailers.split(",");
-        trailerAt = 0;
-        trailerId = trailerIds.length > 0 ? trailerIds[0] : "";
-        if (trailerId.isEmpty()) {
-            if (!auto) showToast(Ui.tr("This title has no trailer."));
-            return;
-        }
-        if (!Prefs.trailers() || !TrailerPlayer.available()) {
-            if (!auto) openYoutube(trailerId);
-            return;
-        }
-        if (trailer == null) trailer = new TrailerPlayer(getContext(), trailerListener);
-        trailerOn = true;
-        playTrailerAt();
-    }
-
-    /** Plays the candidate `trailerAt` in the video window. */
-    private void playTrailerAt() {
-        browseStage(stage);
-        trailerId = trailerIds[trailerAt];
-        trailer.play(trailerId, Math.round(stage.left), Math.round(stage.top), Math.round(stage.width()), Math.round(stage.height()));
-        browseDirty = true;
-    }
-
-    private void stopTrailer() {
-        if (!trailerOn) return;
-        trailerSpent = true;
-        trailerOn = false;
-        trailer.stop();
-        browseDirty = true;
-        wake();
-    }
-
-    /**
-     * Opens the trailer where the person prefers: the official YouTube TV app, else another YouTube client (SmartTube and
-     * the like: the apps that answer a "vnd.youtube:" link, which only YouTube clients do), else a browser (the first app
-     * that opens the link, not Android's placeholder). Always with a plain watch link (some clients don't read the
-     * "vnd.youtube:" form), and always for one chosen app, so no chooser comes up.
-     */
-    private void openYoutube(String id) {
-        android.content.pm.PackageManager pm = getContext().getPackageManager();
-        android.content.Intent watch = new android.content.Intent(android.content.Intent.ACTION_VIEW,
-                android.net.Uri.parse("https://www.youtube.com/watch?v=" + id));
-        String official = null, client = null, browser = null;
-        try {
-            android.content.Intent clients = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id));
-            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(clients, 0)) {
-                if (client == null) client = r.activityInfo.packageName;
-            }
-            for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(watch, 0)) {
-                String pkg = r.activityInfo.packageName;
-                if (pkg.equals("com.google.android.youtube.tv")) official = pkg;
-                else if (browser == null && !pkg.equals(client) && !pkg.equals("android") && !pkg.endsWith("frameworkpackagestubs")) browser = pkg;
-            }
-        } catch (RuntimeException e) {
-            AppLog.w("trailer apps: " + e.getMessage());
-        }
-        String pick = official != null ? official : client != null ? client : browser;
-        if (pick != null) watch.setPackage(pick);
-        try {
-            activity.startActivity(watch);
-        } catch (RuntimeException e) {
-            AppLog.w("trailer " + pick + ": " + e.getMessage());
-            showToast(Ui.tr("Couldn't open YouTube."));
-        }
-    }
-
-    /** The small "Hold OK for the trailer" pill at the video window's foot, while there is a trailer and it isn't playing. */
-    private void drawTrailerHint(Canvas c) {
-        if (zone != Z_BROWSE || trailerOn || !playableTrailer()) return;
-        String text = Ui.tr("Hold OK for the trailer");
-        float pad = 24 * k, arrow = 18 * k, gap = 14 * k, hh = 54 * k;
-        float x = stage.left + 24 * k, y = stage.bottom - 24 * k - hh;
-        pill.set(x, y, x + pad + arrow + gap + lBrowseFacts.measureText(text) + pad, y + hh);
-        fill.setShader(null);
-        fill.setColor(0x99000000);
-        c.drawRoundRect(pill, hh / 2, hh / 2, fill);
-        playArrow.reset();
-        playArrow.moveTo(pill.left + pad, y + hh / 2 - arrow / 2);
-        playArrow.lineTo(pill.left + pad + arrow, y + hh / 2);
-        playArrow.lineTo(pill.left + pad, y + hh / 2 + arrow / 2);
-        playArrow.close();
-        fill.setColor(0xFFFFFFFF);
-        c.drawPath(playArrow, fill);
-        lBrowseFacts.setColor(0xFFFFFFFF);
-        c.drawText(text, pill.left + pad + arrow + gap, y + hh / 2 + Ui.halfCap(lBrowseFacts), lBrowseFacts);
+    /** Nothing else is going on (All Apps, an open waiting for its answer, OK held): a trailer may start by itself. */
+    boolean trailerMayStart() {
+        return !sheet.isOpen() && opening == null && !okDown;
     }
 
     // MARK: - Toasts
 
     void showToast(String text) {
-        toasts.add(text);
+        toasts.show(text);
         announceForAccessibility(text);
         wake();
-    }
-
-    /** Advances the toast queue; returns true while a toast fades in or out (animation). */
-    private boolean tickToast(long up) {
-        if (toast != null && up - toastAt > TOAST_MS) {
-            toast = null;
-            toastLayer.invalidate();
-        }
-        if (toast == null && toastPaint != null) {
-            String next = toasts.poll();
-            if (next != null) {
-                toast = layout(next);
-                toastAt = up;
-            }
-        }
-        if (toast == null) return false;
-        long age = up - toastAt;
-        boolean fading = age < 350 || age > TOAST_MS - 450;
-        if (fading) toastLayer.invalidate();
-        return fading;
-    }
-
-    private void drawToast(Canvas c) {
-        if (toast == null) return;
-        float age = (SystemClock.uptimeMillis() - toastAt) / 1000f;
-        float a = Math.min(Ui.clamp(age / 0.3f), Ui.clamp((TOAST_MS / 1000f - age) / 0.4f));
-        if (a <= 0) return;
-        float padX = 28 * k, padY = 18 * k, icon = 26 * k, iconW = Symbols.width(getContext(), "bell", icon);
-        float tw = toast.getWidth() + iconW + 16 * k, th = toast.getHeight();
-        float toastTop = 64 * k - (1 - a) * 16 * k;
-        tmp.set((w - tw) / 2f - padX, toastTop, (w + tw) / 2f + padX, toastTop + th + 2 * padY);
-        int save = c.saveLayerAlpha(tmp.left - 4, tmp.top - 4, tmp.right + 4, tmp.bottom + 4, Math.round(255 * a));
-        float radius = Math.min(tmp.height() / 2, 32 * k);
-        if (!look.toast(c, tmp, radius, dark())) scene.glass(c, tmp, radius, SMOKE, 0.55f, 0, 0, 0.02f, 1);
-        toastPaint.setColor(look.toastInk(dark()));
-        Symbols.draw(getContext(), c, "bell", tmp.left + padX + iconW / 2, tmp.centerY(), icon, toastPaint.getColor());
-        c.translate(tmp.left + padX + iconW + 16 * k, tmp.top + padY);
-        toast.draw(c);
-        c.restoreToCount(save);
-    }
-
-    private StaticLayout layout(String text) {
-        int max = Math.round(720 * k);
-        int width = (int) Math.min(max, Math.ceil(Layout.getDesiredWidth(text, toastPaint)));
-        return StaticLayout.Builder.obtain(text, 0, text.length(), toastPaint, Math.max(1, width))
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .build();
     }
 
     /** New notices from the main process (mode switches, the check after the TV boots): those from the last 24 h. */
@@ -3181,14 +1841,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         LOADER.execute(() -> {
             final List<HomeApps.Item> s = apps ? HomeApps.shelf(c, true) : null;
-            final List<HomeApps.Item> st = statusList(c);
             final List<HomeApps.Item> o = apps ? HomeApps.others(c) : null;
             final List<HomeApps.Item> top = apps ? HomeApps.topButtons(c) : null;   // they change with Prefs too
             handler.post(() -> {
                 if (top != null) setLightButtons(top);
                 if (s != null) setShelf(s);
-                setStatusItems(st);
-                if (o != null && !sheetOpen) setOthers(o);
+                if (o != null && !sheet.isOpen()) sheet.setApps(o);
                 else if (o != null) appsStale = true;   // All Apps is open: its list comes next time
             });
         });
@@ -3247,7 +1905,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : zone == Z_BROWSE || tileMenuReady() || canReorder();
+                        holdArmed = sheet.isOpen() ? canToggleShelf(sheet.index()) : zone == Z_BROWSE || tileMenuReady() || canReorder();
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
                         hold();
@@ -3262,8 +1920,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                if (zone != Z_BROWSE || sheetOpen) return false;
-                if (down && e.getRepeatCount() == 0) trailerKey();
+                if (zone != Z_BROWSE || sheet.isOpen()) return false;
+                if (down && e.getRepeatCount() == 0) catalogPage.trailerKey();
                 return true;
             case KeyEvent.KEYCODE_BACK:
                 if (opening != null) {      // Back only cancels the open that is waiting for its answer
@@ -3284,27 +1942,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void back() {
-        if (popOpen) {
+        if (popover.isOpen()) {
             closePop(false);
-        } else if (sheetOpen) {
+        } else if (sheet.isOpen()) {
             closeSheet();
-        } else if (trailerOn) {      // Back stops the trailer first
-            stopTrailer();
-        } else if (Prefs.spotlightOn() && drawer.value > 0.001f
-                && (zone == Z_CATALOG || zone == Z_DRAWER || zone == WIDGETS || zone == Z_SHELF)) {
-            // Spotlight's drawer/catalog page is one unit (opened and closed together, unlike Cards' shelf, which
-            // stays visible either way) — Back from anywhere on it closes the whole page in one press, straight back
-            // to the poster row, instead of stepping zone-by-zone the way Cards mode's always-visible shelf allows.
-            closeSpotlightPage();
-            retarget(false);
-        } else if (zone == Z_BROWSE) {
-            leaveBrowse();
-            retarget(false);
-        } else if (zone == Z_CATALOG) {
-            leaveCatalog();
-            retarget(false);
-        } else if (zone == Z_DRAWER || zone == WIDGETS) {
-            closeDrawer();
+        } else if (catalogPage.trailerOn()) {      // Back stops the trailer first
+            catalogPage.stopTrailer();
+        } else if (pager.current() != topSlot) {      // from any other page: the first page's shelf
+            goTo(topSlot, false);
             retarget(false);
         } else if (zone != Z_SHELF) {
             zone = Z_SHELF;
@@ -3316,12 +1961,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void move(int dx, int dy) {
-        stopTrailer();      // an arrow ends the trailer, and moves on
-        if (popOpen) {
-            movePop(dy);
+        catalogPage.stopTrailer();      // an arrow ends the trailer, and moves on
+        if (popover.isOpen()) {
+            if (popover.move(dy)) {
+                click.move();
+                spoken.focusMoved();
+            }
             return;
         }
-        if (sheetOpen) {
+        if (sheet.isOpen()) {
             moveGrid(dx, dy);
             return;
         }
@@ -3332,80 +1980,34 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     int next = Math.max(0, Math.min(shelf.size() - 1, shelfIndex + dx));
                     if (next == shelfIndex) return;
                     shelfIndex = next;
-                } else if (dy < 0) {
-                    if (hero != null && hero.button) {
-                        zone = Z_HERO;
-                    } else if (!statusItems.isEmpty()) {
-                        zone = Z_STATUS;
-                        statusIndex = shelf.isEmpty() ? 0 : nearest(statusRects, tileRects[shelfIndex].centerX());
-                    } else {
-                        return;
-                    }
-                } else {
-                    openDrawer();
-                }
-                break;
-            case Z_HERO:
-                if (dx != 0) {
-                    if (!browse(dx)) return;
-                } else if (dy < 0) {
-                    if (statusItems.isEmpty()) return;
-                    zone = Z_STATUS;
-                    statusIndex = 0;
-                } else {
-                    zone = Z_SHELF;
-                }
-                break;
-            case Z_STATUS:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(statusItems.size() - 1, statusIndex + dx));
-                    if (next == statusIndex) return;
-                    statusIndex = next;
-                } else if (dy > 0) {
-                    if (hero != null && hero.button) {
-                        zone = Z_HERO;
-                    } else {
-                        zone = Z_SHELF;
-                        if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, statusRects[statusIndex].centerX());
-                    }
-                } else {
+                } else if (!pageBy(1)) {       // Up from the shelf is moveLight's
                     return;
                 }
                 break;
             case Z_CATALOG:
-                if (!moveCatalog(dx, dy)) return;
+                if (!watchingPage.move(dx, dy) && (dx != 0 || !pageBy(dy))) return;
                 break;
             case Z_BROWSE:
-                if (!moveBrowse(dx, dy)) return;
+                if (!catalogPage.move(dx, dy) && (dx != 0 || !pageBy(dy))) return;
                 break;
             case WIDGETS: {
                 List<Integer> on = widgets();
                 int at = on.indexOf(widgetIndex);
-                if (dy < 0 || at < 0) {
-                    zone = Z_DRAWER;
-                } else if (dx != 0 && at + dx >= 0 && at + dx < on.size()) {
+                if (dx != 0 && at >= 0 && at + dx >= 0 && at + dx < on.size()) {
                     widgetIndex = on.get(at + dx);
-                } else {
+                } else if (dx != 0 || !pageBy(dy)) {
                     return;
                 }
                 break;
             }
             default:
                 if (dx != 0) {
-                    int next = Math.max(0, Math.min(drawerItems.size() - 1, drawerIndex + dx));
-                    if (next == drawerIndex) return;
-                    drawerIndex = next;
-                } else if (dy < 0) {
-                    closeDrawer();
-                } else if (enterCatalog()) {
-                    // Down from the drawer's buttons: the poster rows come in below the weather and quotes
-                } else if (enterBrowse()) {
-                    // No Trakt rows to land on: straight into TMDB's catalogs
-                } else if (talkBack() && !widgets().isEmpty()) {
+                    return;
+                } else if (dy > 0 && talkBack() && !widgets().isEmpty()) {
                     // Only with TalkBack: the widgets are there to be read, and this is how it gets to them.
                     zone = WIDGETS;
                     widgetIndex = widgets().get(0);
-                } else {
+                } else if (!pageBy(dy)) {
                     return;
                 }
                 break;
@@ -3428,23 +2030,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void moveGrid(int dx, int dy) {
-        int n = others.size();
-        if (n == 0) return;
-        int r = gridIndex / COLUMNS, col = gridIndex % COLUMNS;
-        int rows = (n + COLUMNS - 1) / COLUMNS;
-        int next = gridIndex;
-        if (dx != 0) {
-            int candidate = gridIndex + dx;
-            if (candidate >= 0 && candidate < n && candidate / COLUMNS == r) next = candidate;
-        } else {
-            int targetRow = r + dy;
-            if (targetRow >= 0 && targetRow < rows) next = Math.min(n - 1, targetRow * COLUMNS + col);
-        }
-        if (next == gridIndex) return;
-        gridIndex = next;
-        retargetGrid(false);
+        if (!sheet.move(dx, dy)) return;
         click.move();
-        gridDirty = true;
+        spoken.focusMoved();
     }
 
     private void activate() {
@@ -3453,32 +2041,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             dropReorder();
             return;
         }
-        if (popOpen) {
+        if (popover.isOpen()) {
             choosePop();
             return;
         }
         if (opening != null) return;      // still looking up where a title streams
         HomeApps.Item it;
         RectF r;
-        if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
-        if (sheetOpen) {
-            if (others.isEmpty()) return;
-            it = others.get(gridIndex);
-            r = focusedCell;
-        } else if (zone == Z_HERO) {
-            Recs.Pick p = currentPick();
-            if (p == null || p.pkg == null) return;
-            click.open();
-            openPick(p, heroButton);
-            return;
-        } else if (zone == Z_STATUS) {
-            if (statusItems.isEmpty()) return;
-            it = statusItems.get(statusIndex);
-            r = statusRects[statusIndex];
-        } else if (zone == Z_DRAWER) {
-            if (drawerItems.isEmpty()) return;
-            it = drawerItems.get(drawerIndex);
-            r = drawerRects[drawerIndex];
+        // A widget is only read; the drawer has nothing else to open.
+        if (!sheet.isOpen() && (zone == WIDGETS || zone == Z_DRAWER)) return;
+        if (sheet.isOpen()) {
+            if (sheet.apps().isEmpty()) return;
+            it = sheet.apps().get(sheet.index());
+            r = sheet.focusedTile();
         } else if (zone == Z_TOP) {
             if (topIndex < 3) {
                 selectTab(topIndex);
@@ -3493,25 +2068,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             openPick(p, Prefs.spotlightOn() ? spotlightFocusedRect : cardRects[cardIndex]);
             return;
         } else if (zone == Z_BROWSE) {
-            Catalogs.Item listed = browseItem();
-            if (listed == null) return;
-            stopTrailer();      // OK opens the title, even while its trailer plays
-            click.open();
-            browseRect(browseRowIndex, browseCol[browseRowIndex], cardRect);
-            openTitle(listed, cardRect);
+            catalogPage.activate();
             return;
         } else if (zone == Z_CATALOG) {
-            if (catRows.isEmpty()) return;
-            Catalogs.Item listed = catRows.get(catRowIndex).items.get(catCol[catRowIndex]);
-            click.open();
-            if (listed.episodes) {      // a show you watch: its episodes, not the app
-                activity.startActivity(EpisodesActivity.intent(activity, listed));
-            } else if (listed.launch != null) {        // what an app says you were watching: back into that app
-                openWatchNext(listed);
-            } else {
-                posterRect(catRowIndex, catCol[catRowIndex], cardRect);
-                openTitle(listed, cardRect);
-            }
+            watchingPage.activate();
             return;
         } else {
             if (shelf.isEmpty()) return;
@@ -3532,26 +2092,37 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - A title from the catalogs or the picks: where it streams decides where it opens (Launcher)
 
-    private static final long OPEN_LOADER_MS = 150;      // a cached answer opens at once; only a wait shows the dots
+    static final long OPEN_LOADER_MS = 150;      // a cached answer opens at once; only a wait shows the dots
     private Launcher.Handle opening;
     private Catalogs.Item openingItem;
     private long openingAt;
 
-    private void openTitle(Catalogs.Item item, RectF poster) {
+    /** The title waiting to open (its poster shows the dots), and since when. */
+    Catalogs.Item openingItem() {
+        return openingItem;
+    }
+
+    long openingAt() {
+        return openingAt;
+    }
+
+    void openTitle(Catalogs.Item item, RectF poster) {
         final RectF from = new RectF(poster);
         openingItem = item;
         openingAt = SystemClock.uptimeMillis();
-        catDirty = browseDirty = true;
+        watchingPage.invalidate();
+        catalogPage.invalidate();
         opening = Launcher.get(activity).open(item.kind, item.id, item.imdb, target -> {
             opening = null;
             openingItem = null;
-            catDirty = browseDirty = true;
+            watchingPage.invalidate();
+            catalogPage.invalidate();
             show(target, from);
         });
     }
 
     /** A Continue Watching card from the TV's apps (Watch Next): its own intent resumes it; the entry was checked when read. */
-    private void openWatchNext(Catalogs.Item item) {
+    void openWatchNext(Catalogs.Item item) {
         try {
             activity.startActivity(new android.content.Intent(item.launch));
         } catch (RuntimeException e) {
@@ -3575,7 +2146,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         opening.cancel();
         opening = null;
         openingItem = null;
-        catDirty = true;
+        watchingPage.invalidate();
     }
 
     private void show(Routing.Target target, RectF from) {
@@ -3598,15 +2169,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Holding OK: All Apps puts the app on the shelf or takes it off; on the shelf, the app is lifted to move
 
     private void hold() {
-        if (popOpen) return;
-        if (!sheetOpen && zone == Z_BROWSE) {       // the trailer of the focused title
+        if (popover.isOpen()) return;
+        if (!sheet.isOpen() && zone == Z_BROWSE) {       // the trailer of the focused title
             handler.removeCallbacks(holdStart);
             holdArmed = false;
             okHeld = true;
-            trailerKey();        // held OK: starts the trailer, or pauses and resumes the one playing
+            catalogPage.hold();
             return;
         }
-        if (sheetOpen) toggleShelf();
+        if (sheet.isOpen()) toggleShelf();
         else if (zone == Z_CATALOG) openTileMenu();     // a poster's menu: Remove or Hide
         else startReorder();
     }
@@ -3619,8 +2190,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private boolean canToggleShelf(int i) {
-        if (!sheetOpen || i >= others.size()) return false;
-        HomeApps.Item it = others.get(i);
+        if (!sheet.isOpen() || i >= sheet.apps().size()) return false;
+        HomeApps.Item it = sheet.apps().get(i);
         return it.kind == HomeApps.APP && it.pkg != null;
     }
 
@@ -3628,10 +2199,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void toggleShelf() {
         handler.removeCallbacks(holdStart);
         holdArmed = false;
-        if (!canToggleShelf(gridIndex)) return;
+        if (!canToggleShelf(sheet.index())) return;
         okHeld = true;
         toggledAt = SystemClock.uptimeMillis();
-        final HomeApps.Item it = others.get(gridIndex);
+        final HomeApps.Item it = sheet.apps().get(sheet.index());
         final Context c = getContext().getApplicationContext();
         click.open();
         LOADER.execute(() -> {
@@ -3670,7 +2241,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Moving apps on the shelf
 
     private boolean canReorder() {
-        if (sheetOpen || zone != Z_SHELF || shelfIndex >= shelf.size() || shelf.size() < 2) return false;
+        if (sheet.isOpen() || zone != Z_SHELF || shelfIndex >= shelf.size() || shelf.size() < 2) return false;
         HomeApps.Item it = shelf.get(shelfIndex);
         return it.kind == HomeApps.APP && it.pkg != null;
     }
@@ -3853,28 +2424,27 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void a11yItems(List<Integer> out) {
-        if (popOpen) {
-            for (int i = 0; i < popItems.size(); i++) out.add(a11yId(POPUP, i));
+        if (popover.isOpen()) {
+            for (int i = 0; i < popover.items().size(); i++) out.add(a11yId(POPUP, i));
             return;
         }
-        if (sheetOpen) {
-            for (int i = 0; i < others.size(); i++) out.add(a11yId(GRID, i));
+        if (sheet.isOpen()) {
+            for (int i = 0; i < sheet.apps().size(); i++) out.add(a11yId(GRID, i));
             return;
         }
         for (int i = picksOn() ? 0 : 3; i < 3 + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
         for (int i = 0; i < Math.min(3, cards.size()); i++) out.add(a11yId(Z_CARDS, i));
         for (int i = 0; i < shelf.size(); i++) out.add(a11yId(Z_SHELF, i));
-        for (int i = 0; i < drawerItems.size(); i++) out.add(a11yId(Z_DRAWER, i));
-        if (drawerOpen && Prefs.quotes() && HomeData.active().length > 0) out.add(a11yId(WIDGETS, 1));
+        if (pager.current() == widgetsSlot && quotesOn()) out.add(a11yId(WIDGETS, 1));
     }
 
     private String a11yText(int id) {
         int group = (id - 1) / 1000, i = (id - 1) % 1000;
         switch (group) {
-            case POPUP: return label(popItems, i);
+            case POPUP: return label(popover.items(), i);
             case GRID:
-                if (i >= others.size()) return "";
-                return label(others, i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", others.size());
+                if (i >= sheet.apps().size()) return "";
+                return label(sheet.apps(), i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", sheet.apps().size());
             case Z_TOP:
                 if (i >= 3) return label(lightButtons, i - 3);
                 return Ui.trf("{name}, tab {i} of {n}", "name", tabs()[i], "i", i + 1, "n", 3);
@@ -3885,7 +2455,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                             "app", label(shelf, i), "n", i + 1, "total", shelf.size());
                 }
                 return label(shelf, i);
-            case Z_DRAWER: return label(drawerItems, i);
             case WIDGETS: return quotesText();
             default: return "";
         }
@@ -3900,16 +2469,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float dy;
         switch (group) {
             case POPUP:
-                if (!popOpen || i >= popItems.size()) return false;
-                popRowRect(i, a11yRect);
+                if (!popover.isOpen() || i >= popover.items().size()) return false;
+                popover.rowRect(i, a11yRect);
                 dy = 0;
                 break;
             case GRID: {
-                if (!sheetOpen || i >= others.size()) return false;
-                float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
-                float x = ((1920 - gridWidth) / 2 + (i % COLUMNS) * (GRID_W + GRID_GAP)) * k;
-                float y = (GRID_TOP + (i / COLUMNS - scroll.target) * GRID_ROW) * k;
-                a11yRect.set(x, y, x + GRID_W * k, y + GRID_H * k);
+                if (!sheet.isOpen() || i >= sheet.apps().size()) return false;
+                sheet.tileRect(i, a11yRect);
                 dy = 0;
                 break;
             }
@@ -3928,14 +2494,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 a11yRect.set(tileRects[i]);
                 dy = tiles.getTranslationY();
                 break;
-            case Z_DRAWER:
-                if (i >= drawerRects.length) return false;
-                a11yRect.set(drawerRects[i]);
-                dy = drawerOpen ? 0 : h;
-                break;
             case WIDGETS:
-                if (!drawerOpen) return false;
-                a11yRect.set(quotesCard);
+                if (pager.current() != widgetsSlot) return false;
+                a11yRect.set(widgetsPage.quotesRect());
                 dy = 0;
                 break;
             default:
@@ -3950,23 +2511,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private int a11yFocused() {
-        if (popOpen) return popItems.isEmpty() ? -1 : a11yId(POPUP, popIndex);
-        if (sheetOpen) return others.isEmpty() ? -1 : a11yId(GRID, gridIndex);
+        if (popover.isOpen()) return popover.items().isEmpty() ? -1 : a11yId(POPUP, popover.index());
+        if (sheet.isOpen()) return sheet.apps().isEmpty() ? -1 : a11yId(GRID, sheet.index());
         switch (zone) {
             case Z_TOP: return a11yId(Z_TOP, topIndex);
             case Z_CARDS: return cardAt(cardIndex) != null ? a11yId(Z_CARDS, cardIndex) : -1;
             case Z_SHELF: return shelf.isEmpty() ? -1 : a11yId(Z_SHELF, shelfIndex);
-            case Z_DRAWER: return drawerItems.isEmpty() ? -1 : a11yId(Z_DRAWER, drawerIndex);
             case WIDGETS: return a11yId(WIDGETS, widgetIndex);
             default: return -1;
         }
     }
 
-    /** The drawer's widgets that are on (0 weather, 1 quotes), with the drawer open. */
+    /** Page 2's widgets that are on (0 weather, 1 quotes), while it shows. */
     private List<Integer> widgets() {
         List<Integer> out = new ArrayList<>();
-        if (!drawerOpen) return out;
-        if (Prefs.quotes() && HomeData.active().length > 0) out.add(1);
+        if (pager.current() != widgetsSlot) return out;
+        if (quotesOn()) out.add(1);
         return out;
     }
 
@@ -3982,46 +2542,36 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         wake();
         int group = (id - 1) / 1000, i = (id - 1) % 1000;
         if (group == GRID) {
-            if (!sheetOpen || i >= others.size()) return;
-            gridIndex = i;
-            retargetGrid(false);
-            gridDirty = true;
+            if (!sheet.focus(i)) return;
+            spoken.focusMoved();
             click.move();
             return;
         }
         if (group == POPUP) {
-            if (!popOpen || i >= popItems.size()) return;
-            popIndex = i;
-            aim(popFocus, popIndex, false);
-            popDirty = true;
+            if (!popover.focus(i)) return;
             click.move();
             return;
         }
-        if (sheetOpen || reordering) return;
+        if (sheet.isOpen() || reordering) return;
         switch (group) {
-            case Z_DRAWER:
-                if (i >= drawerItems.size()) return;
-                if (!drawerOpen) openDrawer();
-                drawerIndex = i;
-                break;
             case WIDGETS:
                 if (!widgets().contains(i)) return;
                 widgetIndex = i;
                 break;
             case Z_TOP:
                 if (i >= 3 + lightButtons.size() || (i < 3 && !picksOn())) return;
-                if (drawerOpen) closeDrawer();
+                if (pager.current() != topSlot) goTo(topSlot, false);
                 topIndex = i;
                 if (i < 3) selectTab(i);
                 break;
             case Z_CARDS:
                 if (i >= Math.min(3, cards.size())) return;
-                if (drawerOpen) closeDrawer();
+                if (pager.current() != topSlot) goTo(topSlot, false);
                 cardIndex = i;
                 break;
             case Z_SHELF:
                 if (i >= shelf.size()) return;
-                if (drawerOpen) closeDrawer();
+                if (pager.current() != topSlot) goTo(topSlot, false);
                 shelfIndex = i;
                 break;
             default:
@@ -4065,7 +2615,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (lTab == null) return;
         // Text tabs; the focus pill extends 26 px past the text (the first tab's text starts at the margin).
         Look.Metrics m = look.m;
-        float pad = m.tabPad * k, tabTop = m.tabTop * k, tabBottom = (m.tabTop + m.tabH) * k;
+        // The tabs' and cards' tops are their nodes' (placeTop); before the first layout, the look's own.
+        boolean placed = tabsNode != null && tabsNode.visible();
+        float pad = m.tabPad * k, tabTop = placed ? tabsNode.frame.top : m.tabTop * k, tabBottom = tabTop + m.tabH * k;
         float icon = m.tabIcon > 0 ? (m.tabIcon + 14) * k : 0;
         float x = MARGIN * k - pad;
         for (int i = 0; i < 3; i++) {
@@ -4078,7 +2630,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             topRects[3 + i].set(right - b, cy - b / 2, right, cy + b / 2);
             right -= b + m.buttonGap * k;
         }
-        float top = m.cardsTop * k, ch = m.cardH * k, g = m.cardGap * k, left = MARGIN * k, tall = m.tallW * k;
+        float top = placed ? cardsNode.frame.top : m.cardsTop * k, ch = m.cardH * k, g = m.cardGap * k, left = MARGIN * k, tall = m.tallW * k;
         float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g;
         cardRects[0].set(left, top, left + wide, top + ch);
         cardRects[1].set(cardRects[0].right + g, top, cardRects[0].right + g + tall, top + ch);
@@ -4302,14 +2854,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // little behind its card while the row moves.
             Bitmap lo = b.tall != null ? b.tall : b.wide, hi = b.wide != null ? b.wide : b.tall;
             float shift = -left * 0.12f;
-            bitmapPaint.setAlpha(Math.round(255 * alpha));
-            roundImage(c, lo, cell, r, shift);
+            painter.imageAlpha(Math.round(255 * alpha));
+            painter.roundImage(c, lo, cell, r, shift);
             if (hi != lo && wide > 0.01f) {
-                bitmapPaint.setAlpha(Math.round(255 * wide * alpha));
-                roundImage(c, hi, cell, r, shift);
+                painter.imageAlpha(Math.round(255 * wide * alpha));
+                painter.roundImage(c, hi, cell, r, shift);
             }
-            bitmapPaint.setAlpha(255);
-            drawBadge(c, cell, pickService(p));
+            painter.imageAlpha(255);
+            painter.drawBadge(c, cell, pickService(p));
         } else {
             fill.setShader(null);
             fill.setColor(Ui.alpha(look.color(Look.PLACEHOLDER, dark()), alpha));
@@ -4387,8 +2939,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
-        // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
-        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
+        // Another page showing: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
+        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * pager.away(), blend(0xFFFFFFFF, 0xFF000000, night));
         if (bgTo == null || (fading && bgFrom == null)) {
             if (lightGradient == null) lightGradient = Ui.gradient(h, 0xFFF5F5F7, 0xFFE2E2E7);
             if (nightGradient == null) nightGradient = Ui.gradient(h, 0xFF1C1C1E, 0xFF0B0B0D);
@@ -4415,10 +2967,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /**
      * The home screen's own background, over the look's: the first pick's picture, softly blurred and toned by the
-     * look's scrim. It fades away as the catalogs come in, so they (and every other screen) keep the look's background.
+     * look's scrim. It fades away as another page comes in, so the others (and every other screen) keep the look's background.
      */
     private void drawHomeBackdrop(Canvas c) {
-        float amount = 1 - Ui.clamp(catIn.value * 1.4f);
+        float amount = 1 - Ui.clamp(pager.pos.value * 1.4f);
         if (amount < 0.01f || (bgTo == null && bgFrom == null)) return;
         long up = SystemClock.uptimeMillis();
         boolean fading = bgFadeAt != 0;
@@ -4463,9 +3015,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             x += v * cardRects[i].centerX();
             y += v * cardRects[i].centerY();
         }
-        if (zone == Z_CATALOG && catRowIndex < catRows.size() && catRowIndex < catCol.length) {
-            float v = Ui.clamp(catFocus.value);
-            posterRect(catRowIndex, catCol[catRowIndex], focusRect);
+        if (zone == Z_CATALOG && watchingPage.focusedRect(focusRect)) {
+            float v = watchingPage.focusAmount();
             weight += v;
             x += v * focusRect.centerX();
             y += v * focusRect.centerY();
@@ -4602,15 +3153,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // block grows upward); only a title too long for two lines is cut with an ellipsis.
             float lineH = 72 * k;
             for (int i = 0; i < wrapLineCount; i++)
-                c.drawText(wrapLines[i], MARGIN * k, SPOTLIGHT_TITLE_Y * k - (wrapLineCount - 1 - i) * lineH, lSpotlightTitle);
+                c.drawText(wrapLines[i], MARGIN * k, spotlightRowTop - SPOTLIGHT_TITLE_ABOVE * k - (wrapLineCount - 1 - i) * lineH, lSpotlightTitle);
             if (focused.meta != null && !focused.meta.isEmpty()) {
                 fitPaint.set(lSpotlightMeta);
                 String meta = TextUtils.ellipsize(focused.meta, fitPaint, titleW, TextUtils.TruncateAt.END).toString();
-                c.drawText(meta, MARGIN * k, (SPOTLIGHT_TITLE_Y + SPOTLIGHT_META_GAP) * k, lSpotlightMeta);
+                c.drawText(meta, MARGIN * k, spotlightRowTop + (SPOTLIGHT_META_GAP - SPOTLIGHT_TITLE_ABOVE) * k, lSpotlightMeta);
             }
         }
-        c.drawText(Ui.tr("Top picks for you"), MARGIN * k, SPOTLIGHT_HEADING_Y * k, lSpotlightHeading);
-        float x0 = MARGIN * k, top = SPOTLIGHT_ROW_TOP * k, pw = SPOTLIGHT_POSTER_W * k, ph = SPOTLIGHT_POSTER_H * k,
+        c.drawText(Ui.tr("Top picks for you"), MARGIN * k, spotlightRowTop - SPOTLIGHT_HEADING_ABOVE * k, lSpotlightHeading);
+        float x0 = MARGIN * k, top = spotlightRowTop, pw = SPOTLIGHT_POSTER_W * k, ph = SPOTLIGHT_POSTER_H * k,
                 gap = SPOTLIGHT_POSTER_GAP * k, r = TILE_RADIUS * k;
         // Circular: one column peeks in at the *start* too, not just the end (the row never runs out in either
         // direction), so the window is one wider on the left than Cards-era code needed.
@@ -4631,7 +3182,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // caption to draw over it (unlike the Cards-mode cards, which caption a textless backdrop).
             Bitmap img = recs.poster(p, Math.round(pw));
             if (img != null) {
-                roundImage(c, img, cell, rr);
+                painter.roundImage(c, img, cell, rr);
             } else {
                 fill.setShader(null);
                 fill.setColor(look.color(Look.PLACEHOLDER, dark()));
@@ -4737,12 +3288,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (img != null) {
             int alpha = Math.round(255 * shown);
-            bitmapPaint.setAlpha(alpha);
-            imageFill.setAlpha(alpha);
-            roundImage(c, img, cell, r);
-            bitmapPaint.setAlpha(255);
-            imageFill.setAlpha(255);
-            if (shown >= 1) drawBadge(c, cell, pickService(p));
+            painter.roundImageAlpha(c, img, cell, r, alpha);
+            if (shown >= 1) painter.drawBadge(c, cell, pickService(p));
         }
         if (!look.focusRing(c, cell, r, f, dark(), 1) && f > 0.01f) {
             if (lightSheens.length != cardRects.length) {
@@ -4799,7 +3346,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             shadows.draw(c, tmp, rad, SHADOW_BLUR * k, shadow);
             look.roundButton(c, cell, rad, f, dark());
             Symbols.draw(getContext(), c, it.symbol, cell.centerX(), cell.centerY(), 27 * k * s, look.roundButtonInk(f, dark()));
-            if (f > 0.01f && !popOpen) {
+            if (f > 0.01f && !popover.isOpen()) {
                 String label = it.label;
                 float half = lTip.measureText(label) / 2;
                 float x = Math.min(r.centerX(), CONTENT_R * k - half);
@@ -4817,14 +3364,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean moveLight(int dx, int dy) {
         switch (zone) {
             case Z_SHELF:
-                // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.
-                if (dy >= 0) return false;      // down/sideways: move()'s own Z_SHELF case (left-right, openDrawer()) handles it
+                // Up from an empty shelf too: the tabs or the buttons above.
+                if (dy >= 0) return false;      // down/sideways: move()'s own Z_SHELF case (left-right, the next page) handles it
                 if (cards.isEmpty()) {
                     if ((!picksOn() || Prefs.spotlightOn()) && lightButtons.isEmpty()) return true;   // no tabs and no buttons above
                     zone = Z_TOP;
                     topIndex = picksOn() && !Prefs.spotlightOn() ? tab : 3;
-                } else if (Prefs.spotlightOn()) {
-                    closeSpotlightPage();
                 } else {
                     zone = Z_CARDS;
                     cardIndex = 0;
@@ -4841,11 +3386,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     // from the poster row goes straight to the corner buttons (if any; else moveLight(Z_TOP) with no
                     // buttons and dy<0 already returns true below, keeping focus put).
                     topIndex = Prefs.spotlightOn() ? 3 : tab;
-                } else if (Prefs.spotlightOn()) {
-                    openSpotlightPage();
                 } else {
                     zone = Z_SHELF;
-                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
+                    RectF from = Prefs.spotlightOn() ? spotlightFocusedRect : cardRects[cardIndex];
+                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, from.centerX());
                 }
                 break;
             case Z_TOP:
@@ -4895,7 +3439,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return t * t * (3 - 2 * t);
     }
 
-    private static int blend(int a, int b, float f) {
+    static int blend(int a, int b, float f) {
         int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
         int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
         return (Math.round(aa + (ba - aa) * f) << 24) | (Math.round(ar + (br - ar) * f) << 16)
