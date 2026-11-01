@@ -246,6 +246,18 @@ final class HomeMode {
         return out;
     }
 
+    /** All Apps' Disable: Sky Home Launcher mode is on, and the app is one that may be turned off. */
+    static boolean canDisable(Context c, String pkg) {
+        JSONObject s = state(c);
+        return FREE.equals(s.optString("mode")) && !s.optBoolean("homeReverted") && !pkg.equals(PKG) && mayTurnOff(pkg);
+    }
+
+    /** Turns the app off like Apps turned off does: an app the lists already manage stops being kept on, any other is picked. */
+    static void disableApp(Context c, String pkg) {
+        if (Arrays.asList(DEBLOAT).contains(pkg) || stringList(state(c), "turnOff").contains(pkg)) setKeepOn(c, pkg, false);
+        else addTurnOff(c, pkg);
+    }
+
     static boolean keepsOn(Context c, String pkg) {
         return stringList(state(c), "keepOn").contains(pkg);
     }

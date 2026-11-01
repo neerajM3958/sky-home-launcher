@@ -48,7 +48,7 @@ final class Recs {
     static final class Pick {
         int id;
         String kind;            // "movie" or "tv"
-        String title, backdrop, poster, meta = "", app, pkg;
+        String title, backdrop, poster, meta = "", full = "", app, pkg;      // meta: the short line (cards); full: year, length, rating, genres, service (Spotlight)
         boolean detailed;
         String servicePkg;      // routed picks: the app it opens in, for the card's icon (null not known yet, "" none; UI thread)
         boolean serviceAsked;
@@ -62,7 +62,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 24 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 14;
+    private static final int CACHE_VERSION = 16;
     /** Spotlight's poster row pool (HomeView.updateCards) — bigger than pick_count's default, so the poster cache below
      * holds the whole circular pool: with a smaller one, the row's own working set (every pick the circular scroll
      * revisits) would keep evicting itself, visible as the posters blinking. The full-screen photos are only kept for
@@ -709,6 +709,7 @@ final class Recs {
                 q.title = o.title;
                 q.backdrop = o.backdrop;
                 q.meta = o.meta;
+                q.full = o.full;
                 q.app = o.app;
                 q.pkg = o.pkg;
                 q.detailed = true;
@@ -930,6 +931,16 @@ final class Recs {
             double rating = o.optDouble("vote_average", 0);
             if (rating > 0 && o.optInt("vote_count") >= 10) parts.add(String.format(Ui.locale(), "★ %.1f", rating));
             p.meta = String.join(" · ", parts);
+            // The same answer carries the year and more genres: Spotlight has room for them.
+            List<String> full = new ArrayList<>();
+            String date = o.optString(kind.equals("movie") ? "release_date" : "first_air_date");
+            if (date.length() >= 4) full.add(date.substring(0, 4));
+            if (rating > 0 && o.optInt("vote_count") >= 10) full.add(String.format(Ui.locale(), "★ %.1f", rating));
+            for (int g = 0; ids != null && g < ids.length() && g < 3; g++) {
+                String name = genreNames.get(kind + ids.optInt(g));
+                if (name != null) full.add(genre(name));
+            }
+            p.full = String.join(" · ", full);
         }
         return out;
     }
@@ -996,6 +1007,40 @@ final class Recs {
         if (best != null) p.backdrop = best;
         p.detailed = true;
         Launcher.get(context).remember(p.kind, p.id, o);
+        completeFull(p, o);
+    }
+
+    /**
+     * Spotlight's line from the list (year, rating, genres) gets what only the details have, from this same answer: the
+     * length (or seasons) after the year and, at the end, the service among the apps the TV has. Genres stay the list's
+     * (this answer has no language).
+     */
+    private void completeFull(Pick p, JSONObject o) {
+        List<String> parts = new ArrayList<>(Arrays.asList(p.full.isEmpty() ? new String[0] : p.full.split(" · ")));
+        int at = !parts.isEmpty() && parts.get(0).matches("\\d{4}") ? 1 : 0;
+        String length = null;
+        if (p.kind.equals("movie")) {
+            int minutes = o.optInt("runtime");
+            if (minutes > 0) length = minutes >= 60 ? Ui.trf("{h}h {m}m", "h", minutes / 60, "m", minutes % 60) : Ui.trf("{m}m", "m", minutes);
+        } else {
+            int seasons = o.optInt("number_of_seasons");
+            if (seasons > 0) length = Ui.plural("plural|one:{n} season|other:{n} seasons", seasons);
+        }
+        if (length != null && !parts.contains(length)) parts.add(at, length);
+        JSONObject wp = o.optJSONObject("watch/providers");
+        JSONObject br = wp == null || wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(region());
+        JSONArray flat = br == null ? null : br.optJSONArray("flatrate");
+        for (int i = 0; flat != null && i < flat.length(); i++) {
+            JSONObject f = flat.optJSONObject(i);
+            String[] row = f == null ? null : service(f.optString("provider_name"), f.optInt("provider_id"));
+            if (row != null && installed(row[2])) {
+                String name = SERVICE_NAME.get(row[1]);
+                String shown = name != null ? name : row[1];
+                if (!parts.contains(shown)) parts.add(shown);
+                break;
+            }
+        }
+        p.full = String.join(" · ", parts);
     }
 
     /** Genre, runtime (or seasons) and the service it's on, among the ones the TV has. */
@@ -1038,6 +1083,21 @@ final class Recs {
         }
         if (p.app != null) parts.add(serviceName(p));
         p.meta = String.join(" · ", parts);
+        // Spotlight's line from the same answer: year, length or seasons, rating, up to three genres, the service.
+        List<String> full = new ArrayList<>();
+        String date = o.optString(p.kind.equals("movie") ? "release_date" : "first_air_date");
+        if (date.length() >= 4) full.add(date.substring(0, 4));
+        if (p.kind.equals("movie")) {
+            int minutes = o.optInt("runtime");
+            if (minutes > 0) full.add(minutes >= 60 ? Ui.trf("{h}h {m}m", "h", minutes / 60, "m", minutes % 60) : Ui.trf("{m}m", "m", minutes));
+        } else {
+            int seasons = o.optInt("number_of_seasons");
+            if (seasons > 0) full.add(Ui.plural("plural|one:{n} season|other:{n} seasons", seasons));
+        }
+        if (rating > 0 && o.optInt("vote_count") >= 10) full.add(String.format(Ui.locale(), "★ %.1f", rating));
+        for (int g = 0; genres != null && g < genres.length() && g < 3; g++) full.add(genre(genres.getJSONObject(g).optString("name")));
+        if (p.app != null) full.add(serviceName(p));
+        p.full = String.join(" · ", full);
         p.detailed = true;
         Launcher.get(context).remember(p.kind, p.id, o);
     }
@@ -1423,7 +1483,7 @@ final class Recs {
         for (Pick p : list) {
             a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop)
                     .put("poster", p.poster == null ? "" : p.poster)
-                    .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
+                    .put("meta", p.meta).put("full", p.full).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
                     .put("detailed", p.detailed));
         }
         return a;
@@ -1441,6 +1501,7 @@ final class Recs {
             p.backdrop = o.optString("backdrop");
             p.poster = o.optString("poster").isEmpty() ? null : o.optString("poster");
             p.meta = o.optString("meta");
+            p.full = o.optString("full");
             p.app = o.optString("app").isEmpty() ? null : o.optString("app");
             p.pkg = o.optString("pkg").isEmpty() ? null : o.optString("pkg");
             p.detailed = o.optBoolean("detailed");

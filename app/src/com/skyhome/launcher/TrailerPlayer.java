@@ -148,6 +148,10 @@ final class TrailerPlayer {
         main.postDelayed(giveUp, START_MS);
     }
 
+    boolean paused() {
+        return paused;
+    }
+
     /** OK or the remote's Play/Pause: pause, or play again. */
     void togglePause() {
         if (web == null || !open || !playing) return;
@@ -194,6 +198,8 @@ final class TrailerPlayer {
                         }
                         listener.onPlaying();
                     }
+                } else if (s == 2 && playing) {     // paused (by the remote, or the page's own button)
+                    paused = true;
                 } else if (s == 0) {           // ended
                     listener.onEnded();
                 }

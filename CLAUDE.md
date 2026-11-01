@@ -233,6 +233,8 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   (`api.strem.io/downloads/config`, entry `android_tv`), builds the link from the tag, version and the TV's processor (never a
   fixed address), downloads it, checks the file is `com.stremio.one` and hands it to Android's `PackageInstaller`, which asks the
   person to confirm. Its receiver runs in `:home` (the statics are shared with the settings screen).
+- Holding OK on an app in All Apps opens a menu beside it (`HomeView.openAppMenu`): *Add to / Remove from home screen* (the shelf), *Disable* (the same as Apps turned off: `HomeMode.disableApp`, only in Sky Home Launcher mode and for apps `mayTurnOff` allows) and, for apps the person installed (never system apps or this launcher), *Uninstall* (Android's own confirm screen; needs `REQUEST_DELETE_PACKAGES`).
+- Holding OK on a poster of the catalog page (4) always opens a menu beside it (`HomeView.openCatalogMenu`), even with one row: *Play trailer* (*Pause trailer* / *Resume trailer* while one plays), *Open in YouTube* (the YouTube TV app, else SmartTube, else another client or a browser) and, when Trakt allows writes (`Catalogs.canWatchlist`), *Add to Watchlist* / *Remove from Watchlist* (`Trakt.addToWatchlist` by TMDB id; removal finds the watchlist's own tile, `Trakt.onWatchlist`).
 - Trailers on the catalog screen play in YouTube's embedded player (`TrailerPlayer`), in a window of its own over the video area
   (this TV decodes video onto a plane under the app's window); the YouTube app opens one only after a long OK press, never on
   autoplay.

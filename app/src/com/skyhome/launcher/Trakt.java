@@ -277,8 +277,83 @@ final class Trakt {
     boolean canWrite() { return connected() && !sp.getBoolean("writeDenied", false); }
 
     void removeFromWatchlist(Catalogs.Item it, java.util.function.IntConsumer done) {
-        JSONArray one = new JSONArray().put(obj("ids", obj("trakt", it.traktId)));
+        JSONArray one = new JSONArray().put(obj("ids", it.traktId > 0 ? obj("trakt", it.traktId) : obj("tmdb", it.id)));
         write(WATCHLIST, it, "POST", "/sync/watchlist/remove", obj("tv".equals(it.kind) ? "shows" : "movies", one), done);
+    }
+
+    /** Puts a catalog title (known by its TMDB id only) on the watchlist, then fetches the lists again to show it there. */
+    void addToWatchlist(Catalogs.Item it, java.util.function.IntConsumer done) {
+        final JSONObject body = obj("tv".equals(it.kind) ? "shows" : "movies", new JSONArray().put(obj("ids", obj("tmdb", it.id))));
+        net.execute(() -> {
+            int result;
+            try {
+                int code = send("POST", "/sync/watchlist", body);
+                result = code / 100 == 2 ? DONE : code == 401 || code == 403 ? DENIED : FAILED;
+                if (result == DENIED) AppLog.w("trakt: " + code + " for /sync/watchlist, this sign-in can't change lists");
+            } catch (Exception e) {
+                AppLog.w("trakt: " + e.getMessage());
+                result = FAILED;
+            }
+            final int answer = result;
+            if (answer == DENIED) sp.edit().putBoolean("writeDenied", true).apply();
+            main.post(() -> {
+                if (answer == DONE) {
+                    showOnWatchlist(it);
+                    // Trakt's activity stamp can lag behind the write: ask for the list whatever the stamp says.
+                    sp.edit().remove("stampList").apply();
+                    checked = 0;
+                    main.postDelayed(this::refreshIfStale, 1500);
+                }
+                done.accept(answer);
+            });
+        });
+    }
+
+    /** The title appears on the Watchlist row at once; the fetch that follows brings Trakt's own tile in its place. */
+    private void showOnWatchlist(Catalogs.Item it) {
+        Catalogs.Item tile = new Catalogs.Item();
+        tile.id = it.id;
+        tile.kind = it.kind;
+        tile.title = it.title;
+        tile.poster = it.poster;
+        tile.posterUrl = it.posterUrl;
+        tile.rating = it.rating;
+        tile.stars = it.stars;
+        tile.imdb = it.imdb;
+        tile.episodes = "tv".equals(it.kind);
+        List<Row> next = new ArrayList<>();
+        boolean found = false;
+        for (Row row : rows) {
+            if (!WATCHLIST.equals(row.key)) {
+                next.add(row);
+                continue;
+            }
+            found = true;
+            Row copy = new Row();
+            copy.key = row.key;
+            copy.title = row.title;
+            copy.items.add(tile);
+            copy.items.addAll(row.items);
+            next.add(copy);
+        }
+        if (!found) {
+            Row row = new Row();
+            row.key = WATCHLIST;
+            row.title = Ui.tr("Watchlist");
+            row.items.add(tile);
+            next.add(row);
+        }
+        rows = next;
+        changed();
+    }
+
+    /** The watchlist's own tile for a catalog title, or null when it isn't on the list. */
+    Catalogs.Item onWatchlist(Catalogs.Item it) {
+        for (Row row : rows) {
+            if (!WATCHLIST.equals(row.key)) continue;
+            for (Catalogs.Item x : row.items) if (x.id == it.id && x.kind.equals(it.kind)) return x;
+        }
+        return null;
     }
 
     void removePlayback(Catalogs.Item it, java.util.function.IntConsumer done) {

@@ -297,6 +297,22 @@ final class Catalogs {
         Trakt.get(context).markWatched(rowKey, it, done);
     }
 
+    /** Whether a catalog title can go on or off the watchlist: connected to Trakt, a write not refused, and a TMDB id. */
+    boolean canWatchlist(Item it) {
+        return it.id > 0 && Trakt.get(context).canWrite();
+    }
+
+    boolean onWatchlist(Item it) {
+        return Trakt.get(context).onWatchlist(it) != null;
+    }
+
+    /** Adds the title to the watchlist, or takes it off if it is there. `done` (main thread) gets Trakt.DONE, DENIED or FAILED. */
+    void toggleWatchlist(Item it, java.util.function.IntConsumer done) {
+        Item listed = Trakt.get(context).onWatchlist(it);
+        if (listed != null) Trakt.get(context).removeFromWatchlist(listed, done);
+        else Trakt.get(context).addToWatchlist(it, done);
+    }
+
     private void hide(String rowKey, Item it) {
         // Not before the tile's own last activity (Trakt's clock, not the TV's): only newer activity brings it back.
         Prefs.hideTile(hideKey(rowKey, it), Math.max(System.currentTimeMillis(), it.at));
