@@ -12,7 +12,7 @@ Android-only. Open source. Built with Claude Code. One button to undo.
 
 [Install](#install) · [Features](#what-you-get) · [Flows](#flows) · [Integrations](#integrations) · [Make it yours](#make-it-yours)
 
-<img src="screenshots/material-dark-home.jpg" width="880" alt="The Sky Home Launcher home screen: a glass shelf of apps, trending picks, and the weather at a glance">
+<img src="screenshots/material-dark-home.jpg" width="880" alt="The Sky Home Launcher home screen: a shelf of apps, trending picks, and the weather at a glance">
 
 </div>
 
