@@ -113,6 +113,19 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   by a try/catch), `BitmapShader.setFilterMode` (guarded), `Recording.Node` and `Ui.Weighted` (the Android 9 font weight) should come up.
 - The home screen is drawn by hand on one Canvas (`HomeView`); the glass and the sky are AGSL shaders (`Shaders`,
   Android 13+, with a fallback for 8 to 12). Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
+- It is four pages one under another (`HomePager`, one spring; a page change only moves layers): 1 weather, top buttons,
+  picks and shelf (still in `HomeView`), 2 `HomeWidgetsPage` (quotes), 3 `HomeWatchingPage` (Trakt and Watch Next rows),
+  4 `HomeCatalogPage` (TMDB's catalogs, trailer). A page with nothing to show is left out (`HomePage.isEmpty`); ↓ past a
+  page's last row goes to the next one, Back to page 1's shelf. Over them: `HomeSheet` (All Apps), `HomePopover`,
+  `HomeToasts`; `HomePainter` draws pictures, cards, posters and shadows for all of them.
+- Layout is nodes, never positions computed by hand: a page's `build()` returns a tree of `Node`s and `Stack`s (rows and
+  columns: fixed sizes kept, flex ones share the rest, `Node.when` hides one a style lacks) in its own space, in
+  `HomeGrid`'s 1920×1080 units times k; page 1's column is `HomeView.placeTop`. Moving one node moves its neighbours, so
+  they can't overlap. After each layout `LayoutCheck` logs (`adb logcat -s SkyHomeLauncher`, "layout …") any two
+  siblings that overlap or a node outside the safe area that isn't `bleed`: none should show. To see the boxes on the
+  TV: `adb shell setprop debug.skyhome.bounds 1`, reinstall (a restart of `:home`), and `… 0` to turn it off.
+  `plans/plan-home-pages.md` has the design and the performance rules (no layout per frame, a page change moves
+  layers, only a scrolling layer is redrawn).
 - Some TVs draw their UI at 1280×720 on a 1080p panel (TCL's 1 GB models: `ro.surface_flinger.max_graphics_width`
   and `_height`, `ro.config.low_ram`). There every pixel and every MB counts: `Backdrop` builds its images at the UI's
   size (and the picks use TMDB's w1280), and the shelf logos have a copy at the resting size and one at the focused
@@ -162,7 +175,7 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   refreshing it. Same-name search results use a year when the provider title contains one; unresolved ambiguity leaves the
   show out. `EpisodeList.Episode.resume` marks the resume row and matching episode; keep these outside `EpisodeList.all`.
 - Holding OK on a poster of Continue Watching, Shows you watch or Watchlist opens a one-action menu beside it (`HomeView.openTileMenu`,
-  on the input popover): *Remove* where Trakt has a plain take-off (`Trakt.removeFromWatchlist`, `removePlayback`: `DELETE /sync/playback/{id}`,
+  on `HomePopover`): *Remove* where Trakt has a plain take-off (`Trakt.removeFromWatchlist`, `removePlayback`: `DELETE /sync/playback/{id}`,
   `Item.playbackId`), else *Hide*: `Prefs.hiddenTiles` (key from `Catalogs.hideKey`, per row, with the time), filtered last in
   `Catalogs.rebuild()`; a tile returns when its activity (`Item.at`) is newer than the hide. Nothing is written to Trakt's hidden or dropped lists
   or its history. If Trakt refuses a change (401/403), `writeDenied` is kept in the `trakt` prefs until the next sign-in and the menu offers *Hide*.
@@ -203,8 +216,8 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   (this TV decodes video onto a plane under the app's window); the YouTube app opens one only after a long OK press, never on
   autoplay.
 - Inputs are top buttons, not a drawer row: `HomeApps.TOP_AV` and `TOP_HDMI` (kind `INPUT_GROUP`) list the TV's inputs of that kind
-  (`HomeApps.inputGroup`: HDMI ports, or composite/component/S-Video/SCART); one opens at once, several open `HomeView`'s popover
-  (`popLayer`, rows under the buttons, Up/Down/OK/Back). A button is left out on a TV without that input.
+  (`HomeApps.inputGroup`: HDMI ports, or composite/component/S-Video/SCART); one opens at once, several open the popover
+  (`HomePopover`, rows under the buttons, Up/Down/OK/Back). A button is left out on a TV without that input.
 - Settings > Integrations: when the TMDB key, Watchmode key or Trakt Client ID is missing, OK there starts `IntegrationsServer`
   (a small raw-socket HTTP server, no library, up only while the screen is open) and shows its LAN address as text and a QR code
   (`drawQr`, generalized from Trakt's device-login QR). The one page it serves never reads a key back, only whether one is set

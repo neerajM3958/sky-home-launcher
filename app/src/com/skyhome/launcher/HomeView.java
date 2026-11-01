@@ -44,35 +44,32 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 /**
- * The home screen, styled after the Apple TV app with the macOS 27 glass. The picks carousel (Settings > TMDB >
- * "Picks carousel") has three styles, `Prefs.picksStyle()`:
- *  - **Off**: no tabs, no cards, just the weather, the icon buttons and the shelf.
- *  - **Cards** (the look this class was first built around): tabs (Explore, Movies, Shows) under the weather, three
- *    cards with the titles recommended for right now in the selected tab (Recs, from TMDB), the background the first
- *    card's photo heavily blurred and almost white (Backdrop); without one, a light gradient.
- *  - **Spotlight** (stock Google TV's "Top picks for you" style): no tabs, a full-screen sharp photo of the focused
- *    pick from the top of the screen down (`Look.spotlightPhoto`, each look's own corner/scrim treatment), its title
- *    and meta over the dark side, and a poster row that drives it (`drawSpotlight`) — the same `cards` list Cards mode
- *    uses, always from Explore's pool, but scrolled (not re-sorted to the front) via `spotlightRowShift`, the same
- *    pattern the catalog rows' `catShift` already uses. The shelf doesn't live on this screen at all: Down from the
- *    row pages straight to the drawer/catalog screen (below), landing on the shelf as its first row.
- * In every style: at the top right, icon-only glass buttons (Home Settings, Settings, Live TV, AV and HDMI input),
- * with the focused one's name below it, and the small crypto quotes (logo + price) at the right end of that row; at
- * the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one grows).
- * ↓ on the shelf: everything moves up and the bottom drawer appears
- * (inputs, shortcuts, weather for the next hours and quotes with the 24 h change); the background lightens (darkens
- * at night). ↑ or Back closes it. From sunset to sunrise, a night look: dark background, smoked glass and white text.
- * In Spotlight, Down from the poster row goes straight into this drawer/catalog screen in one press (skipping the
- * shelf-at-the-bottom step Cards mode has), with the shelf as the first thing on it instead of living on the hero
- * screen; Up from the shelf (or Back) closes it and returns to the poster row, same as Cards' shelf↔row behavior.
- * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
- * redraws what changed.
+ * The home screen, styled after the Apple TV app with the macOS 27 glass: four pages one under another (HomePager),
+ * ↓ past a page's last row to the next one that has something to show, ↑ back, Back to the first page's shelf.
+ *  1. This class (for now): the weather and the icon-only buttons at the top (Home Settings, Settings, Live TV, AV and
+ *     HDMI input; the focused one's name below it, the small crypto quotes at the row's right end), the picks and the
+ *     shelf, laid out as one column of nodes (`placeTop`). The picks carousel (Settings > TMDB > "Picks carousel") has
+ *     three styles, `Prefs.picksStyle()`:
+ *      - **Off**: no tabs, no cards, just the weather, the buttons and the shelf.
+ *      - **Cards**: tabs (Explore, Movies, Shows) under the weather, three cards with the titles recommended for right
+ *        now in the selected tab (Recs, from TMDB), the background the first card's photo heavily blurred (Backdrop).
+ *      - **Spotlight** (stock Google TV's "Top picks for you"): no tabs, a full-screen sharp photo of the focused pick
+ *        (`Look.spotlightPhoto`), its title and meta, and a poster row that drives it (`drawSpotlight`), resting on the
+ *        shelf; the same `cards` list Cards uses, always from Explore's pool, scrolled (`spotlightRowShift`).
+ *     The shelf: the apps in a glass bar, icons in each brand's color like the tvOS Dock, the focused one grows.
+ *  2. HomeWidgetsPage: the crypto quotes with their 24 h change (hidden when off).
+ *  3. HomeWatchingPage: Continue Watching, Shows you watch, Watchlist (hidden without Trakt or Watch Next items).
+ *  4. HomeCatalogPage: TMDB's catalogs, the focused title's details and trailer above one row.
+ * Over them: All Apps (HomeSheet), the popover (HomePopover: the inputs, a poster's menu) and the toasts (HomeToasts).
+ * Away from the first page the background lightens (darkens at night). From sunset to sunrise, a night look: dark
+ * background, smoked glass and white text. Measurements are in a 1920×1080 space (k = width / 1920; HomeGrid). The
+ * screen is split into layers so the TV's weak GPU only redraws what changed, and a page change only moves them.
  */
 final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Catalogs.Listener, Details.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
-    private static final float MARGIN = 80, CONTENT_R = 1840;
+    private static final float MARGIN = HomeGrid.MARGIN, CONTENT_R = HomeGrid.CONTENT_R;
     // Spotlight's title: at most this wide (a two-line title grows upward).
     private static final float HERO_TITLE_W = 900;
     // Shelf: tiles with corners concentric with the glass (glass radius = tile radius + padding).
