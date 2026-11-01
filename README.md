@@ -51,7 +51,7 @@ episode list, with sort, season, date and watched filters; OK opens an episode i
 
 | Continue Watching, Shows you watch, Watchlist | Episodes, with filters |
 |---|---|
-| ![](screenshots/material-dark-page-row-02.jpg) | ![](screenshots/material-dark-episodes.jpg) |
+| ![](screenshots/material-dark-page-row-01.jpg) | ![](screenshots/material-dark-episodes.jpg) |
 
 **The screensaver.** Full-screen photos of your picks, with a big glass clock, the forecast and sunrise/sunset.
 
