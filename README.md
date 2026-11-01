@@ -89,6 +89,10 @@ button opens it by default, and on any other TV you give it to a button in *Remo
   *Notifications* turns that section on or off.
 - It looks like the rest of Sky Home Launcher: the same moving background and focus, in the look (Liquid Glass or Material)
   and the light or dark mode you picked.
+- **From a computer**, for a test or for screenshots: `adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show`
+  (or `hide`, `toggle`). Only the shell can send it, so no app can open the card behind your back. Keys sent with
+  `adb shell input keyevent` don't pass through the remote-button service, so they can't open it; `tools/shots.sh <folder> <look>
+  <theme> quick` uses the broadcast to take its screenshots.
 
 **Connecting Trakt, installing Stremio, adding Torrentio, setting keys from your phone, recording a remote button.**
 These all happen in Sky Home Launcher's own Settings, each with a short on-screen walkthrough and (for Trakt and the
@@ -291,6 +295,8 @@ It's your code, and Claude Code finds its way around it. Try:
 | [`SettingsActivity.java`](app/src/com/skyhome/launcher/SettingsActivity.java) | The settings screen (the app's icon) |
 | [`Prefs.java`](app/src/com/skyhome/launcher/Prefs.java) | Settings changed on the TV |
 | [`RemoteKeys.java`](app/src/com/skyhome/launcher/RemoteKeys.java) | The remote's app buttons |
+| [`QuickCard.java`](app/src/com/skyhome/launcher/QuickCard.java) | The Quick Settings card (tiles, scrolling, notifications) |
+| [`QuickNotifications.java`](app/src/com/skyhome/launcher/QuickNotifications.java) | The notifications the card lists and clears |
 | [`Watchdog.java`](app/src/com/skyhome/launcher/Watchdog.java) | The safety net |
 
 ## Translations
