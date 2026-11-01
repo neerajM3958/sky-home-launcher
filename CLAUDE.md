@@ -210,6 +210,12 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   the key to the TV. Sony ships its own Apple TV build, `com.apple.atve.sony.appletv`.
   Xiaomi projectors made by Formovie (Fengmi; L1, MediaTek, Google TV 14 tested) send the same `KEYCODE_STEM_1` for
   Netflix (`RemoteKeys.STEM_NETFLIX`); their YouTube button goes to MediaTek's `GlobalKeyReceiver` and stays with the system.
+- Updates (`UpdateCheck`, Settings > Check for Updates): reads `/releases/latest` of this repo on GitHub (the repo must be public; drafts
+  and pre-releases never count), compares with the apk's `versionName` (a tag like `v1.3.0` number by number; a `local-<UTC time>`
+  build against the release's `published_at`), downloads `SkyHomeLauncher.apk`, checks it is this package with the same signing
+  key (a local build with its own keystore can't be replaced by a release: it says so) and hands it to `ApkInstall` (shared with
+  `StremioInstall`). A daily `JobScheduler` job (`UpdateCheck.Job`, scheduled in `App.onCreate`) does the check and, once per
+  version, posts a notice (a toast on the home screen) and a system notification. TCL needs `AUTO_START` allowed for the job to run.
 - Stremio: when it isn't on the TV, Settings > Stremio says *Install* (`StremioInstall`): it reads Stremio's download list
   (`api.strem.io/downloads/config`, entry `android_tv`), builds the link from the tag, version and the TV's processor (never a
   fixed address), downloads it, checks the file is `com.stremio.one` and hands it to Android's `PackageInstaller`, which asks the

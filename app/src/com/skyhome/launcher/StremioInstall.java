@@ -1,7 +1,6 @@
 package com.skyhome.launcher;
 
 import com.skyhome.launcher.api.Http;
-import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -12,10 +11,7 @@ import android.os.Build;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.regex.Pattern;
 
 /**
@@ -134,21 +130,7 @@ final class StremioInstall {
     // MARK: - Android's installer
 
     private static void install(Context c, File apk) throws IOException {
-        PackageInstaller installer = c.getPackageManager().getPackageInstaller();
-        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-        params.setAppPackageName(Routing.STREMIO);
-        int id = installer.createSession(params);
-        try (PackageInstaller.Session session = installer.openSession(id)) {
-            try (InputStream in = new FileInputStream(apk); OutputStream out = session.openWrite("stremio.apk", 0, apk.length())) {
-                byte[] buffer = new byte[64 * 1024];
-                int n;
-                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-                session.fsync(out);
-            }
-            Intent done = new Intent(c, Result.class).setAction(ACTION).setPackage(c.getPackageName());
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
-            session.commit(PendingIntent.getBroadcast(c, id, done, flags).getIntentSender());
-        }
+        ApkInstall.commit(c, apk, Routing.STREMIO, Result.class, ACTION);
     }
 
     /** What Android's installer says: asks the person to confirm, then success or why not. */
@@ -156,15 +138,7 @@ final class StremioInstall {
         @Override public void onReceive(Context context, Intent intent) {
             int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
             if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-                if (confirm != null) {
-                    say(Ui.tr("Confirm on the TV"));
-                    try {
-                        context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                    } catch (RuntimeException e) {
-                        AppLog.w("stremio install: " + e);
-                    }
-                }
+                if (ApkInstall.confirm(context, intent)) say(Ui.tr("Confirm on the TV"));
                 return;
             }
             running = false;

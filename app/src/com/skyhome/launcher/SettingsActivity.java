@@ -125,7 +125,7 @@ public class SettingsActivity extends Activity {
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5, TRAKT = 6, TMDB = 7, STREMIO = 8, LANGUAGES = 9, HIDDEN = 10, APPS_OFF = 11, TORRENTIO = 12, TOR_LANGS = 13, ADDED_KEYS = 14, LEARN = 15, INTEGRATIONS = 16, POWER = 17;
-        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9, SLEEP_ROW = 10, RESTART_ROW = 12;
+        private static final int TRAKT_ROW = 6, TMDB_ROW = 7, STREMIO_ROW = 8, INTEGRATIONS_ROW = 9, SLEEP_ROW = 10, UPDATE_ROW = 12, RESTART_ROW = 13;
         private static final int TMDB_PICKS = 1, TMDB_FROM = 2, TMDB_STREAM = 3, RENT_BUY_ROW = 4, TMDB_LANGS = 5, TMDB_HIDDEN = 6, TMDB_ANIMATION = 7, TMDB_CATALOGS = 8;   // the TMDB screen's rows after Region   // the main menu's rows that open them
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
@@ -195,6 +195,7 @@ public class SettingsActivity extends Activity {
                 hasKey = Recs.hasKey(getContext());
                 stremioOn = Recs.get(getContext()).stremioInstalled();
                 recs = Recs.status(getContext());
+                UpdateCheck.refresh(getContext());
                 boolean nowBusy = !busyText().isEmpty();
                 if (nowBusy) pendingAt = 0;
                 // A switch just ended: TalkBack reads how it went (the newest notice).
@@ -205,7 +206,7 @@ public class SettingsActivity extends Activity {
                 }
                 wasBusy = nowBusy;
                 invalidate();
-                handler.postDelayed(this, busy() || StremioInstall.busy() ? 500 : 2000);
+                handler.postDelayed(this, busy() || StremioInstall.busy() || UpdateCheck.busy() ? 500 : 2000);
             }
         };
 
@@ -270,7 +271,7 @@ public class SettingsActivity extends Activity {
                             Ui.tr("Trakt") + ", " + traktStatus(), Ui.tr("TMDB") + ", " + tmdbStatus(),
                             Ui.tr("Stremio") + ", " + stremioStatus(), Ui.tr("Integrations") + ", " + integrationsStatus(),
                             Ui.tr("Sleep Timer") + ", " + sleepStatus(),
-                            Ui.tr("TV Settings")};
+                            Ui.tr("TV Settings"), Ui.tr("Check for Updates") + ", " + UpdateCheck.status()};
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
                 case POWER: {
@@ -444,7 +445,7 @@ public class SettingsActivity extends Activity {
 
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 13;
+                case MAIN: return 14;
                 case TRAKT: return 1;
                 case INTEGRATIONS: return 1;
                 case POWER: return powerRows().length;
@@ -516,9 +517,9 @@ public class SettingsActivity extends Activity {
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
                     Ui.tr("Remote Buttons"), Ui.tr("Trakt"), Ui.tr("TMDB"), Ui.tr("Stremio"), Ui.tr("Integrations"),
-                    Ui.tr("Sleep Timer"), Ui.tr("TV Settings"), Ui.tr("Restart")};
+                    Ui.tr("Sleep Timer"), Ui.tr("TV Settings"), Ui.tr("Check for Updates"), Ui.tr("Restart")};
             String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", traktStatus(), tmdbStatus(),
-                    stremioStatus(), integrationsStatus(), sleepStatus(), "", ""};
+                    stremioStatus(), integrationsStatus(), sleepStatus(), "", UpdateCheck.status(), ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -536,7 +537,7 @@ public class SettingsActivity extends Activity {
                     float maxWidth = right - (rowRect.left + 30 * k) - rowLabel.measureText(labels[i]) - 20 * k;
                     CharSequence shownOff = TextUtils.ellipsize(values[i], new TextPaint(rowValue), Math.max(0, maxWidth), TextUtils.TruncateAt.END);
                     c.drawText(shownOff, 0, shownOff.length(), right, base, rowValue);
-                } else if (i >= 2 && i != RESTART_ROW) {
+                } else if (i >= 2 && i != RESTART_ROW && i != UPDATE_ROW) {
                     float cw = Symbols.width(getContext(), "chevron_right", 22 * k);
                     Symbols.draw(getContext(), c, "chevron_right", right - cw / 2, rowRect.centerY(), 22 * k, blend(0x66FFFFFF, 0x991C1C1E, f));
                     if (!values[i].isEmpty()) {
@@ -2417,6 +2418,10 @@ public class SettingsActivity extends Activity {
                 pickScroll = 0;
                 screen = POWER;
                 focus = 0;
+            } else if (focus == UPDATE_ROW) {
+                UpdateCheck.start(c);
+                invalidate();
+                return;
             } else if (focus == RESTART_ROW) {
                 askRestart();
                 return;
