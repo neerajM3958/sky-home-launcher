@@ -1,6 +1,7 @@
 package com.skyhome.launcher;
 
 import android.accessibilityservice.AccessibilityService;
+import android.content.Intent;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 
@@ -13,7 +14,22 @@ public class RemoteKeyService extends AccessibilityService {
         return RemoteKeys.onKey(this, event);
     }
 
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) {}
+    /** A window of another app coming to the front closes the Quick Settings card. */
+    @Override public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (QuickCard.isOpen() && event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getPackageName() != null) {
+            QuickCard.closeFor(event.getPackageName().toString());
+        }
+    }
+
+    @Override public boolean onUnbind(Intent intent) {
+        QuickCard.close();
+        return super.onUnbind(intent);
+    }
+
+    @Override public void onDestroy() {
+        QuickCard.close();
+        super.onDestroy();
+    }
 
     @Override public void onInterrupt() {}
 }

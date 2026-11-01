@@ -154,7 +154,7 @@ public class SettingsActivity extends Activity {
         // order) and the selection.
         private final List<String[]> shelfRows = new ArrayList<>();
         private final List<String> shelfOrder = new ArrayList<>();
-        private boolean editingTop, editingRows;     // editingRows: the poster rows (Sky Home Launcher > TMDB)
+        private boolean editingTop, editingRows, editingQuick;     // editingRows: the poster rows (Sky Home Launcher > TMDB); editingQuick: the Quick Settings card's tiles
         private int pickFor, pickCurrent, pickScroll;   // pickFor: the remote button (index + 1)
         private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_REGION = -2;
         private final List<String> regionCodes = new ArrayList<>();      // the region picker: "auto", then the countries
@@ -343,7 +343,10 @@ public class SettingsActivity extends Activity {
                     if (at >= shelfRows.size()) return "";
                     String[] app = shelfRows.get(at);
                     int place = shelfOrder.indexOf(app[0]);
-                    if (editingRows) {
+                    if (editingQuick && app[0].equals("notifications")) {
+                        return app[1] + ", " + onOff(place >= 0);
+                    }
+                    if (editingRows || editingQuick) {
                         return app[1] + ", " + (place >= 0 ? Ui.trf("on, place {n}", "n", place + 1) : Ui.tr("off"));
                     }
                     if (editingTop) {
@@ -791,6 +794,11 @@ public class SettingsActivity extends Activity {
                             if (screen == PICKER && pickFor == PICK_REGION) {
                                 focus = 0;
                                 screen = TMDB;
+                            } else if (screen == SHELF_EDIT && editingQuick) {
+                                screen = HOME_SETTINGS;
+                                int row = quickRow();
+                                pickScroll = Math.max(0, row - (rowCount() - 1));
+                                focus = row - pickScroll;
                             } else if (screen == SHELF_EDIT && editingRows) {
                                 focus = TMDB_CATALOGS;
                                 screen = TMDB;
@@ -1703,6 +1711,7 @@ public class SettingsActivity extends Activity {
             if (dollar()) l.add(Ui.tr("Dollar"));
             l.add(Ui.tr("Memory card"));
             l.add(Ui.tr("Reset hidden titles"));
+            l.add(Ui.tr("Quick Settings tiles"));
             return l.toArray(new String[0]);
         }
 
@@ -1729,6 +1738,7 @@ public class SettingsActivity extends Activity {
             v[memCardRow()] = onOff(Prefs.memoryCard());
             int hidden = Prefs.hiddenTiles().size();      // posters hidden from Continue Watching and the other rows; OK brings them back
             v[memCardRow() + 1] = hidden == 0 ? "—" : String.valueOf(hidden);
+            v[quickRow()] = String.valueOf(Prefs.quickTiles().isEmpty() ? 0 : Prefs.quickTiles().split(",").length);
             return v;
         }
 
@@ -1795,6 +1805,8 @@ public class SettingsActivity extends Activity {
             appPkgs.add("");
             // On Sony, "nothing" leaves the key to the TV, which opens its usual app.
             appLabels.add(RemoteKeys.SONY ? Ui.tr("Sony default") : Ui.tr("Nothing"));
+            appPkgs.add(Prefs.QUICK_SETTINGS);      // the card over any app (QuickCard)
+            appLabels.add(Ui.tr("Quick Settings"));
             if (RemoteKeys.SKYWORTH || Prefs.hasLearned()) {      // the gear button: Android's own Settings (the stock launcher's panel is off)
                 appPkgs.add(Prefs.TV_SETTINGS);
                 appLabels.add(Ui.tr("TV Settings"));
@@ -1913,6 +1925,7 @@ public class SettingsActivity extends Activity {
                 case TRAILER_ROW: Prefs.setTrailers(!Prefs.trailers()); break;
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
+                    if (row == quickRow()) return;
                     if (row == memCardRow() + 1) {
                         if (dir > 0 && !Prefs.hiddenTiles().isEmpty()) Catalogs.get(getContext()).unhideAll();
                         return;
@@ -2037,6 +2050,7 @@ public class SettingsActivity extends Activity {
         private void openShelfEditor(boolean top) {
             editingTop = top;
             editingRows = false;
+            editingQuick = false;
             shelfOrder.clear();
             if (top) {
                 shelfOrder.addAll(HomeApps.topButtonKeys());
@@ -2057,6 +2071,7 @@ public class SettingsActivity extends Activity {
         private void openRowsEditor() {
             editingTop = false;
             editingRows = true;
+            editingQuick = false;
             shelfOrder.clear();
             shelfOrder.addAll(Prefs.catalogRows());
             List<String[]> all = new ArrayList<>();
@@ -2068,6 +2083,34 @@ public class SettingsActivity extends Activity {
             screen = SHELF_EDIT;
         }
 
+        /** The Quick Settings card's tiles (Home Settings): the built-in ones, then any app to add as a tile that opens it. */
+        private void openQuickEditor() {
+            editingTop = false;
+            editingRows = false;
+            editingQuick = true;
+            List<String[]> all = new ArrayList<>();
+            all.add(new String[] {"settings", Ui.tr("Settings")});
+            all.add(new String[] {"wifi", Ui.tr("Wi-Fi")});
+            all.add(new String[] {"bluetooth", Ui.tr("Bluetooth")});
+            all.add(new String[] {"inputs", Ui.tr("Inputs")});
+            all.add(new String[] {"home", Ui.tr("Home")});
+            all.add(new String[] {"apps", Ui.tr("Apps")});
+            all.add(new String[] {"notifications", Ui.tr("Notifications")});
+            for (String[] app : HomeApps.shelfCandidates(getContext())) all.add(new String[] {"app:" + app[0], app[1]});
+            shelfOrder.clear();
+            for (String key : Prefs.quickTiles().split(",")) if (!key.isEmpty()) shelfOrder.add(key);
+            List<String> known = new ArrayList<>();
+            for (String[] cand : all) known.add(cand[0]);
+            shelfOrder.retainAll(known);       // an app that was uninstalled holds no place
+            rebuildShelfRows(all);
+            pickScroll = 0;
+            focus = 0;
+            screen = SHELF_EDIT;
+        }
+
+        /** The last row of Home Settings: opens the tiles' editor. */
+        private int quickRow() { return memCardRow() + 2; }
+
         /** Selected apps first, in shelf order, then the rest in the order they came. */
         private void rebuildShelfRows(List<String[]> candidates) {
             shelfRows.clear();
@@ -2075,6 +2118,14 @@ public class SettingsActivity extends Activity {
                 for (String[] cand : candidates) if (cand[0].equals(pkg)) { shelfRows.add(cand); break; }
             }
             for (String[] cand : candidates) if (!shelfOrder.contains(cand[0])) shelfRows.add(cand);
+            if (editingQuick) {      // the notifications section always sits under the tiles: pinned on top, on or off, not numbered
+                for (int i = 0; i < shelfRows.size(); i++) {
+                    if (shelfRows.get(i)[0].equals("notifications")) {
+                        shelfRows.add(0, shelfRows.remove(i));
+                        break;
+                    }
+                }
+            }
         }
 
         /** Same rows after a change: keeps the focus on the app that was focused. */
@@ -2090,6 +2141,7 @@ public class SettingsActivity extends Activity {
                 break;
             }
             if (editingRows) Prefs.setCatalogRows(shelfOrder);
+            else if (editingQuick) Prefs.setQuickTiles(shelfOrder);
             else if (editingTop) Prefs.setTopButtons(shelfOrder);
             else Prefs.setShelf(shelfOrder);
         }
@@ -2098,7 +2150,7 @@ public class SettingsActivity extends Activity {
         private void toggleShelfApp() {
             String pkg = shelfRows.get(pickScroll + focus)[0];
             if (shelfOrder.contains(pkg)) shelfOrder.remove(pkg);
-            else if (editingTop || editingRows || shelfOrder.size() < HomeApps.MAX_SHELF) shelfOrder.add(pkg);   // three buttons, seven rows: no limit to reach
+            else if (editingTop || editingRows || editingQuick || shelfOrder.size() < HomeApps.MAX_SHELF) shelfOrder.add(pkg);   // three buttons, seven rows: no limit to reach
             else return;
             refreshShelfRows(pkg);
         }
@@ -2106,6 +2158,7 @@ public class SettingsActivity extends Activity {
         /** ← → : moves a shelf app one place earlier or later. */
         private void moveShelfApp(int dir) {
             String pkg = shelfRows.get(pickScroll + focus)[0];
+            if (editingQuick && pkg.equals("notifications")) return;
             int at = shelfOrder.indexOf(pkg), to = at + dir;
             if (at < 0 || to < 0 || to >= shelfOrder.size()) return;
             shelfOrder.remove(at);
@@ -2115,7 +2168,7 @@ public class SettingsActivity extends Activity {
 
         private void drawShelfEditor(Canvas c) {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, headingColor());
-            c.drawText(editingRows ? Ui.tr("Catalogs") : editingTop ? Ui.tr("Top Buttons") : Ui.tr("Shelf"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            c.drawText(editingRows ? Ui.tr("Catalogs") : editingQuick ? Ui.tr("Quick Settings") : editingTop ? Ui.tr("Top Buttons") : Ui.tr("Shelf"), LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
                 String[] app = shelfRows.get(pickScroll + i);
@@ -2127,10 +2180,12 @@ public class SettingsActivity extends Activity {
                 rowValue.setColor(blend(0xB3FFFFFF, 0xB31C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 c.drawText(TextUtils.ellipsize(app[1], new TextPaint(rowLabel), 520 * k, TextUtils.TruncateAt.END).toString(), rowRect.left + 30 * k, base, rowLabel);
-                c.drawText(place >= 0 ? "#" + (place + 1) : Ui.tr("shelf|Off"), rowRect.right - 30 * k, base, rowValue);
+                boolean pinned = editingQuick && app[0].equals("notifications");
+                c.drawText(pinned ? onOff(place >= 0) : place >= 0 ? "#" + (place + 1) : Ui.tr("shelf|Off"), rowRect.right - 30 * k, base, rowValue);
             }
             float hy = (LIST_TOP + 20 + rows * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
             c.drawText(editingRows ? Ui.tr("OK turns a row on or off. ← → change the order.")
+                    : editingQuick ? Ui.tr("OK adds or removes a tile. ← → change the order.")
                     : editingTop ? Ui.tr("OK adds or removes a button. ← → change the order.")
                     : Ui.trf("OK adds or removes (up to {n}). ← → change the order.", "n", HomeApps.MAX_SHELF),
                     LIST_X * k + 30 * k, hy, notice);
@@ -2369,6 +2424,8 @@ public class SettingsActivity extends Activity {
             } else if (screen == HOME_SETTINGS && pickScroll + focus == CITY_ROW) {
                 askCity();
                 return;
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == quickRow()) {
+                openQuickEditor();
             } else if (screen == HOME_SETTINGS) {
                 adjust(1);
                 invalidate();

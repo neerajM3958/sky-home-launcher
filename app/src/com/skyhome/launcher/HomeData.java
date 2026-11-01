@@ -161,6 +161,7 @@ final class HomeData {
             // The cached forecast is for the city it was fetched for; another city means fetch again.
             if (w != null && weatherPlace().equals(cache.getString("weatherPlace", ""))) {
                 weather = parseWeather(w);
+                QuickLook.save(appContext, weather.sunrise, weather.sunset);
                 weatherAt = cache.getLong("weatherAt", 0);
             }
         } catch (Exception ignored) {}
@@ -218,6 +219,7 @@ final class HomeData {
                     }
                     String body = OpenMeteoApi.forecast(Prefs.latitude(), Prefs.longitude());
                     weather = parseWeather(body);
+                    QuickLook.save(appContext, weather.sunrise, weather.sunset);
                     weatherAt = System.currentTimeMillis();
                     cache.edit().putString("weather", body).putLong("weatherAt", weatherAt).putString("weatherPlace", weatherPlace()).apply();
                     notifyListeners();
