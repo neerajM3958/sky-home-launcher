@@ -59,9 +59,13 @@ abstract class HomePage {
             root.place(0, 0, w, h * height());
             safe.set(HomeGrid.MARGIN * k, HomeGrid.SAFE_TOP * k, HomeGrid.CONTENT_R * k, (HomeGrid.SAFE_BOTTOM + (height() - 1) * HomeGrid.H) * k);
             LayoutCheck.check(name, root, safe);
+            placed();
         }
         dirty = true;
     }
+
+    /** After the nodes are placed: what the page keeps from their frames. */
+    protected void placed() {}
 
     void draw(Canvas c) {
         if (root == null) return;
