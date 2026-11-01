@@ -51,7 +51,7 @@ episode list, with sort, season, date and watched filters; OK opens an episode i
 
 | Continue Watching, Shows you watch, Watchlist | Episodes, with filters |
 |---|---|
-| ![](screenshots/material-dark-page-row-02.jpg) | ![](screenshots/glass-dark-episodes.jpg) |
+| ![](screenshots/material-dark-page-row-02.jpg) | ![](screenshots/material-dark-episodes.jpg) |
 
 **The screensaver.** Full-screen photos of your picks, with a big glass clock, the forecast and sunrise/sunset.
 
@@ -65,11 +65,11 @@ exactly as it was.
 
 | Settings | Home Settings | Shelf |
 |---|---|---|
-| ![](screenshots/material-dark-settings-main.jpg) | ![](screenshots/glass-dark-settings-02.jpg) | ![](screenshots/glass-dark-settings-03.jpg) |
+| ![](screenshots/material-dark-settings-main.jpg) | ![](screenshots/material-dark-settings-02.jpg) | ![](screenshots/material-dark-settings-03.jpg) |
 
 | TMDB | Stremio | Integrations |
 |---|---|---|
-| ![](screenshots/glass-dark-settings-07.jpg) | ![](screenshots/glass-dark-settings-08.jpg) | ![](screenshots/glass-dark-settings-09.jpg) |
+| ![](screenshots/material-dark-settings-07.jpg) | ![](screenshots/material-dark-settings-08.jpg) | ![](screenshots/material-dark-settings-09.jpg) |
 
 **Connecting Trakt, installing Stremio, adding Torrentio, setting keys from your phone, recording a remote button.**
 These all happen in Sky Home Launcher's own Settings, each with a short on-screen walkthrough and (for Trakt and the

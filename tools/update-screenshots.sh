@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Retakes the README's screenshots (screenshots/) from the TV: every area in the Glass look, dark, and the core set (home,
-# picks, catalog, screensaver, Settings) in Glass light and Material 3 Expressive dark and light.
+# Retakes the README's screenshots (screenshots/) from the TV: every area in Glass dark and Material dark, and the core set (home,
+# picks, catalog, screensaver, Settings) in Glass light and Material 3 Expressive light.
 #   tools/update-screenshots.sh [look-theme...]      e.g. glass-dark material-light; default: all four
 # Files are screenshots/<look>-<theme>-<area>.jpg (look: glass | material). Needs what tools/shots.sh needs (adb connected,
 # Sky Home Launcher on, the remote left alone: about 20 minutes for all four) and Pillow (pip install pillow) to turn the
@@ -20,7 +20,7 @@ for combo in "${combos[@]}"; do
     *) echo "unknown combination: $combo (glass-dark, glass-light, material-dark, material-light)" >&2; exit 1 ;;
   esac
   theme="${combo#*-}"
-  area=core; [ "$combo" = glass-dark ] && area=all
+  area=core; [ "$combo" = glass-dark ] || [ "$combo" = material-dark ] && area=all
   echo "== $combo ($area)"
   bash tools/shots.sh "$work/$combo" "$look" "$theme" "$area"
   mkdir -p screenshots
