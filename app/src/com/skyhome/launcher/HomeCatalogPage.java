@@ -332,14 +332,14 @@ final class HomeCatalogPage extends HomePage {
         if (s > 0.999f) prev = null;
         tmp.set(stage);
         tmp.offset(0, 10 * k);
-        home.dropShadow(c, tmp, r, home.tone(0.2f, 0.4f));
+        home.painter.dropShadow(c, tmp, r, home.tone(0.2f, 0.4f));
         if (back == null && prev == null) {
             fill.setShader(null);
             fill.setColor(home.look.color(Look.PLACEHOLDER, dark));
             c.drawRoundRect(stage, r, r, fill);
         } else {
-            if (prev != null) home.roundImageAlpha(c, prev, stage, r, 255);
-            if (back != null) home.roundImageAlpha(c, back, stage, r, prev == null ? 255 : Math.round(255 * s));
+            if (prev != null) home.painter.roundImageAlpha(c, prev, stage, r, 255);
+            if (back != null) home.painter.roundImageAlpha(c, back, stage, r, prev == null ? 255 : Math.round(255 * s));
         }
         if (trailerOn && trailer.loading()) {      // asked for, not showing yet: the picture dims and a spinner turns on it
             fill.setShader(null);
@@ -391,7 +391,6 @@ final class HomeCatalogPage extends HomePage {
     private void drawRows(Canvas c, RectF frame) {
         float dark = home.dark();
         rowTitle.setColor(home.look.color(Look.TITLE, dark));
-        home.posterColors();
         c.save();
         c.clipRect(0, frame.top, w, h);
         for (int r = 0; r < list.size(); r++) {
@@ -405,7 +404,7 @@ final class HomeCatalogPage extends HomePage {
                 posterRect(r, i, cell);
                 if (cell.right < 0 || cell.left > w) continue;
                 float f = home.onCatalogPage() && r == row && i == pr.index ? Ui.clamp(focus.value) : 0;
-                home.drawPoster(c, cell, pr.row.items.get(i), f, y0, false);      // no badge: the details above show the service
+                home.painter.drawPoster(c, cell, pr.row.items.get(i), f, y0, false);      // no badge: the details above show the service
             }
         }
         c.restore();

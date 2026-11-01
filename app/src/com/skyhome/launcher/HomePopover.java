@@ -221,7 +221,7 @@ final class HomePopover {
             if (f > 0.01f) {
                 tmp.set(row);
                 tmp.offset(0, 8 * k * f);
-                home.shadow(c, tmp, r, 0.35f * f);
+                home.painter.shadow(c, tmp, r, 0.35f * f);
                 fill.setShader(null);
                 fill.setColor(Ui.alpha(WHITE, f));
                 c.drawRoundRect(row, r, r, fill);

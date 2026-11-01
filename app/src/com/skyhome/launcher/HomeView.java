@@ -7,7 +7,6 @@ import android.content.SharedPreferences;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
@@ -40,7 +39,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -153,7 +151,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring carousel = new Spring(0.44f, 0.8f, 0);
     private int carouselTarget;
     private final RectF slotA = new RectF(), slotB = new RectF(), travel = new RectF();
-    private final Rect imageSrc = new Rect();
     private long cardMixAt;         // when the cards last changed their picks (0: never)
     private int cardMixDir;         // 1: the next picks (slide left), -1: the previous ones, 0: just fade
     private boolean cardsAnimating; // a picture is fading in (set while drawing)
@@ -230,12 +227,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Layer catalogLayer;
     // Page 3, Trakt's and the TV's rows (HomeWatchingPage).
     private final HomeWatchingPage watchingPage;
-    private Paint lCatLabel;
     // Page 4, TMDB's catalogs (HomeCatalogPage).
     private final Layer browseLayer;
     private final Details details;
     private final HomeCatalogPage catalogPage;
-    private final RectF cardRect = new RectF(), barRect = new RectF();
+    private final RectF cardRect = new RectF();
     // "All Apps" (HomeSheet); holding OK there puts an app on the shelf or takes it off.
     private final HomeSheet sheet;
     private boolean shelfEdited;
@@ -270,21 +266,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Paint shadowDeep = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint halo = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Shadows shadows = new Shadows();
-    private final Map<Bitmap, BitmapShader> imageShaders = new WeakHashMap<>();
-    private final Matrix imageMatrix = new Matrix();
-    private final Paint imageFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    /** What every page draws the same way: pictures, cards, posters, shadows. */
+    final HomePainter painter;
     private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint sheen = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint veil = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint tileFill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path clip = new Path();
     private final RectF tmp = new RectF(), cell = new RectF(), screen = new RectF();
     private final TextPaint fitPaint = new TextPaint();
     private LinearGradient[] tileShaders = new LinearGradient[0];
-    private LinearGradient tileGlow, cardSheen;
-    private float tileShaderH, cardSheenH;
+    private LinearGradient tileGlow;
+    private float tileShaderH;
     private LinearGradient[] lightSheens = new LinearGradient[0], lightRims = new LinearGradient[0];
     private float[] lightShaderW = new float[0];
     private android.graphics.ColorFilter veilFilter;
@@ -404,6 +398,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         catalogLayer = new Layer(a, CATALOG);
         browseLayer = new Layer(a, BROWSE);
         catalogs = Catalogs.get(a);
+        painter = new HomePainter(this, catalogs, shadows);
         details = Details.get(a);
         widgetsPage = new HomeWidgetsPage(this);
         watchingPage = new HomeWatchingPage(this, catalogs);
@@ -672,7 +667,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(look.typeface(Ui.medium), 25 * k, L_DIM);
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
-        lCatLabel = Ui.text(look.typeface(Ui.medium), 25 * k, L_INK);
         lTip = Ui.text(look.typeface(Ui.semibold), 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
         lDate = Ui.text(look.typeface(Ui.semibold), 34 * k, L_DIM);
@@ -708,6 +702,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         changePaint.setTextAlign(Paint.Align.CENTER);
         sheet.layout(k, w, h);
         toasts.layout(k, w);
+        painter.layout(k);
         shadow.setMaskFilter(new BlurMaskFilter(SHADOW_BLUR * k, BlurMaskFilter.Blur.NORMAL));
         shadowSoft.setMaskFilter(new BlurMaskFilter(12 * k, BlurMaskFilter.Blur.NORMAL));
         shadowDeep.setMaskFilter(new BlurMaskFilter(DEEP_BLUR * k, BlurMaskFilter.Blur.NORMAL));
@@ -1332,48 +1327,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (it.kind == HomeApps.ALL_APPS && look.allAppsTile(c, cell, r, it.label, fc, dark())) {
             // drawn by the look
         } else {
-            if (it.tile != null) roundImage(c, it.tile, cell, r);
+            if (it.tile != null) painter.roundImage(c, it.tile, cell, r);
         }
         look.focusRing(c, cell, r, fc, dark(), 1);
-    }
-
-    /**
-     * `image` stretched over `cell`, with corners of radius `r`. Android 12+ clips to the rounded shape; on Android 8 to
-     * 11 that anti-aliased clip costs the GPU a mask on every frame of a focus animation (measured on a Mi Box 3: most of
-     * a 49 ms frame), so there the image is the shader of a rounded rectangle instead, which looks the same.
-     */
-    private void roundImage(Canvas c, Bitmap image, RectF cell, float r) {
-        roundImage(c, image, cell, r, 0);
-    }
-
-    /** As above; the picture is cropped to the shape of `cell` (never stretched), `shift` moving the crop sideways (a share of its width). */
-    private void roundImage(Canvas c, Bitmap image, RectF cell, float r, float shift) {
-        if (!Ui.LEGACY) {
-            int iw = image.getWidth(), ih = image.getHeight();
-            float want = cell.width() / cell.height(), sw = iw, sh = ih;
-            if ((float) iw / ih > want) sw = ih * want;
-            else sh = iw / want;
-            float sx = Math.max(0, Math.min(iw - sw, (iw - sw) / 2 + shift * sw)), sy = (ih - sh) / 2;
-            imageSrc.set(Math.round(sx), Math.round(sy), Math.round(sx + sw), Math.round(sy + sh));
-            clip.reset();
-            clip.addRoundRect(cell, r, r, Path.Direction.CW);
-            c.save();
-            c.clipPath(clip);
-            c.drawBitmap(image, imageSrc, cell, bitmapPaint);
-            c.restore();
-            return;
-        }
-        BitmapShader shader = imageShaders.get(image);
-        if (shader == null) {
-            shader = new BitmapShader(image, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            imageShaders.put(image, shader);
-        }
-        imageMatrix.setScale(cell.width() / image.getWidth(), cell.height() / image.getHeight());
-        imageMatrix.postTranslate(cell.left, cell.top);
-        shader.setLocalMatrix(imageMatrix);
-        imageFill.setShader(shader);
-        c.drawRoundRect(cell, r, r, imageFill);
-        imageFill.setShader(null);
     }
 
     /**
@@ -1751,58 +1707,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-    /** A card (16:9, a poster, an app's tile) as `drawCard` last drew it, grown with the focus. */
-    RectF lastCard() {
-        return cell;
-    }
-
-    /** 16:9 card. Focused (the shelf's subtle focus): it grows, with a shadow, a soft sheen and a thin border. */
-    void drawCard(Canvas c, Bitmap image, RectF base, float radius, float f, float grow) {
-        float s = 1 + grow * f;
-        float cx = base.centerX(), cy = base.centerY();
-        cell.set(cx - base.width() * s / 2, cy - base.height() * s / 2, cx + base.width() * s / 2, cy + base.height() * s / 2);
-        float r = radius * s;
-        float fc = Ui.clamp(f);
-        if (f > 0.01f) {
-            tmp.set(cell);
-            tmp.offset(0, 16 * k * f);
-            shadow.setColor(Ui.alpha(0xFF000000, 0.55f * fc));
-            shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
-        }
-        if (image != null) roundImage(c, image, cell, r);
-        if (f > 0.01f) {
-            float bh = base.height();
-            if (cardSheen == null || cardSheenH != bh) {
-                cardSheen = new LinearGradient(0, -bh / 2, 0, 0, 0x1AFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
-                cardSheenH = bh;
-            }
-            c.save();
-            c.translate(cx, cy);
-            c.scale(s, s);
-            tmp.set(-base.width() / 2, -bh / 2, base.width() / 2, bh / 2);
-            sheen.setShader(cardSheen);
-            sheen.setAlpha(Math.round(255 * fc));
-            c.drawRoundRect(tmp, radius, radius, sheen);
-            sheen.setAlpha(255);
-            c.restore();
-        }
-        if (fc < 0.99f) {
-            veil.setColor(Ui.alpha(0xFF000000, 0.08f * (1 - fc)));
-            c.drawRoundRect(cell, r, r, veil);
-        }
-        if (!look.focusRing(c, cell, r, fc, dark(), 1)) {
-            border.setColor(0x14FFFFFF);
-            c.drawRoundRect(cell, r, r, border);
-            if (f > 0.01f) {
-                rim.setShader(null);
-                rim.setColor(Ui.alpha(0xFFFFFFFF, 0.4f * fc));
-                rim.setStrokeWidth(1.5f * k);
-                c.drawRoundRect(cell, r, r, rim);
-                rim.setStrokeWidth(2.5f * k);
-            }
-        }
-    }
-
     // MARK: - Pages 3 and 4: the poster rows, and what they ask of the home screen
 
     @Override public void onCatalogs() {
@@ -1878,48 +1782,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         wake();
     }
 
-    /** The service's round icon in the corner of a card or poster (`r`, as drawn now). */
-    private void drawBadge(Canvas c, RectF r, String pkg) {
-        if (pkg == null || pkg.isEmpty()) return;
-        int px = Math.round(34 * k);
-        Bitmap b = ServiceBadge.get(getContext(), pkg, px, badgesReady);
-        if (b != null) c.drawBitmap(b, r.left + 10 * k, r.top + 10 * k, null);
-    }
-
-    /** One poster of a row (Trakt's under the drawer, TMDB's on the browse screen) with its badge (`badge`), bar, loader and captions; `y0` is the row's top. */
-    void drawPoster(Canvas c, RectF cardRect, Catalogs.Item it, float f, float y0, boolean badge) {
-        Bitmap poster = catalogs.poster(it, Math.round(CAT_POSTER_W * k * 1.25f));
-        if (poster == null) {
-            fill.setShader(null);
-            fill.setColor(look.color(Look.PLACEHOLDER, dark()));
-            c.drawRoundRect(cardRect, 14 * k, 14 * k, fill);
-        }
-        drawCard(c, poster, cardRect, 14 * k, f, 0.1f);
-        if (badge && poster != null) drawBadge(c, cell, catalogService(it, f > 0.5f));
-        if (it.progress > 0 && poster != null) {      // part-way through: a thin bar along the poster's foot (drawCard left its size in `cell`)
-            barRect.set(cell.left + 12 * k, cell.bottom - 16 * k, cell.right - 12 * k, cell.bottom - 10 * k);
-            fill.setShader(null);
-            fill.setColor(0x73FFFFFF);
-            c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
-            barRect.right = barRect.left + barRect.width() * Math.min(1f, it.progress);
-            fill.setColor(0xFFFFFFFF);
-            c.drawRoundRect(barRect, 3 * k, 3 * k, fill);
-        }
-        if (it == openingItem && SystemClock.uptimeMillis() - openingAt >= OPEN_LOADER_MS) {
-            // Waiting for where it streams: the poster dims a little and three dots pulse over it.
-            fill.setShader(null);
-            fill.setColor(0x80000000);
-            c.drawRoundRect(cell, 14 * k, 14 * k, fill);
-            fill.setColor(0xFFFFFFFF);
-            Ui.dots(c, cell.centerX(), cell.centerY(), 7 * k, (SystemClock.uptimeMillis() - openingAt) / 1000f, fill);
-        }
-        fitPaint.set(lCatLabel);
-        c.drawText(TextUtils.ellipsize(it.title, fitPaint, cardRect.width() + 16 * k, TextUtils.TruncateAt.END).toString(),
-                cardRect.left, y0 + (50 + CAT_POSTER_H + 40) * k, lCatLabel);
-        String meta = it.sub != null ? it.sub : it.stars;
-        if (meta != null) c.drawText(meta, cardRect.left, y0 + (50 + CAT_POSTER_H + 72) * k, lCardMeta);
-    }
-
     // MARK: - What pages 3 and 4 ask of the home screen
 
     /** A badge picture is ready: the layers that show badges are drawn again (once; the picture then stays). */
@@ -1934,33 +1796,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Nothing else is going on (All Apps, an open waiting for its answer, OK held): a trailer may start by itself. */
     boolean trailerMayStart() {
         return !sheet.isOpen() && opening == null && !okDown;
-    }
-
-    /** The soft shadow under a focused row or tile, `opacity` of black. */
-    void shadow(Canvas c, RectF r, float radius, float opacity) {
-        shadow.setColor(Ui.alpha(0xFF000000, opacity));
-        shadows.draw(c, r, radius, SHADOW_BLUR * k, shadow);
-    }
-
-    /** The deep shadow under a card, `opacity` of black. */
-    void dropShadow(Canvas c, RectF r, float radius, float opacity) {
-        shadowDeep.setColor(Ui.alpha(0xFF000000, opacity));
-        shadows.draw(c, r, radius, DEEP_BLUR * k, shadowDeep);
-    }
-
-    /** As `roundImage`, at `alpha` (0 to 255). */
-    void roundImageAlpha(Canvas c, Bitmap image, RectF cell, float r, int alpha) {
-        bitmapPaint.setAlpha(alpha);
-        imageFill.setAlpha(alpha);
-        roundImage(c, image, cell, r);
-        bitmapPaint.setAlpha(255);
-        imageFill.setAlpha(255);
-    }
-
-    /** The colors `drawPoster`'s captions take in this look, day or night. */
-    void posterColors() {
-        lCatLabel.setColor(look.color(Look.TITLE, dark()));
-        lCardMeta.setColor(look.color(Look.META, dark()));
     }
 
     // MARK: - Toasts
@@ -2260,10 +2095,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - A title from the catalogs or the picks: where it streams decides where it opens (Launcher)
 
-    private static final long OPEN_LOADER_MS = 150;      // a cached answer opens at once; only a wait shows the dots
+    static final long OPEN_LOADER_MS = 150;      // a cached answer opens at once; only a wait shows the dots
     private Launcher.Handle opening;
     private Catalogs.Item openingItem;
     private long openingAt;
+
+    /** The title waiting to open (its poster shows the dots), and since when. */
+    Catalogs.Item openingItem() {
+        return openingItem;
+    }
+
+    long openingAt() {
+        return openingAt;
+    }
 
     void openTitle(Catalogs.Item item, RectF poster) {
         final RectF from = new RectF(poster);
@@ -3013,14 +2857,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // little behind its card while the row moves.
             Bitmap lo = b.tall != null ? b.tall : b.wide, hi = b.wide != null ? b.wide : b.tall;
             float shift = -left * 0.12f;
-            bitmapPaint.setAlpha(Math.round(255 * alpha));
-            roundImage(c, lo, cell, r, shift);
+            painter.imageAlpha(Math.round(255 * alpha));
+            painter.roundImage(c, lo, cell, r, shift);
             if (hi != lo && wide > 0.01f) {
-                bitmapPaint.setAlpha(Math.round(255 * wide * alpha));
-                roundImage(c, hi, cell, r, shift);
+                painter.imageAlpha(Math.round(255 * wide * alpha));
+                painter.roundImage(c, hi, cell, r, shift);
             }
-            bitmapPaint.setAlpha(255);
-            drawBadge(c, cell, pickService(p));
+            painter.imageAlpha(255);
+            painter.drawBadge(c, cell, pickService(p));
         } else {
             fill.setShader(null);
             fill.setColor(Ui.alpha(look.color(Look.PLACEHOLDER, dark()), alpha));
@@ -3341,7 +3185,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // caption to draw over it (unlike the Cards-mode cards, which caption a textless backdrop).
             Bitmap img = recs.poster(p, Math.round(pw));
             if (img != null) {
-                roundImage(c, img, cell, rr);
+                painter.roundImage(c, img, cell, rr);
             } else {
                 fill.setShader(null);
                 fill.setColor(look.color(Look.PLACEHOLDER, dark()));
@@ -3447,12 +3291,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (img != null) {
             int alpha = Math.round(255 * shown);
-            bitmapPaint.setAlpha(alpha);
-            imageFill.setAlpha(alpha);
-            roundImage(c, img, cell, r);
-            bitmapPaint.setAlpha(255);
-            imageFill.setAlpha(255);
-            if (shown >= 1) drawBadge(c, cell, pickService(p));
+            painter.roundImageAlpha(c, img, cell, r, alpha);
+            if (shown >= 1) painter.drawBadge(c, cell, pickService(p));
         }
         if (!look.focusRing(c, cell, r, f, dark(), 1) && f > 0.01f) {
             if (lightSheens.length != cardRects.length) {

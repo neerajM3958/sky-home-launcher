@@ -180,8 +180,8 @@ final class HomeSheet {
             tile.set(x, y, x + TILE_W * k, y + TILE_H * k);
             // Only the targeted tile grows (#memory-management, as on the shelf).
             float f = i == index ? focus[i].value : 0;
-            home.drawCard(c, apps.get(i).tile, tile, RADIUS * k, f, 0.08f);
-            if (open && i == index) focused.set(home.lastCard());
+            home.painter.drawCard(c, apps.get(i).tile, tile, RADIUS * k, f, 0.08f);
+            if (open && i == index) focused.set(home.painter.lastCard());
             label.setColor(look.gridLabelInk(f, dark));
             c.drawText(labels[i], tile.centerX(), tile.bottom + (40 + 6 * f) * k, label);
         }

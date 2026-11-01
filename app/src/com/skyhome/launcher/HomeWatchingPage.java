@@ -179,7 +179,6 @@ final class HomeWatchingPage extends HomePage {
     @Override void draw(Canvas c) {
         if (list.isEmpty() || rowTitle == null) return;
         rowTitle.setColor(home.look.color(Look.TITLE, home.dark()));
-        home.posterColors();
         c.save();
         c.translate(0, origin());
         super.draw(c);
@@ -197,7 +196,7 @@ final class HomeWatchingPage extends HomePage {
             place(frame, pr, i, cell);
             if (cell.right < 0 || cell.left > w) continue;
             float f = home.onWatchingPage() && r == row && i == pr.index ? Ui.clamp(focus.value) : 0;
-            home.drawPoster(c, cell, pr.row.items.get(i), f, frame.top, true);
+            home.painter.drawPoster(c, cell, pr.row.items.get(i), f, frame.top, true);
         }
     }
 
