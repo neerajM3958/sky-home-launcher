@@ -144,7 +144,7 @@ final class QuickCard {
         private long startedAt, lastSky;
         private final int ink, inkFocus, muted, noteFill;
         private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint titleText, tileText, small, noteTitle, noteText;
+        private final Paint titleText, tileText, small, noteTitle, noteText, value;
         private final RectF rect = new RectF();
         private final Paint edge = new Paint();
         private final Path bluetooth = new Path();
@@ -179,6 +179,7 @@ final class QuickCard {
             titleText = Ui.text(Ui.displaySemibold, 34 * k, look.ink(0xFFFFFFFF, night));
             tileText = Ui.text(Ui.medium, 30 * k, ink);
             small = Ui.text(Ui.medium, 24 * k, muted);
+            value = Ui.text(Ui.medium, 24 * k, muted);
             noteTitle = Ui.text(Ui.semibold, 28 * k, ink);
             noteText = Ui.text(Ui.regular, 24 * k, muted);
             stroke.setStyle(Paint.Style.STROKE);
@@ -500,6 +501,7 @@ final class QuickCard {
                         icon(r, left + 44 * k, r.y + r.h / 2, on ? inkFocus : ink);
                         tileText.setColor(on ? inkFocus : ink);
                         canvas.drawText(r.l1, left + 92 * k, r.y + r.h / 2 + 10 * k, tileText);
+                        tileValue(r, left + 92 * k + tileText.measureText(r.l1), right - 24 * k, on);
                         break;
                     case NOTE:
                         box(r, left, right, on);
@@ -534,6 +536,32 @@ final class QuickCard {
                 fill.setColor(noteFill);
                 current.drawRoundRect(rect, pillRadius, pillRadius, fill);
             }
+        }
+
+        /** The Wi-Fi and Bluetooth tiles show what they are connected to at the row's right end, when it fits after the label. */
+        private void tileValue(Row r, float labelEnd, float right, boolean on) {
+            boolean wifi = "wifi".equals(r.icon);
+            if (!wifi && !"bluetooth".equals(r.icon)) return;
+            ConnectionStatus.State s = ConnectionStatus.get(ctx).state();
+            value.setColor(on ? inkFocus : muted);
+            float base = r.y + r.h / 2 + 8 * k;
+            float w = wifi ? ConnectionStatus.drawWifi(null, s, right, base, value) : ConnectionStatus.drawBluetooth(null, s, right, base, value, false);
+            if (w == 0 || right - w < labelEnd + 24 * k) return;
+            if (wifi) ConnectionStatus.drawWifi(current, s, right, base, value);
+            else ConnectionStatus.drawBluetooth(current, s, right, base, value, false);
+        }
+
+        private final Runnable statusChanged = this::postInvalidate;
+
+        // The values follow the connection while the card is open.
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            ConnectionStatus.get(ctx).addListener(statusChanged);
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            ConnectionStatus.get(ctx).removeListener(statusChanged);
+            super.onDetachedFromWindow();
         }
 
         private Canvas current;   // the canvas of the frame being drawn

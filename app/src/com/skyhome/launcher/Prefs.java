@@ -222,6 +222,15 @@ final class Prefs {
     static boolean weather() { return sp().getBoolean("weather", true); }
     static void setWeather(boolean on) { put("weather", on); }
 
+    /** The Wi-Fi and Bluetooth line under the weather (ConnectionStatus). */
+    static boolean connection() { return sp().getBoolean("connection", true); }
+    static void setConnection(boolean on) {
+        put("connection", on);
+        if (on) setStatusAsked(false);      // turned back on: the home screen may ask for the permissions again
+    }
+    static boolean statusAsked() { return sp().getBoolean("statusAsked", false); }
+    static void setStatusAsked(boolean asked) { sp().edit().putBoolean("statusAsked", asked).apply(); }
+
     static boolean quotes() { return sp().getBoolean("quotes", Config.SHOW_CRYPTO); }
     static void setQuotes(boolean on) { put("quotes", on); }
 

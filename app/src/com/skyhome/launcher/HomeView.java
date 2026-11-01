@@ -249,6 +249,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         else sky.invalidate();
     }
 
+    /** The Wi-Fi or Bluetooth line changed: the top layer draws again. */
+    private final Runnable connectionChanged = new Runnable() {
+        @Override public void run() {
+            wake();
+            top.invalidateAll();
+        }
+    };
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!running) return;
@@ -354,6 +361,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.addListener(this);
         catalogs.addListener(this);
         details.addListener(this);
+        ConnectionStatus.get(getContext()).addListener(connectionChanged);
         data.refreshIfStale();
         recs.refreshIfStale();
         catalogs.refreshWatchNext(false);
@@ -389,6 +397,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.removeListener(this);
         catalogs.removeListener(this);
         details.removeListener(this);
+        ConnectionStatus.get(getContext()).removeListener(connectionChanged);
         closePop(true);
         recs.publish();     // a new daily list waiting: shown while the home screen is away
         catalogs.publish();

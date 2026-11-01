@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
+    <!-- The Wi-Fi and Bluetooth line under the weather (ConnectionStatus). Android hides a network's name without the
+         location permission and a device's name without the Bluetooth one; the home screen asks for both once. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- After the TV boots (and after a TV update), checks that Sky Home Launcher mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Installs Stremio from its own site when the person asks (Settings > Stremio); Android asks them to confirm. -->

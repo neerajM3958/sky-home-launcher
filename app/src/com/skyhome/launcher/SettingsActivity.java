@@ -1711,6 +1711,7 @@ public class SettingsActivity extends Activity {
             if (dollar()) l.add(Ui.tr("Dollar"));
             l.add(Ui.tr("Memory card"));
             l.add(Ui.tr("Reset hidden titles"));
+            l.add(Ui.tr("Wi-Fi and Bluetooth status"));
             l.add(Ui.tr("Quick Settings tiles"));
             return l.toArray(new String[0]);
         }
@@ -1738,6 +1739,7 @@ public class SettingsActivity extends Activity {
             v[memCardRow()] = onOff(Prefs.memoryCard());
             int hidden = Prefs.hiddenTiles().size();      // posters hidden from Continue Watching and the other rows; OK brings them back
             v[memCardRow() + 1] = hidden == 0 ? "—" : String.valueOf(hidden);
+            v[connectionRow()] = onOff(Prefs.connection());
             v[quickRow()] = String.valueOf(Prefs.quickTiles().isEmpty() ? 0 : Prefs.quickTiles().split(",").length);
             return v;
         }
@@ -1926,6 +1928,10 @@ public class SettingsActivity extends Activity {
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (row == quickRow()) return;
+                    if (row == connectionRow()) {
+                        Prefs.setConnection(!Prefs.connection());
+                        break;
+                    }
                     if (row == memCardRow() + 1) {
                         if (dir > 0 && !Prefs.hiddenTiles().isEmpty()) Catalogs.get(getContext()).unhideAll();
                         return;
@@ -2109,7 +2115,10 @@ public class SettingsActivity extends Activity {
         }
 
         /** The last row of Home Settings: opens the tiles' editor. */
-        private int quickRow() { return memCardRow() + 2; }
+        private int quickRow() { return memCardRow() + 3; }
+
+        /** The Wi-Fi and Bluetooth line under the weather, before the tiles' row. */
+        private int connectionRow() { return memCardRow() + 2; }
 
         /** Selected apps first, in shelf order, then the rest in the order they came. */
         private void rebuildShelfRows(List<String[]> candidates) {
