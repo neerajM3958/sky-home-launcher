@@ -9,6 +9,8 @@ import android.graphics.Shader;
 import android.text.TextPaint;
 import android.text.TextUtils;
 
+import java.util.List;
+
 /**
  * Picks as Spotlight (stock Google TV's "Top picks for you"): no tabs; a full-screen sharp photo of the focused pick
  * (`Look.spotlightPhoto`, each look's own corner treatment), its title and meta over the dark side, a heading, and a
@@ -143,6 +145,17 @@ final class PicksSpotlight extends PicksSection {
         wrapLines[0] = text.substring(0, sp).trim();
         wrapLines[1] = TextUtils.ellipsize(text.substring(sp).trim(), p, maxW, TextUtils.TruncateAt.END).toString();
         wrapLineCount = 2;
+    }
+
+    /** Explore's bigger pool: the same list Recs loads details and photos for (Recs.nearby), or past pick_count the
+     * row and the photos part ways and a title's photo is never loaded. */
+    @Override List<Recs.Pick> list() {
+        return recs.now(kind(), Recs.SPOTLIGHT_POOL);
+    }
+
+    /** The photo, or the look's background while there's none: always the whole screen. */
+    @Override boolean coversScreen() {
+        return true;
     }
 
     /** The photo first: the weather comes after it on the same canvas (in Cards the photo is the background's layer). */

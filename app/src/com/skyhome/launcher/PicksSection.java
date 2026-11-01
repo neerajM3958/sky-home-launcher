@@ -44,6 +44,11 @@ abstract class PicksSection {
         return Prefs.spotlightOn() ? new PicksSpotlight(page, recs) : new PicksCards(page, recs);
     }
 
+    /** It paints the whole screen, opaque (Spotlight's photo): nothing under page 1 shows while it rests there. */
+    boolean coversScreen() {
+        return false;
+    }
+
     /** Its nodes in page 1's column, under the top bar and over the shelf; one is flex, so the shelf stays at the foot. */
     abstract Node[] nodes(float k);
 

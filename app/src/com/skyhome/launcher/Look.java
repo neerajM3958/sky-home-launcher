@@ -32,7 +32,7 @@ abstract class Look {
         int imageFadeMs = 250;                          // a picture fades in over its placeholder when it is ready
         float shelfPad = 40, shelfGap = 48;             // the shelf bar's side padding; the gap between app tiles
         float shelfGrow = 0.2f;                         // a focused shelf tile grows by this much
-        boolean focusGlow = false;                      // the background glows under the focused item (redrawn while focus moves)
+        boolean focusGlow = false;                      // a glow under the focused item (its own layer, moved with the focus)
         float homeSharp = 0;                            // how much of the lightly blurred picture shows over the heavily blurred one (0 to 1)
         boolean homeBackdrop = false;                   // the home screen has its own background: the first pick's picture, softly blurred
         boolean animatedBackground = false;             // the background moves by itself (the screen redraws it a few times a second)
@@ -50,8 +50,17 @@ abstract class Look {
     /** The colour for a role, blended for `night`. */
     abstract int color(int role, float night);
 
-    /** Where the focus is (the centre of the focused item, `strength` 0 when nothing is focused), for a look that glows there. */
-    void setFocus(float x, float y, float strength) {}
+    /** The radius of the glow under the focused item (`m.focusGlow`), in 1920-wide units. */
+    float glowRadius() { return 0; }
+
+    /** The glow's colour and strength now (ARGB): when it changes, the glow is drawn again. */
+    int glowColor(float night) { return 0; }
+
+    /** The glow at full strength, centred on (x, y); the screen moves it and fades it by the focus without drawing it again. */
+    void focusGlow(Canvas c, float x, float y, float night) {}
+
+    /** A moving background stops where it is (true) and later goes on from there, without a jump. */
+    void holdDrift(boolean hold) {}
 
     /** The colour of the first pick's artwork (opaque), or 0 for none: a look may tint its background with it. */
     void setAccent(int argb) {}
@@ -147,9 +156,6 @@ abstract class Look {
 
     /** The colour laid over the blurred picture of the home background (ARGB), so the text and cards stay clear of it. */
     int homeScrim(float night) { return 0; }
-
-    /** What is drawn over every background, picture or not (a glow under the focus). */
-    void overlay(Canvas c, RectF screen, float night) {}
 
     /** The whole screen's background. Returns false when the look has none of its own (the glass draws the photo and sky). */
     boolean background(Canvas c, RectF screen, float night) { return false; }

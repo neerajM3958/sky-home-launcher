@@ -80,10 +80,10 @@ final class MaterialLook extends Look {
     private final Path reel = new Path();
     private final Shader scrimLight = new LinearGradient(0, 0, 0, 1, 0x00F7F8FF, 0xF2F7F8FF, Shader.TileMode.CLAMP);
     private final Paint focusGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private float focusX, focusY, focusStrength;
     private final float[] hsv = new float[3];
     private int tintFrom = DEFAULT_TINT, tintTo = DEFAULT_TINT, filterColor;
     private long tintAt;
+    private long driftHeldAt = -1, driftLost;      // the shapes' clock stands still while held
     private ColorFilter filter;
     private Paint heroTitle, heroMeta, cardTitle, cardMeta, tileLabel;
     private Context ctx;
@@ -234,12 +234,6 @@ final class MaterialLook extends Look {
         return 0xFF000000 | (r << 16) | (g << 8) | bl;
     }
 
-    @Override void setFocus(float x, float y, float strength) {
-        focusX = x;
-        focusY = y;
-        focusStrength = strength;
-    }
-
     private static Path[] buildShapes() {
         Path circle = new Path(), squircle = new Path(), cookie = new Path(), clover = new Path(), arch = new Path();
         circle.addCircle(0, 0, 1, Path.Direction.CW);
@@ -259,6 +253,15 @@ final class MaterialLook extends Look {
         arch.addArc(new RectF(-1, -1, 1, 1), 180, 180);
         arch.close();
         return new Path[] {circle, squircle, cookie, clover, arch};
+    }
+
+    @Override void holdDrift(boolean hold) {
+        long now = SystemClock.uptimeMillis();
+        if (hold && driftHeldAt < 0) driftHeldAt = now;
+        else if (!hold && driftHeldAt >= 0) {
+            driftLost += now - driftHeldAt;
+            driftHeldAt = -1;
+        }
     }
 
     /** The first pick's artwork colour, eased in over a moment (0: back to the palette's indigo). */
@@ -282,20 +285,27 @@ final class MaterialLook extends Look {
         return Color.HSVToColor(hsv);
     }
 
+    /** The tint now: the first pick's colour easing in, paler by day and closer to the palette's indigo. */
+    private int tintNow(float night) {
+        return blend(tint(SystemClock.uptimeMillis()), DEFAULT_TINT, 0.55f * (1 - night));
+    }
+
+    private ColorFilter filterFor(int tint) {
+        if (filter == null || filterColor != tint) {
+            filter = new PorterDuffColorFilter(tint, PorterDuff.Mode.SRC_IN);
+            filterColor = tint;
+        }
+        return filter;
+    }
+
     private void paintBackground(Canvas c, RectF bounds, float night) {
         paint.setShader(null);
         paint.setColor(palette(SURFACE, night));
         c.drawRect(bounds, paint);
         long now = SystemClock.uptimeMillis();
-        // By day the tint is paler.
-        int tint = tint(now);
         float day = 1 - night;      // by day the shapes stay pale on the near-white background
-        tint = blend(tint, DEFAULT_TINT, 0.55f * day);      // and stay closer to the palette's indigo
-        if (filter == null || filterColor != tint) {
-            filter = new PorterDuffColorFilter(tint, PorterDuff.Mode.SRC_IN);
-            filterColor = tint;
-        }
-        glowPaint.setColorFilter(filter);
+        ColorFilter tinted = filterFor(tintNow(night));
+        glowPaint.setColorFilter(tinted);
         glowPaint.setShader(glowA.getShader());
         glowPaint.setAlpha(Math.round(255 * 0.27f * (1 - 0.5f * day) * (1 - 0.3f * night)));
         c.drawRect(bounds, glowPaint);
@@ -303,8 +313,8 @@ final class MaterialLook extends Look {
         glowPaint.setAlpha(Math.round(255 * 0.17f * (1 - 0.5f * day) * (1 - 0.3f * night)));
         c.drawRect(bounds, glowPaint);
         // Big faint shapes drifting and turning slowly (standing still on older TVs).
-        float t = Ui.LEGACY ? 0 : now / 1000f;
-        shapePaint.setColorFilter(filter);
+        float t = Ui.LEGACY ? 0 : ((driftHeldAt >= 0 ? driftHeldAt : now) - driftLost) / 1000f;
+        shapePaint.setColorFilter(tinted);
         for (int i = 0; i < SHAPES.length; i++) {
             float[] sh = SHAPES[i];
             float phase = t * 2 * (float) Math.PI / sh[9] + i * 1.7f;
@@ -503,13 +513,21 @@ final class MaterialLook extends Look {
         return fade(palette(SURFACE, night), 0.58f);
     }
 
+    @Override float glowRadius() {
+        return 640;
+    }
+
+    @Override int glowColor(float night) {
+        return Ui.alpha(tintNow(night), 0.42f * (1 - 0.1f * (1 - night)));
+    }
+
     /** A soft light behind whatever has the focus (over the home background's picture too). */
-    @Override void overlay(Canvas c, RectF screen, float night) {
-        if (focusStrength <= 0.01f || filter == null) return;
-        focusGlowPaint.setColorFilter(filter);
-        focusGlowPaint.setAlpha(Math.round(255 * 0.42f * (1 - 0.1f * (1 - night)) * focusStrength));
+    @Override void focusGlow(Canvas c, float x, float y, float night) {
+        int color = glowColor(night);
+        focusGlowPaint.setColorFilter(filterFor(color | 0xFF000000));
+        focusGlowPaint.setAlpha(color >>> 24);
         c.save();
-        c.translate(focusX, focusY);
+        c.translate(x, y);
         c.drawCircle(0, 0, 640 * k, focusGlowPaint);
         c.restore();
     }
