@@ -49,7 +49,7 @@ import java.util.function.Consumer;
  */
 final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Catalogs.Listener, Details.Listener {
     private static final long FADE_MS = 800;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8, BROWSE = 9, POP = 11;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, CATALOG = 8, BROWSE = 9, POP = 11, GLOW = 12, BACKDROP = 13;
     static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
 
     final Activity activity;
@@ -72,7 +72,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public void hold(int id) { a11yHold(); }
     });
     private final RectF a11yRect = new RectF();
-    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, popLayer, toastLayer;
+    private final Layer sky, backdropLayer, glowLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, popLayer, toastLayer;
     /** With TalkBack on, page 2's quotes card can take the focus (it's only read). */
     private boolean widgetFocus;
 
@@ -159,6 +159,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             this.kind = kind;
         }
 
+        /** The glow and the home picture fade by their layer's alpha: straight onto what they draw, without an offscreen
+         * buffer every frame (the picture already drew each of its parts at the same strength). */
+        @Override public boolean hasOverlappingRendering() {
+            return kind != GLOW && kind != BACKDROP;
+        }
+
         @Override protected void onDraw(Canvas c) {
             if (rowTitle == null) return;
             c.translate(-getLeft(), -getTop());
@@ -169,6 +175,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             shadows.dither = dark() > 0.5f;
             switch (kind) {
                 case SKY: drawSky(c); break;
+                case BACKDROP: drawHomeBackdrop(c); break;
+                case GLOW: look.focusGlow(c, getWidth() / 2f, getHeight() / 2f, dark()); break;
                 case HERO: top.draw(c); break;
                 case STATUS: top.drawButtons(c); break;
                 case PLATTER: top.shelf.drawGlass(c); break;
@@ -205,14 +213,41 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     };
 
-    /** A look with a moving background: the sky layer is redrawn ten times a second (the drift is slow). */
+    /** A look with a moving background: the sky layer is redrawn ten times a second (the drift is slow), while it shows. */
     private final Runnable drift = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            sky.invalidate();
+            // Paused while something moves or while it's covered: drawing the shapes again cost this TV ~40 ms a frame
+            // (a 4K Google TV Stick). A redraw held back meanwhile happens now, under the cover, ready for when it shows.
+            boolean runs = driftRuns();
+            look.holdDrift(!runs);
+            if (runs || (skyStale && still())) {
+                skyStale = false;
+                sky.invalidate();
+            }
+            if (look.m.focusGlow) updateGlowColor();       // it eases in with a new pick
             handler.postDelayed(this, 100);
         }
     };
+
+    private static final long DRIFT_PAUSE_MS = 600;
+    private long movedAt;
+    /** The look's background is covered (Spotlight's photo, or the home picture); it changed while it couldn't be drawn. */
+    private boolean skyCovered, skyStale;
+
+    private boolean still() {
+        return SystemClock.uptimeMillis() - movedAt > DRIFT_PAUSE_MS;
+    }
+
+    private boolean driftRuns() {
+        return still() && !skyCovered;
+    }
+
+    /** The look's background draws again: right away, or, kept as a picture (a moving one), once nothing moves. */
+    private void redrawSky() {
+        if (look.m.animatedBackground && (skyCovered || !still())) skyStale = true;
+        else sky.invalidate();
+    }
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -244,6 +279,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (launcherApps != null) launcherApps.registerCallback(packages, handler);
         setFocusable(true);
         sky = new Layer(a, SKY);
+        backdropLayer = new Layer(a, BACKDROP);
+        glowLayer = new Layer(a, GLOW);
         heroLayer = new Layer(a, HERO);
         status = new Layer(a, STATUS);
         platter = new Layer(a, PLATTER);
@@ -278,12 +315,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // below), and the pager turns each one's GPU layer on only while its page shows (#memory-management, item 3:
         // ~25 MB of persistent GPU memory otherwise sat behind pages that may never be opened in a session).
         for (View v : new View[] {heroLayer, status, platter, tiles, popLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer, toastLayer}) {
+        // A moving background (gradients and big shapes) cost ~40 ms of GPU to paint: kept as a picture, the frames
+        // between two drifts only copy it.
+        if (look.m.animatedBackground) sky.setLayerType(LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, backdropLayer, glowLayer, heroLayer, status, platter, tiles, drawerLayer, catalogLayer, browseLayer, sheetLayer, popLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
         setContentDescription("Sky Home Launcher");
         drawerLayer.setVisibility(INVISIBLE);
+        glowLayer.setVisibility(INVISIBLE);
+        backdropLayer.setVisibility(INVISIBLE);
         popLayer.setVisibility(INVISIBLE);
         catalogLayer.setVisibility(INVISIBLE);
         browseLayer.setVisibility(INVISIBLE);
@@ -387,7 +429,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     void invalidateAll() {
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer}) v.invalidate();
+        for (View v : new View[] {backdropLayer, glowLayer, heroLayer, status, platter, tiles, drawerLayer}) v.invalidate();
+        redrawSky();
     }
 
     // MARK: - Size and layers
@@ -396,6 +439,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
+        measure(backdropLayer, width, height);
+        // Just the glow's circle: it follows the focus by moving, not by being drawn again.
+        int glow = Math.max(1, Math.round(2 * look.glowRadius() * kk));
+        measure(glowLayer, glow, glow);
         // Spotlight's photo fills the whole screen behind the shelf, so its layer does too.
         measure(heroLayer, width, Prefs.spotlightOn() ? height : Math.round(790 * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
@@ -420,6 +467,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = r - l, height = b - t;
         float kk = width / 1920f;
         sky.layout(0, 0, width, height);
+        backdropLayer.layout(0, 0, width, height);
+        place(glowLayer, 0, 0);
         place(heroLayer, 0, 0);
         place(status, width - status.getMeasuredWidth(), 0);
         place(platter, 0, Math.round(750 * kk));
@@ -501,6 +550,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean nightMoving = tickNight(up);
 
         if (pagerMoving || sheetMoving || motionDirty) updateMotion();
+        if (topMoving || gridMoving || pagerMoving || sheetMoving || popMoving || widgetsMoving || catMoving || browseMoving) movedAt = up;
         // Changing page only moves the cached layers: redrawing the glass on every frame made the TV drop frames
         // (measured: ~50 ms of GPU per frame). The app tiles have no glass; the widgets and the top buttons are drawn
         // resting in place; the glass shelf is redrawn once the pages stop, so the glass shows the background where it
@@ -517,13 +567,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (watchingPage.takeDirty() | catMoving) catalogLayer.invalidate();
         if (catalogPage.takeDirty() | browseMoving) browseLayer.invalidate();
-        if (pagerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (top.focusMoving() || catMoving || browseMoving))) sky.invalidate();
+        // The focus glow and the home picture are layers of their own: moving the focus or the pages doesn't draw the
+        // whole background again, unless its colours follow the pages.
+        boolean followsPager = pagerMoving && (!look.m.homeBackdrop || darkFollowsPager());
+        if (followsPager) sky.invalidate();
+        else if (bgFading) redrawSky();
+        if (followsPager || bgFading) backdropLayer.invalidate();
+        updateCover();
+        if (look.m.animatedBackground) look.holdDrift(!driftRuns());
+        boolean glowMoving = look.m.focusGlow && updateFocusGlow(dt);
         if (top.takeGlass() | bgFading || (pagerWasMoving && !pagerMoving)) platter.invalidate();
         pagerWasMoving = pagerMoving;
         motionDirty = false;
 
         // Busy: something is moving, or the sheet or a page under the first is open.
-        boolean busy = topMoving || gridMoving || pagerMoving
+        boolean busy = topMoving || gridMoving || pagerMoving || glowMoving
                 || sheetMoving || popMoving || popover.isOpen() || widgetsMoving || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheet.isOpen() || sheet.in.value > 0.001f
                 || pager.current() != topSlot || toasts.busy();
         idle = !busy;
@@ -679,7 +737,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         top.invalidateAll();
         widgetsPage.invalidate();
-        sky.invalidate();
+        redrawSky();
+        backdropLayer.invalidate();
         platter.invalidate();
     }
 
@@ -689,8 +748,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * is only the first page: the others sit on the look's own background, so once another page shows this is the
      * real day/night value again (a white Material page stays white by day). */
     float dark() {
-        if (!Prefs.spotlightOn() || !picksOn()) return night;
+        if (!darkFollowsPager()) return night;
         return night + (Math.max(night, 0.7f) - night) * (1 - pager.away());
+    }
+
+    private boolean darkFollowsPager() {
+        return Prefs.spotlightOn() && picksOn() && night < 0.7f;
     }
 
     /** The day or the night value of a glass surface's opacity (until those move into GlassLook). */
@@ -1737,12 +1800,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * same photo almost black (or a dark gradient), drawn on top during the transition.
      */
     private void drawLightSky(Canvas c) {
-        if (look.m.focusGlow) updateFocusGlow();
-        if (look.background(c, screen, dark())) {
-            if (look.m.homeBackdrop) drawHomeBackdrop(c);
-            look.overlay(c, screen, dark());
-            return;
-        }
+        if (look.background(c, screen, dark())) return;     // its home picture is a layer of its own (backdropLayer)
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
@@ -1774,23 +1832,56 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /**
      * The home screen's own background, over the look's: the first pick's picture, softly blurred and toned by the
-     * look's scrim. It fades away as another page comes in, so the others (and every other screen) keep the look's background.
+     * look's scrim. It fades away as another page comes in (its layer's alpha), so the others (and every other screen) keep
+     * the look's background.
      */
     private void drawHomeBackdrop(Canvas c) {
-        float amount = 1 - Ui.clamp(pager.pos.value * 1.4f);
-        if (amount < 0.01f || (bgTo == null && bgFrom == null)) return;
+        if (bgTo == null && bgFrom == null) return;
         long up = SystemClock.uptimeMillis();
         boolean fading = bgFadeAt != 0;
         float e = fading ? fadeEase(bgFadeAt, up) : 1;
         imagePaint.setColorFilter(null);
-        if (fading && bgFrom != null) drawHomePicture(c, bgFrom, amount * (bgTo == null ? 1 - e : 1));
-        if (bgTo != null) drawHomePicture(c, bgTo, amount * (fading ? e : 1));
+        if (fading && bgFrom != null) drawHomePicture(c, bgFrom, bgTo == null ? 1 - e : 1);
+        if (bgTo != null) drawHomePicture(c, bgTo, fading ? e : 1);
         int scrim = look.homeScrim(dark());
         if (scrim != 0) {
             fill.setShader(null);
-            fill.setColor(Ui.alpha(scrim, amount));
+            fill.setColor(scrim);
             c.drawRect(screen, fill);
         }
+    }
+
+    private float homeBackdropAmount() {
+        return 1 - Ui.clamp(pager.pos.value * 1.4f);
+    }
+
+    /**
+     * What of the background shows. Spotlight's photo covers the whole screen (page 1 at rest): nothing under it is
+     * drawn. The home picture, opaque (page 1, no cross-fade), covers the look's own background (its shapes). A moving
+     * background, kept as a picture, stays up under the cover: the page that slides away shows it at once, without
+     * drawing it first (~40 ms, a hitch as the slide starts).
+     */
+    private void updateCover() {
+        boolean spotlight = top.picks.coversScreen() && heroLayer.getVisibility() == VISIBLE && heroLayer.getAlpha() >= 0.999f
+                && heroLayer.getTranslationY() == 0 && heroLayer.getHeight() >= h;
+        float amount = look.m.homeBackdrop && (bgTo != null || bgFrom != null) ? homeBackdropAmount() : 0;
+        boolean picture = !spotlight && amount >= 0.01f;
+        backdropLayer.setVisibility(picture ? VISIBLE : INVISIBLE);
+        if (picture) backdropLayer.setAlpha(amount);
+        boolean covered = spotlight || (picture && amount >= 0.999f && bgFadeAt == 0 && bgTo != null && bgTo.frostImage != null);
+        coveredAll = spotlight;
+        skyCovered = covered;
+        if (look.m.animatedBackground) {
+            if (!covered && skyStale) {
+                skyStale = false;
+                sky.invalidate();
+            }
+            return;
+        }
+        int v = covered ? INVISIBLE : VISIBLE;
+        if (sky.getVisibility() == v) return;
+        sky.setVisibility(v);
+        if (!covered) sky.invalidate();     // it may have missed a new picture while hidden
     }
 
     /** The picture of the home background: heavily blurred, with some of the lightly blurred one over it (the look's `homeSharp`). */
@@ -1799,23 +1890,75 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (look.m.homeSharp > 0) drawImage(c, b.glassImage(), alpha * look.m.homeSharp);
     }
 
-    /** Tells the look where the focus is: the centre of the focused item, blended by how focused each one is. */
+    /** The glow goes where the focus is, on the page that has it (sliding with it): the centre of the focused item,
+     * blended by how focused each one is. */
     private final RectF focusRect = new RectF();
     private final float[] focusSum = new float[3];     // weight, x, y
+    private int glowDrawn;
+    private boolean coveredAll;
+    // The glow glides from one item to the next and fades only when nothing has the focus (the pages' focus pops from
+    // 0 on every move: followed as is, it went out and on again). In the page's own space; which page it's on.
+    private final Spring glowX = new Spring(0.3f, 1, 0), glowY = new Spring(0.3f, 1, 0), glowOn = new Spring(0.25f, 1, 0);
+    private HomePager.Slot glowPage;
 
-    private void updateFocusGlow() {
+    /** Returns true while the glow still moves. */
+    private boolean updateFocusGlow(float dt) {
         float[] acc = focusSum;
         acc[0] = acc[1] = acc[2] = 0;
-        top.glow(acc);
-        if (onWatchingPage() && watchingPage.focusedRect(focusRect)) {
-            float v = watchingPage.focusAmount();
-            acc[0] += v;
-            acc[1] += v * focusRect.centerX();
-            acc[2] += v * focusRect.centerY();
+        float dy, strength;
+        HomePager.Slot page = pager.current();
+        if (onWatchingPage()) {
+            if (watchingPage.focusedRect(focusRect)) addGlow(acc, 1, focusRect);
+            dy = catalogLayer.getTranslationY();
+            strength = acc[0];
+        } else if (onCatalogPage()) {
+            if (catalogPage.focusedRect(focusRect)) addGlow(acc, 1, focusRect);
+            dy = browseLayer.getTranslationY();
+            strength = acc[0];
+        } else {
+            if (page == topSlot) top.glow(acc);
+            dy = heroLayer.getTranslationY();
+            strength = acc[0] > 0.01f ? 1 : 0;      // the tiles hand the focus over to each other: it doesn't go out
         }
-        float weight = acc[0], x = acc[1], y = acc[2];
-        if (weight > 0.001f) look.setFocus(x / weight, y / weight, Math.min(1, weight));
-        else look.setFocus(w / 2f, h / 2f, 0);
+        boolean focused = acc[0] > 0.01f;
+        glowOn.target = focused && !coveredAll ? strength : 0;
+        if (coveredAll) glowOn.snap(0);     // under Spotlight's photo: no fade nobody sees
+        if (focused) {
+            float x = acc[1] / acc[0], y = acc[2] / acc[0];
+            // Out, or on another page: it comes on where the focus is, without sliding over from where it was.
+            if (glowOn.value < 0.01f || page != glowPage) {
+                glowX.snap(x);
+                glowY.snap(y);
+            } else {
+                glowX.target = x;
+                glowY.target = y;
+            }
+            glowPage = page;
+        }
+        boolean moving = glowOn.step(dt) | glowX.step(dt) | glowY.step(dt);
+        boolean on = glowOn.value > 0.01f;
+        glowLayer.setVisibility(on ? VISIBLE : INVISIBLE);
+        if (!on) return moving;
+        glowLayer.setAlpha(Math.min(1, glowOn.value));
+        glowLayer.setTranslationX(glowX.value - glowLayer.getWidth() / 2f);
+        glowLayer.setTranslationY(glowY.value + dy - glowLayer.getHeight() / 2f);
+        updateGlowColor();
+        return moving;
+    }
+
+    private void updateGlowColor() {
+        if (glowLayer.getVisibility() != VISIBLE) return;
+        int color = look.glowColor(dark());
+        if (color != glowDrawn) {
+            glowDrawn = color;
+            glowLayer.invalidate();
+        }
+    }
+
+    private static void addGlow(float[] acc, float v, RectF r) {
+        acc[0] += v;
+        acc[1] += v * r.centerX();
+        acc[2] += v * r.centerY();
     }
 
     private void drawLightImage(Canvas c, Backdrop b, float alpha) {

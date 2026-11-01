@@ -410,6 +410,18 @@ final class HomeCatalogPage extends HomePage {
         c.restore();
     }
 
+    /** Where the focused poster is on screen now; false without one. */
+    boolean focusedRect(RectF out) {
+        if (row >= list.size() || list.get(row).focused() == null) return false;
+        posterRect(row, list.get(row).index, out);
+        return true;
+    }
+
+    /** How far the focus has popped onto the focused poster (0 to 1). */
+    float focusAmount() {
+        return Ui.clamp(focus.value);
+    }
+
     /** Row `r`'s top now (its title, then its posters 50 below). */
     private float rowTop(int r) {
         return posters.frame.top + 20 * k + (r - pos.value) * PITCH * k;
