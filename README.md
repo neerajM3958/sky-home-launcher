@@ -24,6 +24,7 @@ Android-only. Open source. Built with Claude Code. One button to undo.
 - **A catalog screen with trailers.** Trending, popular, top-rated and more, in rows you choose — hold OK on a title and its trailer plays right there, inline.
 - **Continue Watching, your way.** What you stopped part-way, the next episode of shows you follow, and your Trakt Watchlist, blended with Android TV's own Watch Next from your other apps.
 - **Weather and markets, one press away.** The hour-by-hour forecast, sunrise and sunset, and live crypto prices.
+- **Wi-Fi and Bluetooth at a glance.** A small line under the weather names the network (with its signal bars, or *Ethernet*) and the Bluetooth speaker or headphones in use; with nothing connected it says *Not connected*, or whether the radio is *On* or *Off*. Remotes and keyboards are left out. The first time, the TV asks to allow location (Android hides a network's name without it) and Bluetooth; a *Wi-Fi and Bluetooth status* switch in *Home Settings* turns the line off.
 - **Light by day, dark by night.** It follows your city's real sunset, the way your phone does — and switches between a frosted Liquid Glass look and Material 3 Expressive, your choice.
 - **A screensaver to match.** Full-screen photos of the picks with a big glass clock.
 - **Any remote, any button.** Press a button on your remote and Sky Home Launcher records it — not just the brand's own app buttons — and you choose what it opens.
@@ -80,7 +81,7 @@ button opens it by default, and on any other TV you give it to a button in *Remo
 | ![](screenshots/material-dark-quick-settings.jpg) | ![](screenshots/material-dark-quick-settings-notifications.jpg) | ![](screenshots/material-dark-settings-quick-tiles.jpg) |
 
 - **Tiles** open the TV's own screens, and never change a setting themselves: Settings, Wi-Fi, Bluetooth (the list of
-  paired and connected devices, with *Pair remote or accessory*), one tile per input of the TV (HDMI, AV…), Home and Apps.
+  paired and connected devices, with *Pair remote or accessory*), one tile per input of the TV (HDMI, AV…), Home and Apps. The Wi-Fi and Bluetooth tiles also show, at the right of the row, the network (with its signal bars) and the Bluetooth device in use, or whether Bluetooth is on or off; the row keeps its height.
   Any installed app can be added as a tile that opens it.
 - **Notifications** are listed under the tiles, newest first. OK on one opens its app; *Clear* clears them all (ongoing ones
   stay). Switching to Sky Home Launcher mode allows this through the TV's own ADB, and *Original* takes it back; where the TV
@@ -290,6 +291,7 @@ It's your code, and Claude Code finds its way around it. Try:
 | [`Adb.java`](app/src/com/skyhome/launcher/Adb.java) | The TV's own ADB, from inside the TV |
 | [`Recs.java`](app/src/com/skyhome/launcher/Recs.java) | The picks (TMDB) |
 | [`HomeData.java`](app/src/com/skyhome/launcher/HomeData.java) | Weather and prices |
+| [`ConnectionStatus.java`](app/src/com/skyhome/launcher/ConnectionStatus.java) | The Wi-Fi network and Bluetooth audio devices, read and drawn once for the home screen and Quick Settings |
 | [`HomeApps.java`](app/src/com/skyhome/launcher/HomeApps.java) | The shelf, inputs and All Apps |
 | [`DreamView.java`](app/src/com/skyhome/launcher/DreamView.java) | The screensaver |
 | [`SettingsActivity.java`](app/src/com/skyhome/launcher/SettingsActivity.java) | The settings screen (the app's icon) |

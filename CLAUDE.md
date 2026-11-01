@@ -206,6 +206,14 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   `RemoteKeys.open`), alongside the existing `TV_SETTINGS`. An added button's name can be changed from its app picker
   (*Rename this button*, an `AlertDialog` with an `EditText`, the same pattern as `askCity`); `Prefs.renameLearned` rewrites its
   `learn=` line without touching its key/scan code or app.
+- Wi-Fi and Bluetooth status (`ConnectionStatus`, one per process, fed by system callbacks, never polled): the network's name and
+  signal bars (or Ethernet; "Not connected"/"Off" without a link), and the Bluetooth audio device last connected ("+N" for more;
+  only the headset and A2DP profiles, so remotes, keyboards and game pads never show), else whether the radio is On or Off. `draw`
+  paints it as one line: page 1 puts it under the weather (`HomeTopPage.drawStatus`; in Cards and Spotlight the weather text is
+  three lines, in `PicksOff` it sits under the clock's weather), `Prefs.connection` (Home Settings) turns it off. `QuickCard`
+  uses `drawWifi`/`drawBluetooth` as the value at the right of its Wi-Fi and Bluetooth tiles, without icons for Bluetooth or a
+  missing link; it needs only `Ui.tr`, so `:keys` can use it. Android hides the network's name without location and device names
+  without `BLUETOOTH_CONNECT` (Android 12+): `HomeActivity` asks once with the TV's own dialogs (`ConnectionStatus.missing`), never ADB.
 - Quick Settings (`QuickCard`): a button set to `Prefs.QUICK_SETTINGS` (the Skyworth gear button by default; any brand through
   *Added buttons*) opens a hand-drawn card at the right edge, an accessibility overlay window of `RemoteKeyService` (`:keys`).
   It is focusable (the app below pauses; its own `dispatchKeyEvent` takes Up/Down/OK/Back) and scrolls. Tiles open the TV's
