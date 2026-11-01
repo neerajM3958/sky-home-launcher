@@ -36,7 +36,7 @@ final class HomeTopPage extends HomePage {
     private final List<HomeApps.Item> buttons = new ArrayList<>();
     private boolean buttonsDirty = true, glassDirty = true, focusMoving;
 
-    Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote, staleQuote;
+    Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote, staleQuote, lStatus;
     String clockText = "", dateText = "";
     private long clockMinute = -1;
     /** "Off in 42 min" next to the round buttons while the sleep timer runs (Settings > Sleep Timer); "" otherwise. */
@@ -81,6 +81,7 @@ final class HomeTopPage extends HomePage {
         lClock = Ui.numbers(Ui.light, 200 * k, INK);
         lClock.setLetterSpacing(-0.01f);
         lWeather = Ui.text(look.typeface(Ui.medium), 34 * k, DIM);
+        lStatus = Ui.text(look.typeface(Ui.medium), 22 * k, DIM);
         lClockQuote = Ui.numbers(Ui.medium, 28 * k, DIM);
         staleQuote = Ui.text(Ui.medium, 21 * k, 0x99FFFFFF);
         staleQuote.setTextAlign(Paint.Align.RIGHT);
@@ -383,6 +384,7 @@ final class HomeTopPage extends HomePage {
         lClock.setColor(look.color(Look.TITLE, dark));
         lWeather.setColor(look.color(Look.WEATHER, dark));
         lClockQuote.setColor(look.color(Look.META, dark));
+        lStatus.setColor(look.color(Look.META, dark));
         staleQuote.setColor(look.color(Look.FAINT, dark));
     }
 
@@ -398,7 +400,11 @@ final class HomeTopPage extends HomePage {
     /** The weather where the title used to be: the symbol and the temperature large, the condition and today's high and low beside them. */
     void drawWeather(Canvas c) {
         HomeData.Weather wx = data.weather;
-        if (!Prefs.weather() || Double.isNaN(wx.temp)) return;
+        float x = HomeGrid.MARGIN * k, base = home.look.m.titleBase * k;
+        if (!Prefs.weather() || Double.isNaN(wx.temp)) {
+            drawStatus(c, x, base);      // no weather: the connection line takes its place
+            return;
+        }
         if (data.weatherAt != weatherAt || Prefs.version != weatherPrefs || !Ui.language.equals(weatherLanguage)) {
             weatherAt = data.weatherAt;
             weatherPrefs = Prefs.version;
@@ -409,15 +415,29 @@ final class HomeTopPage extends HomePage {
             highLow = HomeData.highLow(wx, "  ") + (city.isEmpty() ? "" : "  ·  " + city);
         }
         Context ctx = home.getContext();
-        float x = HomeGrid.MARGIN * k, base = home.look.m.titleBase * k;
         String symbol = Symbols.weather(wx.code, wx.isDay);
         float size = 64 * k, sw = Symbols.width(ctx, symbol, size);
         Symbols.draw(ctx, c, symbol, x + sw / 2, base - Ui.halfCap(lTitle), size, home.look.symbolInk(symbol, lTitle.getColor()));
         float tx = x + sw + 20 * k;
         c.drawText(temp, tx - Ui.leftBearing(lTitle, temp), base, lTitle);
         float bx = tx + lTitle.measureText(temp) + 30 * k;
-        c.drawText(condition, bx, base - 34 * k, lWeather);
-        c.drawText(highLow, bx, base, lCardMeta);
+        // With the connection line the three lines stack beside the temperature, the last on its baseline: the tabs
+        // start 28 units below it, so nothing else moves.
+        boolean status = showStatus();
+        c.drawText(condition, bx, base - (status ? 60 : 34) * k, lWeather);
+        c.drawText(highLow, bx, base - (status ? 30 : 0) * k, lCardMeta);
+        if (status) drawStatus(c, bx, base - 2 * k);
+    }
+
+    /** The connection line is on (Home Settings) and there is something to show. */
+    boolean showStatus() {
+        return Prefs.connection() && !ConnectionStatus.get(home.getContext()).state().isEmpty();
+    }
+
+    /** Wi-Fi and Bluetooth (`ConnectionStatus`) as one line from `x` on the baseline `base`; the picks styles place it under their weather. */
+    void drawStatus(Canvas c, float x, float base) {
+        if (!showStatus()) return;
+        ConnectionStatus.draw(c, ConnectionStatus.get(home.getContext()).state(), x, base, lStatus);
     }
 
     /** The quotes row's text and sizes, for one set of coins, prices and text size. */

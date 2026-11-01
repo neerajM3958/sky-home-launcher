@@ -57,6 +57,7 @@ public class HomeActivity extends Activity {
             home.post(home::openSheet);
         }
         askForWatchNext();
+        askForStatus();
     }
 
     private boolean askedNow, openApps;
@@ -69,8 +70,19 @@ public class HomeActivity extends Activity {
         requestPermissions(new String[] {WatchNext.PERMISSION}, WatchNext.ASK);
     }
 
+    /** Once, the TV's own dialogs ask for the Wi-Fi name (location) and the Bluetooth devices' names; one dialog at a time, so after the Watch Next one. */
+    private void askForStatus() {
+        if (askedNow || home == null || !Prefs.connection() || Prefs.statusAsked()) return;
+        String[] missing = ConnectionStatus.missing(this);
+        if (missing.length == 0) return;
+        askedNow = true;
+        Prefs.setStatusAsked(true);
+        requestPermissions(missing, ConnectionStatus.ASK);
+    }
+
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
+        if (code == ConnectionStatus.ASK) ConnectionStatus.get(this).reload();
         if (code == WatchNext.ASK) Catalogs.get(this).refreshWatchNext(true);
     }
 
