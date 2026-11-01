@@ -32,6 +32,8 @@ final class Prefs {
             KEY_SKY_SETTINGS = KeyEvent.KEYCODE_NOTIFICATION;
     /** Not an app: a remote button set to this opens the TV's own Settings. */
     static final String TV_SETTINGS = "android:settings";
+    /** Not an app: a remote button set to this opens the Quick Settings card over whatever is on (QuickCard). */
+    static final String QUICK_SETTINGS = "android:quick";
     /** Not an app: a remote button set to this opens Sky Home Launcher's own Settings. */
     static final String FMT_SETTINGS = "com.skyhome.launcher:settings";
     /** KTC's (NextStar) Tabii button: BUTTON_8, which the TV hands to its hot-key receiver (its log: "keycode = 195"). */
@@ -104,7 +106,7 @@ final class Prefs {
         return v.isEmpty() || v.equalsIgnoreCase("auto") ? "auto" : v;
     }
 
-    static void setLanguage(String v) { put("language", v); Ui.applyLanguage(); }
+    static void setLanguage(String v) { put("language", v); Ui.applyLanguage(); QuickLook.save(app); }
 
     /** "auto", "C" or "F". */
     static String temperature() {
@@ -120,7 +122,7 @@ final class Prefs {
         return v.equals("light") || v.equals("dark") ? v : "auto";
     }
 
-    static void setTheme(String v) { put("theme", v); }
+    static void setTheme(String v) { put("theme", v); QuickLook.save(app); }
 
     /** The visual theme is independent of the light/dark color scheme. */
     static String look() {
@@ -128,7 +130,7 @@ final class Prefs {
         return Themes.has(v) ? v : Themes.GLASS;
     }
 
-    static void setLook(String v) { put("look", Themes.has(v) ? v : Themes.GLASS); }
+    static void setLook(String v) { put("look", Themes.has(v) ? v : Themes.GLASS); QuickLook.save(app); }
 
     // MARK: - City
 
@@ -473,6 +475,20 @@ final class Prefs {
         put("topButtons", sb.toString());
     }
 
+    // MARK: - Quick Settings tiles
+
+    /** The tiles of the Quick Settings card, in order (the keys are listed at QuickLook.DEFAULT_TILES), as comma-separated text. */
+    static String quickTiles() {
+        return sp().getString("quickTiles", QuickLook.DEFAULT_TILES);
+    }
+
+    static void setQuickTiles(List<String> keys) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : keys) sb.append(sb.length() == 0 ? "" : ",").append(p);
+        put("quickTiles", sb.toString());
+        QuickLook.save(app);
+    }
+
     // MARK: - Remote buttons
 
     private static String defaultApp(int keyCode) {
@@ -481,7 +497,7 @@ final class Prefs {
             case KEY_YOUTUBE: case KEY_SKY_YOUTUBE: return "com.google.android.youtube.tv";
             case KEY_PRIME: case KEY_SKY_PRIME: return "com.amazon.amazonvideo.livingroom";
             case KEY_SKY_DISNEY: return "com.disney.disneyplus";
-            case KEY_SKY_SETTINGS: return TV_SETTINGS;
+            case KEY_SKY_SETTINGS: return QUICK_SETTINGS;
             case KEY_TCL_CHANNEL: return "";
             default: return "";
         }

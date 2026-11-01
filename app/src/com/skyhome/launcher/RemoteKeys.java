@@ -18,7 +18,7 @@ import android.view.KeyEvent;
  * On KTC TVs (NextStar) only the Tabii button is ours, a global key too: the TV's hot-key receiver opens Tabii with it.
  * On Skyworth TVs the Netflix, YouTube, Prime Video and Disney+ buttons (STEM_1, STEM_2, F8, F6) and the gear button
  * (NOTIFICATION) are ours: Skyworth's own receiver opens the real apps, which may not be installed, and the gear button
- * needs the stock launcher; a button set to "TV Settings" opens Android's Settings.
+ * opens the Quick Settings card; a button set to "TV Settings" opens Android's Settings.
  * On Sony TVs, the app buttons (and the Google Play button of older remotes) are global keys for Sony's own receiver;
  * the filter sees them first, the same way.
  */
@@ -124,6 +124,13 @@ final class RemoteKeys {
     /** Opens what the button is set to, on its first press. False when it is set to nothing: the key goes on as if we weren't here. */
     private static boolean open(Context c, KeyEvent e, String pkg) {
         if (pkg.isEmpty()) return false;
+        if (pkg.equals(Prefs.QUICK_SETTINGS)) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                AppLog.w("remote key " + e.getKeyCode() + " -> Quick Settings");
+                QuickCard.toggle(c);
+            }
+            return true;
+        }
         if (pkg.equals(Prefs.TV_SETTINGS)) {
             if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
                 AppLog.w("remote key " + e.getKeyCode() + " -> TV Settings");

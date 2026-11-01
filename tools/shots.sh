@@ -7,6 +7,8 @@
 #     area   core | all | settings | home | catalog | episodes | saver | apps     default all
 #            trailer (only by name, not in all: where the inline trailer fails, Play opens the YouTube app, which may show
 #            someone's profile, so look at the shot before publishing it)
+#            quick (only by name) = the Quick Settings card over the home screen (opened by a broadcast to the key service, so
+#            the key service must be on), then scrolled down to the notifications
 #            core = home, picks, catalog, screensaver and Settings' first screen (what every look and theme needs)
 # Needs adb connected to the TV (adb connect <ip>:5555) with Sky Home Launcher installed and switched on. It drives the TV with
 # remote keys, so leave the remote alone while it runs (about four minutes for all). It changes the Look and Theme settings
@@ -83,6 +85,15 @@ if want settings all; then
     esac
   done
   settings; key KEYCODE_DPAD_CENTER 2; shot settings-00-home-screen   # the Original / Sky choice, not changed
+  settings; repeat 2 KEYCODE_DPAD_DOWN; key KEYCODE_DPAD_CENTER 2      # Home Settings, down to its last row (the list doesn't wrap)
+  repeat 24 KEYCODE_DPAD_DOWN; key KEYCODE_DPAD_CENTER 2; shot settings-quick-tiles
+fi
+if [[ " ${areas[*]} " == *" quick "* ]]; then       # only when asked for by name
+  home; sleep 3
+  adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show > /dev/null
+  sleep 3; shot quick-settings
+  repeat 8 KEYCODE_DPAD_DOWN; shot quick-settings-notifications
+  adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do hide > /dev/null; sleep 1
 fi
 if want saver core; then
   settings --ez screensaver true; sleep 4; shot screensaver

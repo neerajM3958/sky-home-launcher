@@ -363,8 +363,23 @@ final class HomeMode {
     private static final String REMOTE_SERVICE = PKG + "/" + PKG + ".RemoteKeyService";
     private static final Pattern SERVICE = Pattern.compile("[\\w.]+/[\\w.$]+");
 
+    private static final String NOTIFICATION_LISTENER = PKG + "/" + PKG + ".QuickNotifications";
+
+    /** The Quick Settings card lists notifications: allowed while Sky Home Launcher mode is on, taken back by Original. */
+    private static void notificationListener(Adb adb, boolean on) {
+        try {
+            boolean allowed = adb.shell("settings get secure enabled_notification_listeners").contains(NOTIFICATION_LISTENER);
+            if (on == allowed) return;
+            adb.shell("cmd notification " + (on ? "allow_listener " : "disallow_listener ") + NOTIFICATION_LISTENER);
+            AppLog.w("notification access " + (on ? "allowed" : "taken back"));
+        } catch (IOException e) {
+            AppLog.w("notification access: " + e.getMessage());
+        }
+    }
+
     /** Adds ours to the enabled accessibility services (keeping the others, like TalkBack), or takes it out. */
     private static void remoteService(Context c, Adb adb, boolean on) throws IOException {
+        notificationListener(adb, on);
         String current = adb.shell("settings get secure enabled_accessibility_services").trim();
         if (current.equals("null")) current = "";
         List<String> others = new ArrayList<>();

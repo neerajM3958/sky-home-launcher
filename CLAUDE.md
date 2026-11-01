@@ -69,7 +69,7 @@ keyless one: picks off, city from the TV's time zone), signed with the project's
 `tools/shots.sh <folder> [look] [theme] [area...]` drives the TV with remote keys (adb, Sky Home Launcher switched on, the
 remote left alone) and captures every area: Settings' main list and each sub-screen, the screensaver, the home screen, its
 picks and top buttons, All Apps, each row of the pages below the shelf, the episodes of a show. Areas:
-`core` (the small set), `all`, `settings`, `home`, `catalog`, `episodes`, `saver`, `apps` and `trailer` (only by name: where the inline trailer fails, YouTube opens, maybe on someone's profile); its header lists the
+`core` (the small set), `all`, `settings`, `home`, `catalog`, `episodes`, `saver`, `apps` and `trailer` (only by name: where the inline trailer fails, YouTube opens, maybe on someone's profile) and `quick` (only by name: the Quick Settings card, opened by `adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show|hide|toggle`, a receiver of `RemoteKeyService` that only senders with the DUMP permission, the shell, can reach: keys sent by `adb shell input` skip the key filter, so they can't open it); its header lists the
 env variables that adapt it to a TV (row numbers, how many presses to All Apps). `tools/update-screenshots.sh` retakes the
 README's `screenshots/<look>-<theme>-<area>.jpg` (every area in glass-dark, the core set in the other three; about 20
 minutes); `tools/shotdiff.py` compares two runs. Never `am force-stop` the app to reset it (that unbinds the remote
@@ -206,6 +206,17 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   `RemoteKeys.open`), alongside the existing `TV_SETTINGS`. An added button's name can be changed from its app picker
   (*Rename this button*, an `AlertDialog` with an `EditText`, the same pattern as `askCity`); `Prefs.renameLearned` rewrites its
   `learn=` line without touching its key/scan code or app.
+- Quick Settings (`QuickCard`): a button set to `Prefs.QUICK_SETTINGS` (the Skyworth gear button by default; any brand through
+  *Added buttons*) opens a hand-drawn card at the right edge, an accessibility overlay window of `RemoteKeyService` (`:keys`).
+  It is focusable (the app below pauses; its own `dispatchKeyEvent` takes Up/Down/OK/Back) and scrolls. Tiles open the TV's
+  screens, never change a setting: Settings, Wi-Fi, Bluetooth, one per passthrough input (`TvInputManager`), Home,
+  Apps (`HomeActivity` with extra `apps`); which tiles show, and their order, is *Home Settings > Quick Settings tiles* (the shelf
+  editor with `editingQuick`; `Prefs.quickTiles`, keys listed at `QuickLook.DEFAULT_TILES`, `app:<package>` for a tile that opens an app;
+  `notifications` turns the section on or off, wherever it sits in the list). Bluetooth opens `com.android.tv.settings.CONNECTED_DEVICES`. Under them, the notifications (`QuickNotifications`, a listener in `:keys`, read when
+  the card opens and never kept): OK opens the app, *Clear* clears. The switch allows the listener through ADB
+  (`HomeMode.notificationListener`, called from `remoteService`) and *Original* takes it back. `:keys` can't read SharedPreferences,
+  so look, theme, language and sunrise/sunset reach the card through `QuickLook` (`quick-look.txt`, written by `Prefs` setters
+  and `HomeData`). The card is drawn like the Settings screens: its background is a real `Scene` (the moving waves, `Shaders.sky` for the time of day, stepped every 100 ms) and the focus row is the `Look`'s own `rowFocus`, both created when the card opens and dropped when it closes (the window is hardware accelerated for them). Keep `HomeApps` and `Backdrop` out of `:keys`.
 - The remote's app buttons (`RemoteKeys`, `RemoteKeyService`) use each brand's key codes: they run only on TCL,
   Vestel, KTC (NextStar) and Sony TVs and Formovie projectors, the service is on only in Sky Home Launcher mode, and
   *Original* takes it out of the enabled accessibility services. The system waits for the service on every key, so

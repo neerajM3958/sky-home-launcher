@@ -66,6 +66,11 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="content" android:host="android.media.tv" />
         </intent>
+        <!-- The Quick Settings card's tiles (QuickCard) open these screens when the TV has them. -->
+        <intent><action android:name="android.settings.WIFI_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.WIRELESS_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.BLUETOOTH_SETTINGS" /></intent>
+        <intent><action android:name="com.android.tv.settings.CONNECTED_DEVICES" /></intent>
     </queries>
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -187,6 +192,20 @@
             android:name=".SleepOverlay"
             android:process=":sleep"
             android:exported="false" />
+
+        <!-- The notifications the Quick Settings card lists and clears. Android lets an app read them only when the person
+             allowed it: Sky Home Launcher mode allows it through the TV's own ADB, Original takes it back. In :keys, next to
+             the key service that draws the card. -->
+        <service
+            android:name=".QuickNotifications"
+            android:process=":keys"
+            android:exported="true"
+            android:label="Sky Home Launcher"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <!-- Debug only (config.properties: show_memory_card): free/total RAM and the foreground app's memory, over
              any app, refreshed every 2 seconds. A process of its own, for the same reason as SleepOverlay. -->

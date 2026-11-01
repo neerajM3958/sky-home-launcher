@@ -38,6 +38,7 @@ public class HomeActivity extends Activity {
         }
         Ui.init(this);
         home = new HomeView(this);
+        openApps = getIntent().getBooleanExtra("apps", false);
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
     }
@@ -51,10 +52,14 @@ public class HomeActivity extends Activity {
             return;
         }
         if (home != null) home.resume();
+        if (openApps && home != null) {     // Quick Settings > Apps
+            openApps = false;
+            home.post(home::openSheet);
+        }
         askForWatchNext();
     }
 
-    private boolean askedNow;
+    private boolean askedNow, openApps;
 
     /** The first time, the TV's own dialog asks to let Sky Home Launcher read the other apps' Continue Watching (then it doesn't ask again). */
     private void askForWatchNext() {
@@ -78,6 +83,7 @@ public class HomeActivity extends Activity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (home != null) home.reset(true);
+        openApps = intent.getBooleanExtra("apps", false);
     }
 
     @Override protected void onDestroy() {

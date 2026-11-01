@@ -71,6 +71,29 @@ exactly as it was.
 |---|---|---|
 | ![](screenshots/material-dark-settings-07.jpg) | ![](screenshots/material-dark-settings-08.jpg) | ![](screenshots/material-dark-settings-09.jpg) |
 
+**Quick Settings.** A card that slides in from the right over any app, from a remote button: the Skyworth remote's gear
+button opens it by default, and on any other TV you give it to a button in *Remote Buttons* (or to one you add under
+*Added buttons*). The app underneath pauses; Back, or the same button again, closes it.
+
+| The card | Notifications | Choosing the tiles |
+|---|---|---|
+| ![](screenshots/material-dark-quick-settings.jpg) | ![](screenshots/material-dark-quick-settings-notifications.jpg) | ![](screenshots/material-dark-settings-quick-tiles.jpg) |
+
+- **Tiles** open the TV's own screens, and never change a setting themselves: Settings, Wi-Fi, Bluetooth (the list of
+  paired and connected devices, with *Pair remote or accessory*), one tile per input of the TV (HDMI, AV…), Home and Apps.
+  Any installed app can be added as a tile that opens it.
+- **Notifications** are listed under the tiles, newest first. OK on one opens its app; *Clear* clears them all (ongoing ones
+  stay). Switching to Sky Home Launcher mode allows this through the TV's own ADB, and *Original* takes it back; where the TV
+  refuses, the section says so and the tiles still work. Nothing is stored or sent anywhere.
+- **Choose and order the tiles** in *Home Settings* → *Quick Settings tiles*: OK adds or removes a tile, ← → change the order, and
+  *Notifications* turns that section on or off.
+- It looks like the rest of Sky Home Launcher: the same moving background and focus, in the look (Liquid Glass or Material)
+  and the light or dark mode you picked.
+- **From a computer**, for a test or for screenshots: `adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show`
+  (or `hide`, `toggle`). Only the shell can send it, so no app can open the card behind your back. Keys sent with
+  `adb shell input keyevent` don't pass through the remote-button service, so they can't open it; `tools/shots.sh <folder> <look>
+  <theme> quick` uses the broadcast to take its screenshots.
+
 **Connecting Trakt, installing Stremio, adding Torrentio, setting keys from your phone, recording a remote button.**
 These all happen in Sky Home Launcher's own Settings, each with a short on-screen walkthrough and (for Trakt and the
 phone setup) a QR code — see [Integrations](#integrations) below for what each one does.
@@ -221,7 +244,8 @@ To remove it for good, switch to *Original* first, then uninstall *Sky Home Laun
   - on KTC-made TVs (NextStar), Anoki's screen-content recognition (ACR), the store demo and the manual;
   - Google Assistant, only with `disable_assistant=true`.
 - On TCL TVs, the remote's Netflix, YouTube and Prime buttons keep working through a small accessibility service that only reads those buttons. Pick what each one opens in *Sky Home Launcher* → *Remote Buttons*; *Original* turns the service off. On Vestel-made TVs (F&U and other store brands) and Xiaomi (Formovie) projectors the same goes for the Netflix button, and on KTC-made TVs (NextStar) for the Tabii button. On Sony TVs, the BRAVIA CORE, Netflix, Disney+, Prime Video, YouTube and Crunchyroll buttons (and Google Play, on remotes that have it) can each open the app you pick, or keep Sony's default.
-- Any other remote button can be recorded in *Remote Buttons* → *Added buttons*: press it, and choose what it opens — an app, TV Settings, or Sky Home Launcher's own Settings.
+- Any other remote button can be recorded in *Remote Buttons* → *Added buttons*: press it, and choose what it opens — an app, TV Settings, Sky Home Launcher's own Settings, or *Quick Settings*.
+- *Quick Settings* (described under Flows above) is a card over any app that a remote button can open.
 - *Sky Home Launcher* → *Sleep Timer* turns the TV off after 5 minutes to 4 hours, with the minutes left over any app (top center, or the corner you pick). It presses the remote's Sleep key through the TV's own ADB, so it works in Sky Home Launcher mode; *Original* stops it.
 - Picture, sound, inputs, remote pairing, Google services and the Play Store are on a protected list, checked before every change, and so are Android's own pieces and factory menus. Before anything goes off, the TV is asked whether its inputs or its remote's Input key depend on it; those stay on.
 - The setup app goes off before the stock home screen and comes back after it, so its recovery screen never takes over the Home button in between.
@@ -271,6 +295,8 @@ It's your code, and Claude Code finds its way around it. Try:
 | [`SettingsActivity.java`](app/src/com/skyhome/launcher/SettingsActivity.java) | The settings screen (the app's icon) |
 | [`Prefs.java`](app/src/com/skyhome/launcher/Prefs.java) | Settings changed on the TV |
 | [`RemoteKeys.java`](app/src/com/skyhome/launcher/RemoteKeys.java) | The remote's app buttons |
+| [`QuickCard.java`](app/src/com/skyhome/launcher/QuickCard.java) | The Quick Settings card (tiles, scrolling, notifications) |
+| [`QuickNotifications.java`](app/src/com/skyhome/launcher/QuickNotifications.java) | The notifications the card lists and clears |
 | [`Watchdog.java`](app/src/com/skyhome/launcher/Watchdog.java) | The safety net |
 
 ## Translations
