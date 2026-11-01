@@ -238,3 +238,10 @@ Later: more custom actions than "open an app" (the key is already a prefix: `app
   a multi-word title or text arrives; that is the command, not the app).
 - First open after a restart takes about 0.7 s (fonts, the Scene's shaders). Not measured: the key process's memory with the
   Scene up, or its cost on a 1 GB TV.
+
+- **Showing the card without a remote** (screenshots, tests): `adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show|hide|toggle`.
+  `RemoteKeyService` registers the receiver with the `DUMP` permission, which the shell has and apps do not. `tools/shots.sh <folder> <look> <theme> quick`
+  uses it. (`adb shell input keyevent` skips the key filter, so it cannot open the card.)
+- Screenshots in `screenshots/`: `material-dark-quick-settings(.jpg|-notifications.jpg)`, `material-dark-settings-quick-tiles.jpg`, and the
+  Home Settings screens `material-dark-settings-02/02b/02c` retaken (a new last row). The Glass dark set (`glass-dark-settings-02*`) still shows the
+  old Home Settings list; retake it with `tools/update-screenshots.sh glass-dark`.

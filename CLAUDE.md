@@ -69,7 +69,7 @@ keyless one: picks off, city from the TV's time zone), signed with the project's
 `tools/shots.sh <folder> [look] [theme] [area...]` drives the TV with remote keys (adb, Sky Home Launcher switched on, the
 remote left alone) and captures every area: Settings' main list and each sub-screen, the screensaver, the home screen, its
 picks and top buttons, All Apps, each row of the pages below the shelf, the episodes of a show. Areas:
-`core` (the small set), `all`, `settings`, `home`, `catalog`, `episodes`, `saver`, `apps` and `trailer` (only by name: where the inline trailer fails, YouTube opens, maybe on someone's profile); its header lists the
+`core` (the small set), `all`, `settings`, `home`, `catalog`, `episodes`, `saver`, `apps` and `trailer` (only by name: where the inline trailer fails, YouTube opens, maybe on someone's profile) and `quick` (only by name: the Quick Settings card, opened by `adb shell am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show|hide|toggle`, a receiver of `RemoteKeyService` that only senders with the DUMP permission, the shell, can reach: keys sent by `adb shell input` skip the key filter, so they can't open it); its header lists the
 env variables that adapt it to a TV (row numbers, how many presses to All Apps). `tools/update-screenshots.sh` retakes the
 README's `screenshots/<look>-<theme>-<area>.jpg` (every area in glass-dark, the core set in the other three; about 20
 minutes); `tools/shotdiff.py` compares two runs. Never `am force-stop` the app to reset it (that unbinds the remote

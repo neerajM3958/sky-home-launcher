@@ -47,15 +47,20 @@ final class QuickCard {
         return view != null;
     }
 
+    /** Sent from ADB (`am broadcast -a com.skyhome.launcher.QUICK_SETTINGS --es do show|hide|toggle`): see RemoteKeyService. */
+    static final String ACTION = "com.skyhome.launcher.QUICK_SETTINGS";
+
     /** The remote button: opens the card, or closes it when it is open. Call on the main thread. */
     static void toggle(Context c) {
         long now = System.currentTimeMillis();
         if (now - lastToggle < 500) return;     // the remote can send one press twice
         lastToggle = now;
-        if (view != null) {
-            close();
-            return;
-        }
+        if (view != null) close(); else show(c);
+    }
+
+    /** Opens the card (nothing happens when it is already open). Call on the main thread. */
+    static void show(Context c) {
+        if (view != null) return;
         try {
             Context app = c.getApplicationContext();
             QuickLook look = QuickLook.load(app);
