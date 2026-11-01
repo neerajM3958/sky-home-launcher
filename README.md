@@ -12,7 +12,7 @@ Android-only. Open source. Built with Claude Code. One button to undo.
 
 [Install](#install) · [Features](#what-you-get) · [Flows](#flows) · [Integrations](#integrations) · [Make it yours](#make-it-yours)
 
-<img src="screenshots/glass-dark-home-page1.png" width="880" alt="The Sky Home Launcher home screen: a glass shelf of apps, trending picks, and the weather at a glance">
+<img src="screenshots/material-dark-home.jpg" width="880" alt="The Sky Home Launcher home screen: a shelf of apps, trending picks, and the weather at a glance">
 
 </div>
 
@@ -33,7 +33,7 @@ Android-only. Open source. Built with Claude Code. One button to undo.
 
 | Looks: Liquid Glass (dark) | Material 3 Expressive (dark) | Material 3 Expressive (light) |
 |---|---|---|
-| ![](screenshots/glass-dark-home-page1.png) | ![](screenshots/dark-home-page1.png) | ![](screenshots/light-home-page1.png) |
+| ![](screenshots/glass-dark-home.jpg) | ![](screenshots/material-dark-home.jpg) | ![](screenshots/material-light-home.jpg) |
 
 ## Flows
 
@@ -41,9 +41,9 @@ Android-only. Open source. Built with Claude Code. One button to undo.
 top-rated and more, each a row you can turn on or off. Hold OK on any poster and its trailer plays right there,
 inline, no app switch.
 
-| Trending, with a trailer ready | A trailer playing inline |
+| Trending, with a trailer ready | Popular movies |
 |---|---|
-| ![](screenshots/dark-home-page3.png) | ![](screenshots/dark-page3-popular-movies-trailer.png) |
+| ![](screenshots/material-dark-page-row-04.jpg) | ![](screenshots/material-dark-page-row-05.jpg) |
 
 **Continue Watching and episodes.** Scroll up from the shelf for what you stopped part-way, the shows you watch, and
 your watchlist — Trakt's lists blended with Android TV's own Watch Next from your other apps. Open a show for its full
@@ -51,15 +51,25 @@ episode list, with sort, season, date and watched filters; OK opens an episode i
 
 | Continue Watching, Shows you watch, Watchlist | Episodes, with filters |
 |---|---|
-| ![](screenshots/dark-home-page2.png) | ![](screenshots/dark-episodes.png) |
+| ![](screenshots/material-dark-page-row-01.jpg) | ![](screenshots/material-dark-episodes.jpg) |
 
 **The screensaver.** Full-screen photos of your picks, with a big glass clock, the forecast and sunrise/sunset.
 
-![](screenshots/dark-screensaver.png)
+![](screenshots/material-dark-screensaver.jpg)
 
 **Switching on and back.** On the TV: *Sky Home Launcher* → *Home Screen* → *Sky Home Launcher* changes the home
 screen and screensaver, and turns off a short list of promo apps (never uninstalled). *Original* brings it all back,
 exactly as it was.
+
+**Settings.** Everything is set up on the TV, with the remote.
+
+| Settings | Home Settings | Shelf |
+|---|---|---|
+| ![](screenshots/material-dark-settings-main.jpg) | ![](screenshots/material-dark-settings-02.jpg) | ![](screenshots/material-dark-settings-03.jpg) |
+
+| TMDB | Stremio | Integrations |
+|---|---|---|
+| ![](screenshots/material-dark-settings-07.jpg) | ![](screenshots/material-dark-settings-08.jpg) | ![](screenshots/material-dark-settings-09.jpg) |
 
 **Connecting Trakt, installing Stremio, adding Torrentio, setting keys from your phone, recording a remote button.**
 These all happen in Sky Home Launcher's own Settings, each with a short on-screen walkthrough and (for Trakt and the
