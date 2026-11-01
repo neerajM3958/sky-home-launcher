@@ -91,9 +91,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float SPOTLIGHT_TITLE_ABOVE = 150, SPOTLIGHT_META_GAP = 46, SPOTLIGHT_HEADING_ABOVE = 24,
             SPOTLIGHT_POSTER_W = 140, SPOTLIGHT_POSTER_H = 210, SPOTLIGHT_POSTER_GAP = 20;
     private static final int SPOTLIGHT_VISIBLE = 11;
-    // "All Apps" sheet.
-    private static final int COLUMNS = 5, VISIBLE_ROWS = 3;
-    private static final float GRID_W = 300, GRID_H = 169, GRID_GAP = 40, GRID_ROW = 239, GRID_TOP = 196, GRID_RADIUS = 22;
     private static final int SMOKE = 0xFF111113, INK = 0xFF1C1C1E, WHITE = 0xFFF5F5F7;
     private static final int UP_COLOR = 0xFF30D158, DOWN_COLOR = 0xFFFF453A;
     private static final long FADE_MS = 800;
@@ -239,23 +236,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Details details;
     private final HomeCatalogPage catalogPage;
     private final RectF cardRect = new RectF(), barRect = new RectF();
-
-    // "All Apps" sheet
-    private List<HomeApps.Item> others = new ArrayList<>();
-    private Spring[] gridFocus = new Spring[0];
-    private String[] gridLabels;
-    private final Spring sheet = new Spring(0.38f, 0.9f, 0);
-    private final Spring scroll = new Spring(0.34f, 1f, 0);
-    private final RectF focusedCell = new RectF();
-    private boolean sheetOpen, shelfEdited;
-    private int gridIndex;
+    // "All Apps" (HomeSheet); holding OK there puts an app on the shelf or takes it off.
+    private final HomeSheet sheet;
+    private boolean shelfEdited;
     private long toggledAt;
 
     // Toasts (HomeToasts)
     private final HomeToasts toasts;
 
     // Frames
-    private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
+    private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, motionDirty = true;
     private boolean idle;
     private long lastNanos, resumedAt, lastStep;
     private static final long BURST_MS = 1500;
@@ -272,8 +262,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private Paint labelPaint, metaPaint, clockPaint, buttonPaint, tipPaint, quotePaint, staleQuote;
     private Paint rowTitle, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
-    private Paint pricePaint, changePaint, sheetTitle;
-    private TextPaint gridLabel;
+    private Paint pricePaint, changePaint;
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint imagePaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -293,7 +282,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Path clip = new Path();
     private final RectF tmp = new RectF(), cell = new RectF(), screen = new RectF();
     private final TextPaint fitPaint = new TextPaint();
-    private final RectF gridCell = new RectF();
     private LinearGradient[] tileShaders = new LinearGradient[0];
     private LinearGradient tileGlow, cardSheen;
     private float tileShaderH, cardSheenH;
@@ -337,7 +325,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case DRAWER: widgetsPage.draw(c); break;
                 case CATALOG: watchingPage.draw(c); break;
                 case BROWSE: catalogPage.draw(c); break;
-                case SHEET: drawSheet(c); break;
+                case SHEET: sheet.draw(c); break;
                 case POP: popover.draw(c); break;
                 default: toasts.draw(c); break;
             }
@@ -361,7 +349,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Runnable rotate = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            if (zone != Z_CARDS && !sheetOpen && pager.current() == topSlot && cards.size() > 3) {
+            if (zone != Z_CARDS && !sheet.isOpen() && pager.current() == topSlot && cards.size() > 3) {
                 if (Prefs.spotlightOn()) autoAdvanceSpotlight();
                 else rotateCards(1);
             }
@@ -429,6 +417,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer = new Layer(a, SHEET);
         popLayer = new Layer(a, POP);
         popover = new HomePopover(this, popLayer);
+        sheet = new HomeSheet(this);
         toastLayer = new Layer(a, TOAST);
         toasts = new HomeToasts(this, scene, toastLayer);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
@@ -492,8 +481,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!again) reload();
         updatePalette();
         updatePicks();
-        if (sheetOpen) closeSheet();
-        sheet.snap(sheet.target);
+        if (sheet.isOpen()) closeSheet();
+        sheet.in.snap(sheet.in.target);
         motionDirty = true;
         invalidateAll();
         idle = false;
@@ -535,10 +524,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         goTo(topSlot, !animated);
         zone = Z_SHELF;
         shelfIndex = 0;
-        sheetOpen = false;
+        if (sheet.isOpen()) sheet.close();
         closePop(!animated);
-        if (animated) sheet.target = 0;
-        else sheet.snap(0);
+        if (animated) sheet.in.target = 0;
+        else sheet.in.snap(0);
         watchingPage.top(!animated);
         if (tab != 0) selectTab(0);
         retarget(!animated);
@@ -647,7 +636,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         look.attach(getContext());
         look.setSize(w, h, k);
         makePaints();
-        gridLabels = null;
         clockMinute = -1;
         updateClock();
         layoutShelf();
@@ -718,10 +706,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         pricePaint.setTextAlign(Paint.Align.RIGHT);
         changePaint = Ui.numbers(Ui.semibold, 21 * k, 0xFFFFFFFF);
         changePaint.setTextAlign(Paint.Align.CENTER);
-        sheetTitle = Ui.text(Ui.displaySemibold, 40 * k, 0xFFFFFFFF);
-        sheetTitle.setTextAlign(Paint.Align.CENTER);
-        gridLabel = new TextPaint(Ui.text(Ui.medium, 24 * k, 0x99FFFFFF));
-        gridLabel.setTextAlign(Paint.Align.CENTER);
+        sheet.layout(k, w, h);
         toasts.layout(k, w);
         shadow.setMaskFilter(new BlurMaskFilter(SHADOW_BLUR * k, BlurMaskFilter.Blur.NORMAL));
         shadowSoft.setMaskFilter(new BlurMaskFilter(12 * k, BlurMaskFilter.Blur.NORMAL));
@@ -747,9 +732,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean spotlightRowMoving = spotlightRowShift.step(dt);
         if (topMoving) status.invalidate();
         boolean heroMoving = topMoving | cardsMoving | spotlightRowMoving;
-        boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
+        boolean gridMoving = sheet.tick(dt);
         boolean pagerMoving = pager.pos.step(dt);
-        boolean sheetMoving = sheet.step(dt);
+        boolean sheetMoving = sheet.in.step(dt);
         boolean popMoving = popover.tick(dt);
         boolean widgetsMoving = widgetsPage.tick(dt);
         boolean catMoving = watchingPage.tick(dt);
@@ -769,7 +754,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (statusDirty || bgFading) status.invalidate();
         if (heroMoving || heroDirty) heroLayer.invalidate();
         if (widgetsPage.takeDirty() | widgetsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
-        if (gridMoving || gridDirty) sheetLayer.invalidate();
+        if (gridMoving | sheet.takeDirty()) sheetLayer.invalidate();
         if (openingItem != null && up - openingAt >= OPEN_LOADER_MS) {      // the waiting dots move
             watchingPage.invalidate();
             catalogPage.invalidate();
@@ -779,7 +764,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (pagerMoving || bgFading || ((look.m.focusGlow || look.m.homeBackdrop) && (tilesMoving || topMoving || cardsMoving || catMoving || browseMoving))) sky.invalidate();
         if (bgFading || (pagerWasMoving && !pagerMoving)) platter.invalidate();
         pagerWasMoving = pagerMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = false;
+        tilesDirty = statusDirty = heroDirty = drawerDirty = motionDirty = false;
         if (updateClock()) {
             status.invalidate();
             if (!picksOn()) heroLayer.invalidate();
@@ -787,7 +772,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         // Busy: something is moving, or the sheet or a page under the first is open.
         boolean busy = tilesMoving || heroMoving || gridMoving || pagerMoving
-                || sheetMoving || popMoving || popover.isOpen() || widgetsMoving || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
+                || sheetMoving || popMoving || popover.isOpen() || widgetsMoving || catMoving || browseMoving || toastFading || bgFading || nightMoving || sheet.isOpen() || sheet.in.value > 0.001f
                 || pager.current() != topSlot || toasts.busy();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
@@ -810,9 +795,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Pages and sheet: the layers' positions and opacity (without redrawing their content). */
     private void updateMotion() {
-        float s = Ui.clamp(sheet.value);
+        float s = Ui.clamp(sheet.in.value);
         pager.place(h, 1 - s);
-        showLayer(sheetLayer, s > 0.001f || sheetOpen);
+        showLayer(sheetLayer, s > 0.001f || sheet.isOpen());
         sheetLayer.setAlpha(s);
         float scale = 1.04f - 0.04f * s;
         sheetLayer.setScaleX(scale);
@@ -1585,7 +1570,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private boolean tileMenuReady() {
-        return !sheetOpen && zone == Z_CATALOG && watchingPage.focusedItem() != null;
+        return !sheet.isOpen() && zone == Z_CATALOG && watchingPage.focusedItem() != null;
     }
 
     /** One action for the focused poster: Remove where Trakt takes it off the list, else Hide (only this launcher forgets it). */
@@ -1726,9 +1711,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Sets the springs' targets from the current focus (snap: no animation). */
     private void retarget(boolean snap) {
         // Only the group whose focus changed is redrawn (moving along the shelf doesn't redraw the picks or the buttons).
-        boolean tilesChanged = aim(tileFocus, !sheetOpen && zone == Z_SHELF ? shelfIndex : -1, snap);
-        boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
-        boolean heroChanged = aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
+        boolean tilesChanged = aim(tileFocus, !sheet.isOpen() && zone == Z_SHELF ? shelfIndex : -1, snap);
+        boolean topChanged = aim(topFocus, !sheet.isOpen() && zone == Z_TOP ? topIndex : -1, snap);
+        boolean heroChanged = aim(cardFocus, !sheet.isOpen() && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
         tilesDirty |= snap || tilesChanged;
         statusDirty |= snap || topChanged;
         heroDirty |= snap || heroChanged;
@@ -1748,89 +1733,31 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return changed;
     }
 
-    // MARK: - "All Apps" sheet
-
-    private void setOthers(List<HomeApps.Item> list) {
-        others = list;
-        gridFocus = new Spring[list.size()];
-        for (int i = 0; i < gridFocus.length; i++) gridFocus[i] = new Spring(0.3f, 0.82f, 0);
-        gridLabels = null;
-        gridIndex = Math.min(gridIndex, Math.max(0, list.size() - 1));
-        retargetGrid(true);
-        gridDirty = true;
-    }
+    // MARK: - "All Apps" (HomeSheet)
 
     private void openSheet() {
-        sheetOpen = true;
-        gridIndex = 0;
-        scroll.snap(0);
-        retargetGrid(true);
+        sheet.open();
         retarget(false);
-        sheet.target = 1;
-        gridDirty = true;
+        spoken.focusMoved();
     }
 
     private void closeSheet() {
-        sheetOpen = false;
-        sheet.target = 0;
+        sheet.close();
         retarget(false);
+        spoken.focusMoved();
         if (shelfEdited) {     // the grid was kept as it was while open: apps that went to the shelf leave it now
             shelfEdited = false;
             reload();
         }
     }
 
-    private void retargetGrid(boolean snap) {
-        for (int i = 0; i < gridFocus.length; i++) {
-            gridFocus[i].target = sheetOpen && i == gridIndex ? 1 : 0;
-            if (snap) gridFocus[i].snap(gridFocus[i].target);
-        }
-        int rows = Math.max(1, (others.size() + COLUMNS - 1) / COLUMNS);
-        int visible = Math.min(rows, VISIBLE_ROWS);
-        int r = gridIndex / COLUMNS;
-        float target = scroll.target;
-        if (r < target) target = r;
-        else if (r > target + visible - 1) target = r - visible + 1;
-        scroll.target = Math.max(0, Math.min(rows - visible, target));
-        if (snap) scroll.snap(scroll.target);
-        spoken.focusMoved();
+    /** A card (16:9, a poster, an app's tile) as `drawCard` last drew it, grown with the focus. */
+    RectF lastCard() {
+        return cell;
     }
 
-    private void drawSheet(Canvas c) {
-        tmp.set(0, 0, w, h);
-        look.sheetBackground(c, tmp, dark());
-        sheetTitle.setColor(look.sheetTitleInk(dark()));
-        float shift = scroll.value * GRID_ROW * k;
-        c.drawText(Ui.tr("All Apps"), w / 2f, 124 * k - shift, sheetTitle);
-        int n = others.size();
-        if (gridLabels == null || gridLabels.length != n) {
-            gridLabels = new String[n];
-            for (int i = 0; i < n; i++) {
-                gridLabels[i] = TextUtils.ellipsize(others.get(i).label, gridLabel, (GRID_W - 10) * k, TextUtils.TruncateAt.END).toString();
-            }
-        }
-        float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
-        float left = (1920 - gridWidth) / 2 * k;
-        float gridTop = GRID_TOP * k;
-        for (int i = 0; i < n; i++) {
-            int r = i / COLUMNS, col = i % COLUMNS;
-            float y = gridTop + r * GRID_ROW * k - shift;
-            if (y > h || y + GRID_ROW * k < 0) continue;
-            float x = left + col * (GRID_W + GRID_GAP) * k;
-            gridCell.set(x, y, x + GRID_W * k, y + GRID_H * k);
-            // Only the targeted tile grows (#memory-management, same as the shelf): doesn't explain this screen's
-            // own GPU growth (measured separately, cause unidentified), but still the correct behavior on its own
-            // merits — matches every other fixed section, and costs nothing since it's still provably no worse.
-            float f = i == gridIndex ? gridFocus[i].value : 0;
-            drawCard(c, others.get(i).tile, gridCell, GRID_RADIUS * k, f, 0.08f);
-            if (sheetOpen && i == gridIndex) focusedCell.set(cell);
-            gridLabel.setColor(look.gridLabelInk(f, dark()));
-            c.drawText(gridLabels[i], gridCell.centerX(), gridCell.bottom + (40 + 6 * f) * k, gridLabel);
-        }
-    }
-
-    /** 16:9 sheet card. Focused (the shelf's subtle focus): it grows, with a shadow, a soft sheen and a thin border. */
-    private void drawCard(Canvas c, Bitmap image, RectF base, float radius, float f, float grow) {
+    /** 16:9 card. Focused (the shelf's subtle focus): it grows, with a shadow, a soft sheen and a thin border. */
+    void drawCard(Canvas c, Bitmap image, RectF base, float radius, float f, float grow) {
         float s = 1 + grow * f;
         float cx = base.centerX(), cy = base.centerY();
         cell.set(cx - base.width() * s / 2, cy - base.height() * s / 2, cx + base.width() * s / 2, cy + base.height() * s / 2);
@@ -2006,7 +1933,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Nothing else is going on (All Apps, an open waiting for its answer, OK held): a trailer may start by itself. */
     boolean trailerMayStart() {
-        return !sheetOpen && opening == null && !okDown;
+        return !sheet.isOpen() && opening == null && !okDown;
     }
 
     /** The soft shadow under a focused row or tile, `opacity` of black. */
@@ -2087,7 +2014,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             handler.post(() -> {
                 if (top != null) setLightButtons(top);
                 if (s != null) setShelf(s);
-                if (o != null && !sheetOpen) setOthers(o);
+                if (o != null && !sheet.isOpen()) sheet.setApps(o);
                 else if (o != null) appsStale = true;   // All Apps is open: its list comes next time
             });
         });
@@ -2146,7 +2073,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : zone == Z_BROWSE || tileMenuReady() || canReorder();
+                        holdArmed = sheet.isOpen() ? canToggleShelf(sheet.index()) : zone == Z_BROWSE || tileMenuReady() || canReorder();
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
                         hold();
@@ -2161,7 +2088,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                if (zone != Z_BROWSE || sheetOpen) return false;
+                if (zone != Z_BROWSE || sheet.isOpen()) return false;
                 if (down && e.getRepeatCount() == 0) catalogPage.trailerKey();
                 return true;
             case KeyEvent.KEYCODE_BACK:
@@ -2185,7 +2112,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void back() {
         if (popover.isOpen()) {
             closePop(false);
-        } else if (sheetOpen) {
+        } else if (sheet.isOpen()) {
             closeSheet();
         } else if (catalogPage.trailerOn()) {      // Back stops the trailer first
             catalogPage.stopTrailer();
@@ -2210,7 +2137,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             return;
         }
-        if (sheetOpen) {
+        if (sheet.isOpen()) {
             moveGrid(dx, dy);
             return;
         }
@@ -2271,23 +2198,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void moveGrid(int dx, int dy) {
-        int n = others.size();
-        if (n == 0) return;
-        int r = gridIndex / COLUMNS, col = gridIndex % COLUMNS;
-        int rows = (n + COLUMNS - 1) / COLUMNS;
-        int next = gridIndex;
-        if (dx != 0) {
-            int candidate = gridIndex + dx;
-            if (candidate >= 0 && candidate < n && candidate / COLUMNS == r) next = candidate;
-        } else {
-            int targetRow = r + dy;
-            if (targetRow >= 0 && targetRow < rows) next = Math.min(n - 1, targetRow * COLUMNS + col);
-        }
-        if (next == gridIndex) return;
-        gridIndex = next;
-        retargetGrid(false);
+        if (!sheet.move(dx, dy)) return;
         click.move();
-        gridDirty = true;
+        spoken.focusMoved();
     }
 
     private void activate() {
@@ -2304,11 +2217,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         HomeApps.Item it;
         RectF r;
         // A widget is only read; the drawer has nothing else to open.
-        if (!sheetOpen && (zone == WIDGETS || zone == Z_DRAWER)) return;
-        if (sheetOpen) {
-            if (others.isEmpty()) return;
-            it = others.get(gridIndex);
-            r = focusedCell;
+        if (!sheet.isOpen() && (zone == WIDGETS || zone == Z_DRAWER)) return;
+        if (sheet.isOpen()) {
+            if (sheet.apps().isEmpty()) return;
+            it = sheet.apps().get(sheet.index());
+            r = sheet.focusedTile();
         } else if (zone == Z_TOP) {
             if (topIndex < 3) {
                 selectTab(topIndex);
@@ -2416,14 +2329,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void hold() {
         if (popover.isOpen()) return;
-        if (!sheetOpen && zone == Z_BROWSE) {       // the trailer of the focused title
+        if (!sheet.isOpen() && zone == Z_BROWSE) {       // the trailer of the focused title
             handler.removeCallbacks(holdStart);
             holdArmed = false;
             okHeld = true;
             catalogPage.hold();
             return;
         }
-        if (sheetOpen) toggleShelf();
+        if (sheet.isOpen()) toggleShelf();
         else if (zone == Z_CATALOG) openTileMenu();     // a poster's menu: Remove or Hide
         else startReorder();
     }
@@ -2436,8 +2349,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private boolean canToggleShelf(int i) {
-        if (!sheetOpen || i >= others.size()) return false;
-        HomeApps.Item it = others.get(i);
+        if (!sheet.isOpen() || i >= sheet.apps().size()) return false;
+        HomeApps.Item it = sheet.apps().get(i);
         return it.kind == HomeApps.APP && it.pkg != null;
     }
 
@@ -2445,10 +2358,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void toggleShelf() {
         handler.removeCallbacks(holdStart);
         holdArmed = false;
-        if (!canToggleShelf(gridIndex)) return;
+        if (!canToggleShelf(sheet.index())) return;
         okHeld = true;
         toggledAt = SystemClock.uptimeMillis();
-        final HomeApps.Item it = others.get(gridIndex);
+        final HomeApps.Item it = sheet.apps().get(sheet.index());
         final Context c = getContext().getApplicationContext();
         click.open();
         LOADER.execute(() -> {
@@ -2487,7 +2400,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Moving apps on the shelf
 
     private boolean canReorder() {
-        if (sheetOpen || zone != Z_SHELF || shelfIndex >= shelf.size() || shelf.size() < 2) return false;
+        if (sheet.isOpen() || zone != Z_SHELF || shelfIndex >= shelf.size() || shelf.size() < 2) return false;
         HomeApps.Item it = shelf.get(shelfIndex);
         return it.kind == HomeApps.APP && it.pkg != null;
     }
@@ -2674,8 +2587,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < popover.items().size(); i++) out.add(a11yId(POPUP, i));
             return;
         }
-        if (sheetOpen) {
-            for (int i = 0; i < others.size(); i++) out.add(a11yId(GRID, i));
+        if (sheet.isOpen()) {
+            for (int i = 0; i < sheet.apps().size(); i++) out.add(a11yId(GRID, i));
             return;
         }
         for (int i = picksOn() ? 0 : 3; i < 3 + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
@@ -2689,8 +2602,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (group) {
             case POPUP: return label(popover.items(), i);
             case GRID:
-                if (i >= others.size()) return "";
-                return label(others, i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", others.size());
+                if (i >= sheet.apps().size()) return "";
+                return label(sheet.apps(), i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", sheet.apps().size());
             case Z_TOP:
                 if (i >= 3) return label(lightButtons, i - 3);
                 return Ui.trf("{name}, tab {i} of {n}", "name", tabs()[i], "i", i + 1, "n", 3);
@@ -2720,11 +2633,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 dy = 0;
                 break;
             case GRID: {
-                if (!sheetOpen || i >= others.size()) return false;
-                float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
-                float x = ((1920 - gridWidth) / 2 + (i % COLUMNS) * (GRID_W + GRID_GAP)) * k;
-                float y = (GRID_TOP + (i / COLUMNS - scroll.target) * GRID_ROW) * k;
-                a11yRect.set(x, y, x + GRID_W * k, y + GRID_H * k);
+                if (!sheet.isOpen() || i >= sheet.apps().size()) return false;
+                sheet.tileRect(i, a11yRect);
                 dy = 0;
                 break;
             }
@@ -2761,7 +2671,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private int a11yFocused() {
         if (popover.isOpen()) return popover.items().isEmpty() ? -1 : a11yId(POPUP, popover.index());
-        if (sheetOpen) return others.isEmpty() ? -1 : a11yId(GRID, gridIndex);
+        if (sheet.isOpen()) return sheet.apps().isEmpty() ? -1 : a11yId(GRID, sheet.index());
         switch (zone) {
             case Z_TOP: return a11yId(Z_TOP, topIndex);
             case Z_CARDS: return cardAt(cardIndex) != null ? a11yId(Z_CARDS, cardIndex) : -1;
@@ -2791,10 +2701,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         wake();
         int group = (id - 1) / 1000, i = (id - 1) % 1000;
         if (group == GRID) {
-            if (!sheetOpen || i >= others.size()) return;
-            gridIndex = i;
-            retargetGrid(false);
-            gridDirty = true;
+            if (!sheet.focus(i)) return;
+            spoken.focusMoved();
             click.move();
             return;
         }
@@ -2803,7 +2711,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             click.move();
             return;
         }
-        if (sheetOpen || reordering) return;
+        if (sheet.isOpen() || reordering) return;
         switch (group) {
             case WIDGETS:
                 if (!widgets().contains(i)) return;
